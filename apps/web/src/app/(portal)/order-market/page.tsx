@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingBag, 
   PlusCircle, 
@@ -13,7 +13,16 @@ import {
   Upload, 
   Image as ImageIcon,
   Flame,
-  AlertCircle
+  AlertCircle,
+  Link as LinkIcon,
+  Plus,
+  Trash2,
+  Layers,
+  UploadCloud,
+  ExternalLink,
+  ChevronDown,
+  Loader2,
+  FileText
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,10 +30,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { getCurrentUser } from '@/lib/auth';
-import type { DesignOrder, PlatformType } from '@design-review/shared';
+import { useRouter } from 'next/navigation';
+import type { 
+  DesignOrder, 
+  PlatformType, 
+  ImageGroupType, 
+  OrderImageRequirementItem,
+  OrderReferenceImageItem 
+} from '@design-review/shared';
 
 const CATEGORIES = ['全部', '主图设计', '详情页设计', '活动海报', '3D建模与渲染', '精修合成'];
 const PLATFORMS: { id: PlatformType; name: string }[] = [
@@ -36,6 +51,7 @@ const PLATFORMS: { id: PlatformType; name: string }[] = [
 ];
 
 export default function OrderMarketPage() {
+  const router = useRouter();
   const user = getCurrentUser();
   const [orders, setOrders] = useState<DesignOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +59,7 @@ export default function OrderMarketPage() {
   const [isPublishOpen, setIsPublishOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // 表单状态
+  // 表单状态：每张图片均有独立的描述与要求
   const [formData, setFormData] = useState({
     title: '',
     category: '主图设计',
@@ -52,8 +68,49 @@ export default function OrderMarketPage() {
     deadlineDays: '3',
     urgency: 'normal' as 'normal' | 'urgent' | 'super_urgent',
     requirements: '',
-    referenceUrl: '',
+    imageRequirementGroups: [
+      {
+        id: 'grp_req_1',
+        name: '1:1 白底透气主图',
+        groupType: 'main_1_1' as ImageGroupType,
+        quantity: 1,
+        dimensions: '800x800',
+        description: '白底纯净无噪点，微距突出面料细节质感',
+        referenceImages: [
+          'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=800&auto=format&fit=crop&q=80'
+        ],
+        referenceImageItems: [
+          {
+            id: 'ref_img_1',
+            url: 'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=800&auto=format&fit=crop&q=80',
+            description: '参考该图的白色背景通透度与面料微距光影'
+          }
+        ],
+        referenceLinks: ['https://dribbble.com/shots/fashion-clean-ui']
+      },
+      {
+        id: 'grp_req_2',
+        name: '3:4 模特场景图',
+        groupType: 'main_3_4' as ImageGroupType,
+        quantity: 2,
+        dimensions: '750x1000',
+        description: '自然采光外景，突出穿着版型与上身效果',
+        referenceImages: [
+          'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=800&auto=format&fit=crop&q=80'
+        ],
+        referenceImageItems: [
+          {
+            id: 'ref_img_2',
+            url: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=800&auto=format&fit=crop&q=80',
+            description: '参考该外景模特的站姿构图与暖色阳光氛围'
+          }
+        ],
+        referenceLinks: []
+      }
+    ] as OrderImageRequirementItem[]
   });
+
+  const [uploadingGroupIndex, setUploadingGroupIndex] = useState<number | null>(null);
 
   const fetchOrders = async () => {
     try {
@@ -74,6 +131,124 @@ export default function OrderMarketPage() {
   useEffect(() => {
     fetchOrders();
   }, []);
+
+  // 增加图片需求组
+  const handleAddImageGroup = () => {
+    const newGroup: OrderImageRequirementItem = {
+      id: `grp_req_${Date.now()}`,
+      name: `图片需求组 #${formData.imageRequirementGroups.length + 1}`,
+      groupType: 'main_1_1',
+      quantity: 1,
+      dimensions: '800x800',
+      description: '',
+      referenceImages: [],
+      referenceImageItems: [],
+      referenceLinks: []
+    };
+    setFormData({
+      ...formData,
+      imageRequirementGroups: [...formData.imageRequirementGroups, newGroup]
+    });
+  };
+
+  // 移除图片需求组
+  const handleRemoveImageGroup = (index: number) => {
+    if (formData.imageRequirementGroups.length <= 1) {
+      toast.warning('至少保留一个图片需求组');
+      return;
+    }
+    const updated = formData.imageRequirementGroups.filter((_, idx) => idx !== index);
+    setFormData({ ...formData, imageRequirementGroups: updated });
+  };
+
+  // 上传参考图到指定组 (并附带默认描述)
+  const handleUploadGroupImage = async (e: React.ChangeEvent<HTMLInputElement>, groupIndex: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingGroupIndex(groupIndex);
+    const body = new FormData();
+    body.append('file', file);
+    body.append('folder', 'reference-samples');
+
+    try {
+      const res = await fetch('http://localhost:8080/api/upload', {
+        method: 'POST',
+        body
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || '上传失败');
+      }
+
+      const updatedGroups = [...formData.imageRequirementGroups];
+      const targetGroup = updatedGroups[groupIndex];
+      const newImgUrl = data.data.url;
+
+      // 同步更新纯链接数组与对象数组
+      targetGroup.referenceImages = targetGroup.referenceImages || [];
+      targetGroup.referenceImages.push(newImgUrl);
+
+      targetGroup.referenceImageItems = targetGroup.referenceImageItems || [];
+      targetGroup.referenceImageItems.push({
+        id: `ref_img_${Date.now()}`,
+        url: newImgUrl,
+        description: ''
+      });
+
+      setFormData({ ...formData, imageRequirementGroups: updatedGroups });
+      toast.success('参考图已上传，请在下方输入该图的具体设计要求');
+    } catch (err: any) {
+      toast.error(err.message || '参考图上传失败');
+    } finally {
+      setUploadingGroupIndex(null);
+    }
+  };
+
+  // 更新某张参考图片的专属描述
+  const handleUpdateImageDescription = (groupIndex: number, imgIndex: number, text: string) => {
+    const updatedGroups = [...formData.imageRequirementGroups];
+    const targetGroup = updatedGroups[groupIndex];
+    if (!targetGroup.referenceImageItems) {
+      targetGroup.referenceImageItems = (targetGroup.referenceImages || []).map((url, i) => ({
+        id: `ref_img_${i}`,
+        url,
+        description: ''
+      }));
+    }
+    if (targetGroup.referenceImageItems[imgIndex]) {
+      targetGroup.referenceImageItems[imgIndex].description = text;
+      setFormData({ ...formData, imageRequirementGroups: updatedGroups });
+    }
+  };
+
+  // 移除某张参考图
+  const handleRemoveReferenceImage = (groupIndex: number, imgIndex: number) => {
+    const updatedGroups = [...formData.imageRequirementGroups];
+    const targetGroup = updatedGroups[groupIndex];
+    if (targetGroup.referenceImages) {
+      targetGroup.referenceImages.splice(imgIndex, 1);
+    }
+    if (targetGroup.referenceImageItems) {
+      targetGroup.referenceImageItems.splice(imgIndex, 1);
+    }
+    setFormData({ ...formData, imageRequirementGroups: updatedGroups });
+  };
+
+  // 增加参考链接
+  const handleAddReferenceLink = (groupIndex: number, linkUrl: string) => {
+    if (!linkUrl.trim()) return;
+    const updatedGroups = [...formData.imageRequirementGroups];
+    updatedGroups[groupIndex].referenceLinks.push(linkUrl.trim());
+    setFormData({ ...formData, imageRequirementGroups: updatedGroups });
+  };
+
+  // 移除参考链接
+  const handleRemoveReferenceLink = (groupIndex: number, linkIndex: number) => {
+    const updatedGroups = [...formData.imageRequirementGroups];
+    updatedGroups[groupIndex].referenceLinks.splice(linkIndex, 1);
+    setFormData({ ...formData, imageRequirementGroups: updatedGroups });
+  };
 
   const handlePublishOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,7 +271,7 @@ export default function OrderMarketPage() {
           urgency: formData.urgency,
           deadline,
           requirements: formData.requirements,
-          referenceImages: formData.referenceUrl ? [formData.referenceUrl] : [],
+          imageRequirementGroups: formData.imageRequirementGroups,
           creatorId: user?.id || 'u_guest',
           creatorName: user?.name || '前台商户/运营',
         }),
@@ -107,18 +282,8 @@ export default function OrderMarketPage() {
         throw new Error(result.message || '发布失败');
       }
 
-      toast.success('设计需求派单成功！已发布至接单广场');
+      toast.success('多组图片设计需求派单成功！已同步至接单大厅');
       setIsPublishOpen(false);
-      setFormData({
-        title: '',
-        category: '主图设计',
-        platform: 'tmall',
-        budget: '',
-        deadlineDays: '3',
-        urgency: 'normal',
-        requirements: '',
-        referenceUrl: '',
-      });
       fetchOrders();
     } catch (err: any) {
       toast.error(err.message || '派单失败');
@@ -141,8 +306,14 @@ export default function OrderMarketPage() {
       if (!res.ok || !data.success) {
         throw new Error(data.message || '接单失败');
       }
-      toast.success(data.message);
+      toast.success(data.message, {
+        description: '正在为您自动跳转至【我的任务中心】...'
+      });
       fetchOrders();
+      // 接单成功后自动跳转到我的任务中心
+      setTimeout(() => {
+        router.push('/review-tasks');
+      }, 600);
     } catch (err: any) {
       toast.error(err.message || '接单失败');
     }
@@ -153,7 +324,7 @@ export default function OrderMarketPage() {
   );
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
+    <div className="space-y-6">
       {/* 顶部标题与派单按钮 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-6 rounded-3xl bg-white/70 border border-white/80 shadow-sm backdrop-blur-md">
         <div>
@@ -165,52 +336,53 @@ export default function OrderMarketPage() {
               设计接单与派单大厅
             </h1>
             <Badge variant="outline" className="bg-amber-50 text-amber-600 border-amber-200 text-[11px]">
-              前台市场
+              每张图片专属描述
             </Badge>
           </div>
           <p className="text-xs text-slate-500">
-            设计师可在线抢单赚取收益；运营/商户可随时发起主图、详情页、活动海报等定制需求
+            设计师可在线抢单；商户可指定多组主图/长图/商详规格，为每张参考图独立编写具体设计要求与排版说明
           </p>
         </div>
 
         <div className="flex items-center gap-3">
           <Dialog open={isPublishOpen} onOpenChange={setIsPublishOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-2xl shadow-md shadow-blue-500/20 gap-1.5 h-10">
+              <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold px-5 h-10 rounded-2xl shadow-md shadow-blue-500/20 gap-1.5">
                 <PlusCircle className="w-4 h-4" />
-                发布新需求 / 派单
+                发布多组设计定制需求
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl bg-white rounded-3xl p-6">
+            <DialogContent className="max-w-3xl bg-white rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
                   <PlusCircle className="w-5 h-5 text-blue-600" />
-                  发布新的设计定制需求
+                  发布多图片需求组定制派单
                 </DialogTitle>
                 <CardDescription className="text-xs text-slate-500">
-                  提交需求后将自动扣除系统预设抽成比例并向全体签约设计师派发接单
+                  支持按规格增加多个图片组，上传的每一张参考图都可以填写针对性的设计要求描述
                 </CardDescription>
               </DialogHeader>
 
               <form onSubmit={handlePublishOrder} className="space-y-4 mt-2">
+                {/* 1. 基本信息 */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">需求标题 *</label>
                   <Input
                     required
-                    placeholder="如：秋冬羊绒大衣淘宝主图5张套系设计"
+                    placeholder="如：2026秋冬轻奢羽绒服天猫首屏主图全套5张定制"
                     value={formData.title}
                     onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    className="text-xs rounded-xl"
+                    className="text-xs rounded-xl h-9"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700">设计类目 *</label>
+                    <label className="text-xs font-semibold text-slate-700">设计类目</label>
                     <select
                       value={formData.category}
                       onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                      className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none"
                     >
                       {CATEGORIES.filter((c) => c !== '全部').map((c) => (
                         <option key={c} value={c}>{c}</option>
@@ -219,11 +391,11 @@ export default function OrderMarketPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700">投放电商平台 *</label>
+                    <label className="text-xs font-semibold text-slate-700">投放电商平台</label>
                     <select
                       value={formData.platform}
                       onChange={(e) => setFormData({ ...formData, platform: e.target.value as PlatformType })}
-                      className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none focus:ring-1 focus:ring-blue-500"
+                      className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none"
                     >
                       {PLATFORMS.map((p) => (
                         <option key={p.id} value={p.id}>{p.name}</option>
@@ -232,9 +404,10 @@ export default function OrderMarketPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                {/* 2. 价格、周期与加急程度 (位于图片组上方) */}
+                <div className="grid grid-cols-3 gap-3 pt-1 pb-1">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700">总预算 (元) *</label>
+                    <label className="text-xs font-semibold text-slate-700">订单价格 (元) *</label>
                     <Input
                       type="number"
                       required
@@ -242,7 +415,7 @@ export default function OrderMarketPage() {
                       placeholder="800"
                       value={formData.budget}
                       onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
-                      className="text-xs rounded-xl"
+                      className="text-xs rounded-xl font-mono h-9"
                     />
                   </div>
 
@@ -269,49 +442,251 @@ export default function OrderMarketPage() {
                     >
                       <option value="normal">标准单</option>
                       <option value="urgent">加急单</option>
-                      <option value="super_urgent">特急单 (优先置顶)</option>
+                      <option value="super_urgent">特急单 (置顶)</option>
                     </select>
                   </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700">参考样例图 URL / 素材链接</label>
-                  <Input
-                    placeholder="https://images.unsplash.com/photo-..."
-                    value={formData.referenceUrl}
-                    onChange={(e) => setFormData({ ...formData, referenceUrl: e.target.value })}
-                    className="text-xs rounded-xl"
-                  />
+                {/* 3. 核心功能：多图片需求组 + 单图独立描述 */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-blue-600" />
+                      图片需求组清单 ({formData.imageRequirementGroups.length} 组)
+                    </label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAddImageGroup}
+                      className="text-[11px] h-7 rounded-xl border-dashed border-blue-300 text-blue-600 hover:bg-blue-50"
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" />
+                      增加图片组
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {formData.imageRequirementGroups.map((group, gIdx) => {
+                      const imageItems = group.referenceImageItems || (group.referenceImages || []).map((url, i) => ({
+                        id: `ref_img_${i}`,
+                        url,
+                        description: ''
+                      }));
+
+                      return (
+                        <div
+                          key={group.id || gIdx}
+                          className="p-4 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-3"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-1">
+                              <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[10px] flex items-center justify-center">
+                                {gIdx + 1}
+                              </span>
+                              <Input
+                                value={group.name}
+                                onChange={(e) => {
+                                  const updated = [...formData.imageRequirementGroups];
+                                  updated[gIdx].name = e.target.value;
+                                  setFormData({ ...formData, imageRequirementGroups: updated });
+                                }}
+                                placeholder="组名称 (如：1:1白底图)"
+                                className="text-xs rounded-xl h-8 bg-white font-semibold max-w-xs"
+                              />
+                              <select
+                                value={group.groupType}
+                                onChange={(e) => {
+                                  const updated = [...formData.imageRequirementGroups];
+                                  updated[gIdx].groupType = e.target.value as ImageGroupType;
+                                  setFormData({ ...formData, imageRequirementGroups: updated });
+                                }}
+                                className="h-8 text-xs rounded-xl bg-white border border-slate-200 px-2 text-slate-700 outline-none"
+                              >
+                                <option value="main_1_1">1:1 方形主图</option>
+                                <option value="main_3_4">3:4 竖版长图</option>
+                                <option value="detail">商详长图切片</option>
+                              </select>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1 text-xs text-slate-500">
+                                <span>数量:</span>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max="20"
+                                  value={group.quantity}
+                                  onChange={(e) => {
+                                    const updated = [...formData.imageRequirementGroups];
+                                    updated[gIdx].quantity = Number(e.target.value);
+                                    setFormData({ ...formData, imageRequirementGroups: updated });
+                                  }}
+                                  className="w-12 h-8 text-xs text-center rounded-xl bg-white"
+                                />
+                                <span>张</span>
+                              </div>
+
+                              {formData.imageRequirementGroups.length > 1 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleRemoveImageGroup(gIdx)}
+                                  className="h-7 w-7 text-slate-400 hover:text-rose-500 rounded-xl"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 本组参考样例图列表 (每张图片均有独立描述) */}
+                          <div className="space-y-2 pt-1">
+                            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
+                              <span>参考样例图与单图描述清单</span>
+                              <label className="text-blue-600 hover:underline flex items-center gap-1 cursor-pointer font-bold">
+                                {uploadingGroupIndex === gIdx ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Plus className="w-3.5 h-3.5" />
+                                )}
+                                <span>上传参考图</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={(e) => handleUploadGroupImage(e, gIdx)}
+                                  className="hidden"
+                                />
+                              </label>
+                            </div>
+
+                            {imageItems.length === 0 ? (
+                              <div className="p-3 bg-white/60 rounded-xl border border-dashed border-slate-200 text-center text-[11px] text-slate-400">
+                                暂无参考图，点击上方“上传参考图”为本组添加样例
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {imageItems.map((item, imgIdx) => (
+                                  <div
+                                    key={item.id || imgIdx}
+                                    className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-start gap-3 shadow-xs"
+                                  >
+                                    <div className="relative w-14 h-14 rounded-lg overflow-hidden bg-slate-100 shrink-0 border border-slate-200">
+                                      <img src={item.url} alt="样例图" className="w-full h-full object-cover" />
+                                    </div>
+
+                                    <div className="flex-1 min-w-0 space-y-1">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[11px] font-bold text-slate-700">
+                                          参考图 #{imgIdx + 1} 诉求描述
+                                        </span>
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="icon"
+                                          onClick={() => handleRemoveReferenceImage(gIdx, imgIdx)}
+                                          className="h-5 w-5 text-slate-400 hover:text-rose-500"
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                        </Button>
+                                      </div>
+                                      <Input
+                                        placeholder="如：借鉴此图的金属反光质感 / 学习左侧卖点文字排版层级..."
+                                        value={item.description || ''}
+                                        onChange={(e) => handleUpdateImageDescription(gIdx, imgIdx, e.target.value)}
+                                        className="text-xs h-8 bg-slate-50/80 rounded-lg border-slate-200"
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 本组外部参考链接 */}
+                          <div className="space-y-1.5 pt-1">
+                            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
+                              <span>外部参考链接 (如天猫竞品 / Figma / 小红书等)</span>
+                            </div>
+
+                            <div className="space-y-1">
+                              {group.referenceLinks.map((link, lIdx) => (
+                                <div key={lIdx} className="flex items-center justify-between gap-2 p-1.5 px-2 bg-white rounded-xl border border-slate-200 text-xs">
+                                  <div className="flex items-center gap-1.5 truncate text-blue-600">
+                                    <ExternalLink className="w-3 h-3 shrink-0" />
+                                    <a href={link} target="_blank" rel="noreferrer" className="truncate hover:underline text-[11px]">
+                                      {link}
+                                    </a>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleRemoveReferenceLink(gIdx, lIdx)}
+                                    className="h-5 w-5 text-slate-400 hover:text-rose-500"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              ))}
+
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  id={`link_input_${gIdx}`}
+                                  placeholder="输入参考链接如 https://dribbble.com/..."
+                                  className="text-xs h-7 rounded-xl bg-white"
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      const input = e.currentTarget;
+                                      handleAddReferenceLink(gIdx, input.value);
+                                      input.value = '';
+                                    }
+                                  }}
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    const input = document.getElementById(`link_input_${gIdx}`) as HTMLInputElement;
+                                    if (input && input.value) {
+                                      handleAddReferenceLink(gIdx, input.value);
+                                      input.value = '';
+                                    }
+                                  }}
+                                  className="text-[10px] h-7 rounded-xl px-2.5 shrink-0"
+                                >
+                                  添加链接
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
+                {/* 4. 整体文案诉求与设计说明 */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700">设计详细要求与文案卖点</label>
+                  <label className="text-xs font-semibold text-slate-700">整体文案诉求与设计说明</label>
                   <Textarea
-                    rows={3}
-                    placeholder="请详细列举设计排版风格、模特诉求、文案卖点及尺寸规格要求..."
+                    rows={2}
+                    placeholder="简述风格基调、促销利益点文案、品牌调性..."
                     value={formData.requirements}
                     onChange={(e) => setFormData({ ...formData, requirements: e.target.value })}
                     className="text-xs rounded-xl"
                   />
                 </div>
 
-                {formData.budget && (
-                  <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-2xl flex items-center justify-between text-xs">
-                    <span className="text-slate-600">
-                      预计平台抽成 (约15%): <b className="text-slate-800">¥{(Number(formData.budget) * 0.15).toFixed(2)}</b>
-                    </span>
-                    <span className="text-blue-600 font-bold">
-                      设计师到手所得: ¥{(Number(formData.budget) * 0.85).toFixed(2)}
-                    </span>
-                  </div>
-                )}
-
                 <DialogFooter className="mt-4 gap-2">
                   <Button type="button" variant="outline" onClick={() => setIsPublishOpen(false)} className="rounded-xl text-xs">
                     取消
                   </Button>
                   <Button type="submit" disabled={submitting} className="rounded-xl text-xs bg-blue-600 hover:bg-blue-700 text-white">
-                    {submitting ? '发布中...' : '确认派发需求'}
+                    {submitting ? '发布中...' : '确认派发多组需求'}
                   </Button>
                 </DialogFooter>
               </form>
@@ -320,7 +695,7 @@ export default function OrderMarketPage() {
         </div>
       </div>
 
-      {/* 分类筛选与统计卡片 */}
+      {/* 分类筛选 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {CATEGORIES.map((cat) => (
@@ -330,7 +705,7 @@ export default function OrderMarketPage() {
               className={`px-4 py-2 rounded-2xl text-xs font-semibold transition ${
                 activeCategory === cat
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
-                  : 'bg-white/80 text-slate-600 hover:bg-white border border-slate-200/60'
+                  : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200/70'
               }`}
             >
               {cat}
@@ -354,18 +729,25 @@ export default function OrderMarketPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredOrders.map((order) => {
             const isClaimed = order.status !== 'open';
+            const groupsCount = order.imageRequirementGroups?.length || 1;
+
             return (
               <Card
                 key={order.id}
-                className="rounded-3xl border border-white/80 bg-white/70 shadow-sm hover:shadow-md transition-all duration-300 backdrop-blur-sm flex flex-col justify-between overflow-hidden group"
+                className="rounded-3xl border border-slate-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between overflow-hidden group"
               >
                 <div>
                   {/* 卡片头部 */}
                   <div className="p-5 pb-3">
                     <div className="flex items-center justify-between gap-2 mb-2">
-                      <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-200">
-                        {order.category}
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-200">
+                          {order.category}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[10px] bg-blue-50 text-blue-600 border-blue-100">
+                          {groupsCount}组图片
+                        </Badge>
+                      </div>
                       {order.urgency === 'super_urgent' && (
                         <span className="flex items-center gap-1 text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
                           <Flame className="w-3 h-3" /> 特急
@@ -382,7 +764,7 @@ export default function OrderMarketPage() {
                     </h3>
                   </div>
 
-                  {/* 参考图（若有） */}
+                  {/* 参考样例图展示 */}
                   {order.referenceImages && order.referenceImages.length > 0 && (
                     <div className="px-5 pb-3">
                       <div className="relative h-28 w-full rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/50">
@@ -392,8 +774,22 @@ export default function OrderMarketPage() {
                           className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
                         />
                         <div className="absolute bottom-1.5 right-1.5 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded-full">
-                          参考图例
+                          {order.referenceImages.length} 张参考样例
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 需求组与图片说明预览 */}
+                  {order.imageRequirementGroups && order.imageRequirementGroups.length > 0 && (
+                    <div className="px-5 pb-2">
+                      <div className="space-y-1">
+                        {order.imageRequirementGroups.slice(0, 2).map((grp, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-[11px] bg-slate-50 p-1.5 px-2.5 rounded-xl text-slate-600">
+                            <span className="font-medium truncate max-w-[180px]">{grp.name}</span>
+                            <span className="font-mono text-slate-400">{grp.quantity}张 · {grp.dimensions || '标准'}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -401,47 +797,36 @@ export default function OrderMarketPage() {
                   {/* 需求文案 */}
                   <div className="px-5 pb-3">
                     <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed bg-slate-50/70 p-2.5 rounded-xl">
-                      {order.requirements || '发布方暂未提供详细附言，接单后可直接与商户沟通。'}
+                      {order.requirements || '发布方已设定单图专属描述，请接单后查阅图例及外链。'}
                     </p>
                   </div>
                 </div>
 
-                {/* 卡片底部操作与金额 */}
-                <div className="p-5 pt-3 border-t border-slate-100 bg-gradient-to-b from-transparent to-slate-50/50">
+                  {/* 卡片底部操作与金额 */}
+                <div className="p-5 pt-3 border-t border-slate-100 bg-slate-50/40">
                   <div className="flex items-center justify-between mb-3 text-xs">
                     <div>
-                      <div className="text-[10px] text-slate-400">设计师税后所得</div>
+                      <div className="text-[10px] text-slate-400">订单价格</div>
                       <div className="font-extrabold text-base text-emerald-600 font-mono">
-                        ¥{order.designerPayout}
+                        ¥{order.designerPayout || order.budget}
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-[10px] text-slate-400">客户总预算</div>
-                      <div className="text-xs font-semibold text-slate-600 font-mono">
-                        ¥{order.budget} <span className="text-[10px] text-slate-400">(抽成 {(order.platformCommissionRate * 100).toFixed(0)}%)</span>
+                      <div className="text-[10px] text-slate-400">交付要求</div>
+                      <div className="text-xs font-semibold text-slate-600">
+                        {order.urgency === 'super_urgent' ? '特急交付' : order.urgency === 'urgent' ? '加急交付' : '标准排期'}
                       </div>
                     </div>
                   </div>
 
-                  {isClaimed ? (
-                    <Button
-                      disabled
-                      variant="secondary"
-                      className="w-full rounded-2xl text-xs h-9 bg-slate-100 text-slate-400 gap-1.5"
-                    >
-                      <CheckCircle2 className="w-4 h-4 text-slate-400" />
-                      已由 {order.claimedByName || '其他设计师'} 接取
-                    </Button>
-                  ) : (
-                    <Button
-                      onClick={() => handleClaimOrder(order.id)}
-                      className="w-full rounded-2xl text-xs h-9 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/20 gap-1.5 font-semibold"
-                    >
-                      <Coins className="w-4 h-4" />
-                      立即抢单接取
-                      <ArrowUpRight className="w-3.5 h-3.5 ml-auto" />
-                    </Button>
-                  )}
+                  <Button
+                    onClick={() => handleClaimOrder(order.id)}
+                    className="w-full rounded-2xl text-xs h-9 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/20 gap-1.5 font-semibold"
+                  >
+                    <Coins className="w-4 h-4" />
+                    立即抢单接取
+                    <ArrowUpRight className="w-3.5 h-3.5 ml-auto" />
+                  </Button>
                 </div>
               </Card>
             );

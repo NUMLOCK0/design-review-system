@@ -26,10 +26,10 @@ import {
 import { getCurrentUser, clearAuthSession, UserInfo } from '@/lib/auth';
 import { toast } from 'sonner';
 
-const ADMIN_NAV_ITEMS = [
-  { href: '/admin/review-workspace', label: '审核作业工作台', icon: Layers, badge: 'Pro' },
-  { href: '/admin/review-rules', label: '多级审核规则流', icon: Sliders },
-  { href: '/admin/admin-config', label: '商业抽成与运营配置', icon: Percent },
+const ALL_ADMIN_NAV_ITEMS = [
+  { href: '/admin/review-workspace', label: '审核作业工作台', icon: Layers, badge: 'Pro', roles: ['admin', 'reviewer'] },
+  { href: '/admin/review-rules', label: '多级审核规则流', icon: Sliders, roles: ['admin', 'reviewer'] },
+  { href: '/admin/admin-config', label: '商业抽成与运营配置', icon: Percent, roles: ['admin'] },
 ];
 
 export function AdminSidebar() {
@@ -50,8 +50,11 @@ export function AdminSidebar() {
     router.push('/login');
   };
 
-  const userName = user?.name || '王总监';
-  const dept = user?.department || '审核运营部';
+  const userRole = user?.role || 'admin';
+  const filteredNavItems = ALL_ADMIN_NAV_ITEMS.filter(item => item.roles.includes(userRole));
+
+  const userName = user?.name || '管理员';
+  const dept = user?.department || '运营管理部';
 
   return (
     <aside className="w-64 glass-card m-4 mr-0 p-4 flex flex-col h-[calc(100vh-2rem)] sticky top-4 select-none shrink-0 bg-white/80 border border-slate-200/80">
@@ -88,7 +91,7 @@ export function AdminSidebar() {
         <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
           后台质检与运营
         </div>
-        {ADMIN_NAV_ITEMS.map((item) => {
+        {filteredNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname.startsWith(item.href);
 

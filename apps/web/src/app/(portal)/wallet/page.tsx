@@ -265,7 +265,7 @@ export default function DesignerWalletPage() {
               资金流水与结算明细账单
             </div>
             <span className="text-[11px] font-normal text-slate-500">
-              平台每一笔抽成扣点均公开透明
+              结算明细与资金流向实时同步
             </span>
           </CardTitle>
         </CardHeader>

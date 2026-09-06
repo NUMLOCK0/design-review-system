@@ -36,8 +36,7 @@ const NAV_GROUPS = [
     groupTitle: '前台业务与接单',
     items: [
       { href: '/order-market', label: '接单与派单大厅', icon: ShoppingBag, badge: '热' },
-      { href: '/review-submit', label: '设计提审前台', icon: UploadCloud },
-      { href: '/review-tasks', label: '审核任务中心', icon: CheckSquare, badge: '实时' },
+      { href: '/review-tasks', label: '我的任务中心', icon: CheckSquare, badge: '实时' },
     ]
   },
   {
@@ -164,9 +163,9 @@ export function Sidebar() {
               <ShoppingBag className="w-3.5 h-3.5 text-amber-500" />
               <span>前台接单与派单大厅</span>
             </DropdownMenuItem>
-            <DropdownMenuItem className="text-xs gap-2" onClick={() => router.push('/review-submit')}>
-              <UploadCloud className="w-3.5 h-3.5 text-blue-500" />
-              <span>设计师提审入口</span>
+            <DropdownMenuItem className="text-xs gap-2" onClick={() => router.push('/review-tasks')}>
+              <CheckSquare className="w-3.5 h-3.5 text-blue-500" />
+              <span>我的任务中心(提审)</span>
             </DropdownMenuItem>
             <DropdownMenuItem className="text-xs gap-2" onClick={() => router.push('/admin-config')}>
               <Percent className="w-3.5 h-3.5 text-indigo-500" />

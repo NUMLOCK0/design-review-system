@@ -31,7 +31,6 @@ import { toast } from 'sonner';
 
 const PORTAL_NAV_ITEMS = [
   { href: '/order-market', label: '接单与派单大厅', icon: ShoppingBag, badge: '热' },
-  { href: '/review-submit', label: '设计提审前台', icon: UploadCloud },
   { href: '/review-tasks', label: '我的任务中心', icon: CheckSquare },
   { href: '/wallet', label: '收益钱包与结算', icon: ShieldCheck, badge: '资金' },
 ];

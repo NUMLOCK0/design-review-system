@@ -4,7 +4,7 @@ import type { ReviewTask, ReviewImageGroup, ReviewImage, AnnotationItem } from '
 export const reviewTasksRouter = Router();
 
 // 内存 Mock 数据仓库（已对标完整数据库表字段，连接数据库后无缝替换）
-let tasks: ReviewTask[] = [
+export let tasks: ReviewTask[] = [
   {
     id: 'task_001',
     taskNo: 'REV-20260905-001',
@@ -237,4 +237,73 @@ reviewTasksRouter.post('/:taskId/images/:imageId/annotations', (req, res) => {
   targetImg.annotations = annotations || [];
   res.json({ code: 200, success: true, message: '批注标记已更新保存', data: targetImg.annotations });
 });
+
+// 6. 设计师正式提交审核 (从 draft/needs_revision 流转至 pending 待初审)
+reviewTasksRouter.post('/:id/submit', (req, res) => {
+  const { id } = req.params;
+  const task = tasks.find(t => t.id === id);
+  if (!task) return res.status(404).json({ code: 404, success: false, message: '任务不存在' });
+
+  task.status = 'pending';
+  task.submittedAt = new Date().toISOString();
+  task.updatedAt = new Date().toISOString();
+
+  // 若存在被驳回的图片，重置为待审状态
+  task.groups?.forEach(g => {
+    g.images.forEach(img => {
+      if (img.status === 'rejected') {
+        img.status = 'pending';
+      }
+    });
+  });
+
+  res.json({
+    code: 200,
+    success: true,
+    message: '设计稿已成功提交审核，已派发至审核质检主管！',
+    data: task
+  });
+});
+
+// 7. 设计师退回接单 (从 draft 状态放弃接单，订单重新流回接单广场)
+reviewTasksRouter.post('/:id/return', (req, res) => {
+  const { id } = req.params;
+  const taskIndex = tasks.findIndex(t => t.id === id);
+  if (taskIndex === -1) return res.status(404).json({ code: 404, success: false, message: '任务不存在' });
+
+  const task = tasks[taskIndex];
+  if (task.status !== 'draft' && task.status !== 'needs_revision') {
+    return res.status(400).json({ code: 400, success: false, message: '当前任务已进入不可撤销审核阶段，无法直接退单' });
+  }
+
+  // 变更任务状态为已退单
+  task.status = 'returned';
+  task.updatedAt = new Date().toISOString();
+
+  // 若关联了原接单需求，将原订单重新释放回开放接单状态 open
+  if (task.orderId) {
+    // 动态查找并恢复订单
+    try {
+      import('./design-orders.js').then(({ designOrders }) => {
+        const order = designOrders?.find((o: any) => o.id === task.orderId);
+        if (order) {
+          order.status = 'open';
+          order.claimedById = undefined;
+          order.claimedByName = undefined;
+          order.claimedAt = undefined;
+          order.taskId = undefined;
+          order.updatedAt = new Date().toISOString();
+        }
+      }).catch(console.error);
+    } catch {}
+  }
+
+  res.json({
+    code: 200,
+    success: true,
+    message: '已成功退回接单！需求已重新释放回接单大厅，任务已关闭',
+    data: task
+  });
+});
+
 

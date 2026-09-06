@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { SystemConfig } from '@design-review/shared';
+import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 
 export const systemConfigRouter = Router();
 
@@ -69,8 +70,8 @@ systemConfigRouter.get('/', (req, res) => {
   });
 });
 
-// 2. 更新全局系统配置与抽成比例（后台管理专用）
-systemConfigRouter.put('/', (req, res) => {
+// 2. 更新全局系统配置与抽成比例（仅限 admin 管理员）
+systemConfigRouter.put('/', authenticate, requireRoles('admin'), (req, res) => {
   const updates = req.body;
   systemConfig = {
     ...systemConfig,

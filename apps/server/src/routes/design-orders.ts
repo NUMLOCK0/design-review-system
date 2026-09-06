@@ -1,11 +1,12 @@
 import { Router } from 'express';
-import type { DesignOrder, SystemConfig, ApiResponse } from '@design-review/shared';
+import type { DesignOrder, SystemConfig, ApiResponse, ReviewTask } from '@design-review/shared';
 import { authenticate } from '../middleware/auth.middleware.js';
+import { tasks } from './review-tasks.js';
 
 export const designOrdersRouter = Router();
 
 // 内存 Mock 接单市场数据
-let designOrders: DesignOrder[] = [
+export let designOrders: DesignOrder[] = [
   {
     id: 'ord_001',
     orderNo: 'ORD-20260905-01',
@@ -69,13 +70,16 @@ let designOrders: DesignOrder[] = [
   }
 ];
 
-// 1. 获取接单广场列表
+// 1. 获取接单广场列表 (接单大厅默认仅展示未被接单的开放需求 open)
 designOrdersRouter.get('/', (req, res) => {
-  const { status, category, urgency } = req.query;
+  const { status = 'open', category, urgency } = req.query;
   let filtered = [...designOrders];
 
+  // 默认过滤掉已被接单的订单，仅展示 open 待接单需求
   if (status && status !== 'all') {
     filtered = filtered.filter(o => o.status === status);
+  } else if (!status) {
+    filtered = filtered.filter(o => o.status === 'open');
   }
   if (category && category !== 'all') {
     filtered = filtered.filter(o => o.category === category);
@@ -103,6 +107,7 @@ designOrdersRouter.post('/', (req, res) => {
     deadline,
     urgency,
     requirements,
+    imageRequirementGroups,
     referenceImages,
     creatorName,
     creatorId
@@ -113,9 +118,19 @@ designOrdersRouter.post('/', (req, res) => {
   }
 
   // 默认根据分类计算抽成比例
-  const rate = category === '详情页设计' ? 0.12 : 0.15;
+  const rate = category === '详情页设计' ? 0.12 : (category === '3D建模与渲染' ? 0.10 : 0.15);
   const numBudget = Number(budget);
   const payout = Number((numBudget * (1 - rate)).toFixed(2));
+
+  // 收集所有组中的首图作为封面
+  const allGroupImages: string[] = [];
+  if (Array.isArray(imageRequirementGroups)) {
+    imageRequirementGroups.forEach(g => {
+      if (Array.isArray(g.referenceImages)) {
+        allGroupImages.push(...g.referenceImages);
+      }
+    });
+  }
 
   const newOrder: DesignOrder = {
     id: `ord_${Date.now()}`,
@@ -129,10 +144,11 @@ designOrdersRouter.post('/', (req, res) => {
     deadline: deadline || new Date(Date.now() + 86400000 * 3).toISOString(),
     urgency: urgency || 'normal',
     requirements: requirements || '',
-    referenceImages: referenceImages || [],
+    imageRequirementGroups: imageRequirementGroups || [],
+    referenceImages: allGroupImages.length > 0 ? allGroupImages : (referenceImages || []),
     status: 'open',
     creatorId: creatorId || 'u_des_1',
-    creatorName: creatorName || '设计师前台',
+    creatorName: creatorName || '前台商户/运营',
     createdAt: new Date().toISOString()
   };
 
@@ -147,10 +163,10 @@ designOrdersRouter.post('/', (req, res) => {
   });
 });
 
-// 3. 设计师抢单 / 接单
+// 3. 设计师抢单 / 接单 (接单后自动在审核任务中心创建关联任务)
 designOrdersRouter.post('/:id/claim', (req, res) => {
   const { id } = req.params;
-  const { designerId, designerName } = req.body;
+  const { designerId = 'u_des_1', designerName = '李设计师' } = req.body;
 
   const order = designOrders.find(o => o.id === id);
   if (!order) {
@@ -161,17 +177,93 @@ designOrdersRouter.post('/:id/claim', (req, res) => {
     return res.status(400).json({ code: 400, success: false, message: '手慢了，该订单已被接取或已下架' });
   }
 
+  const taskId = `task_${Date.now()}`;
+  const taskNo = `REV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
+
   order.status = 'claimed';
-  order.claimedById = designerId || 'u_des_1';
-  order.claimedByName = designerName || '李设计师';
+  order.claimedById = designerId;
+  order.claimedByName = designerName;
   order.claimedAt = new Date().toISOString();
   order.updatedAt = new Date().toISOString();
+  order.taskId = taskId;
+
+  // 自动在审核任务中心创建关联任务草稿/待提交状态
+  const createdTask: ReviewTask = {
+    id: taskId,
+    taskNo,
+    productName: order.title,
+    sku: `SKU-${order.orderNo.slice(-6)}`,
+    platform: order.platform,
+    designerId,
+    designerName,
+    status: 'draft',
+    currentLevel: 1,
+    totalImages: (order.imageRequirementGroups && order.imageRequirementGroups.length > 0)
+      ? order.imageRequirementGroups.reduce((acc, g) => acc + (g.quantity || 1), 0)
+      : (order.referenceImages?.length || 1),
+    approvedCount: 0,
+    rejectedCount: 0,
+    rejectCount: 0,
+    version: 1,
+    urgency: order.urgency === 'super_urgent' ? 'urgent' : (order.urgency === 'urgent' ? 'high' : 'medium'),
+    orderId: order.id,
+    orderBudget: order.budget,
+    designerPayout: order.designerPayout,
+    groups: (order.imageRequirementGroups && order.imageRequirementGroups.length > 0)
+      ? order.imageRequirementGroups.map((grp, idx) => ({
+          id: `grp_${Date.now()}_${idx}`,
+          taskId,
+          groupType: grp.groupType,
+          requiredCount: grp.quantity || 1,
+          images: (grp.referenceImages && grp.referenceImages.length > 0)
+            ? grp.referenceImages.map((url, i) => ({
+                id: `img_${Date.now()}_${idx}_${i}`,
+                taskId,
+                groupId: `grp_${Date.now()}_${idx}`,
+                imageUrl: url,
+                imageIndex: i + 1,
+                designDescription: grp.description || grp.name,
+                version: 1,
+                status: 'pending' as const,
+                createdAt: new Date().toISOString()
+              }))
+            : []
+        }))
+      : [
+          {
+            id: `grp_${Date.now()}_0`,
+            taskId,
+            groupType: 'main_1_1',
+            requiredCount: 1,
+            images: (order.referenceImages && order.referenceImages.length > 0)
+              ? order.referenceImages.map((url, i) => ({
+                  id: `img_${Date.now()}_${i}`,
+                  taskId,
+                  groupId: `grp_${Date.now()}_0`,
+                  imageUrl: url,
+                  imageIndex: i + 1,
+                  designDescription: '设计待交付切图',
+                  version: 1,
+                  status: 'pending' as const,
+                  createdAt: new Date().toISOString()
+                }))
+              : []
+          }
+        ],
+    createdAt: new Date().toISOString()
+  };
+
+  tasks.unshift(createdTask);
 
   res.json({
     code: 200,
     success: true,
-    message: '接单成功！请在截止时间前完成设计并提审',
-    data: order,
+    message: '接单成功！已自动同步至我的任务中心',
+    data: {
+      order,
+      taskId: createdTask.id,
+      taskNo: createdTask.taskNo
+    },
     timestamp: Date.now()
   });
 });

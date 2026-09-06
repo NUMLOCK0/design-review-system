@@ -22,8 +22,12 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { toast } from 'sonner';
 import type { SystemConfig, CommissionTier } from '@design-review/shared';
+import { getCurrentUser } from '@/lib/auth';
+import { useRouter } from 'next/navigation';
 
 export default function AdminConfigPage() {
+  const router = useRouter();
+  const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<SystemConfig | null>(null);
@@ -44,8 +48,18 @@ export default function AdminConfigPage() {
   };
 
   useEffect(() => {
+    const currentUser = getCurrentUser();
+    setUser(currentUser);
+
+    // 非管理员拦截重定向
+    if (currentUser && currentUser.role !== 'admin') {
+      toast.error('权限不足：仅系统管理员 (admin) 拥有商业抽成与系统配置权限');
+      router.replace('/admin/review-workspace');
+      return;
+    }
+
     fetchConfig();
-  }, []);
+  }, [router]);
 
   const handleSave = async () => {
     if (!config) return;
