@@ -1,0 +1,17 @@
+{
+  "name": "design-review-system-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "电商设计稿审核管理系统 (PC SSR前端 + 独立API后端 + UniApp微信小程序)",
+  "scripts": {
+    "dev:server": "pnpm --filter @design-review/server dev",
+    "dev:web": "pnpm --filter @design-review/web dev",
+    "dev:mp": "pnpm --filter @design-review/uni-app dev:mp-weixin",
+    "build:server": "pnpm --filter @design-review/server build",
+    "build:web": "pnpm --filter @design-review/web build",
+    "build:mp": "pnpm --filter @design-review/uni-app build:mp-weixin"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
