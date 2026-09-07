@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(128) UNIQUE NOT NULL,
   password_hash VARCHAR(255),
   avatar_url TEXT,
-  role VARCHAR(20) NOT NULL DEFAULT 'designer', -- admin / reviewer / designer
+  role VARCHAR(20) NOT NULL DEFAULT 'designer', -- advertiser / designer / customer_service / admin
   department VARCHAR(64),
   phone VARCHAR(20),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS review_history (
 -- 初始化基础种子数据 (可选)
 INSERT INTO users (id, name, email, role, department) VALUES
 ('u_admin_1', '系统管理员', 'admin@cozi.com', 'admin', '运营管理部'),
-('u_rev_1', '王总监', 'reviewer@cozi.com', 'reviewer', '视觉设计部'),
+('u_rev_1', '王总监', 'reviewer@cozi.com', 'customer_service', '客服与争议处理部'),
+('u_adv_1', '陈品牌经理', 'advertiser@cozi.com', 'advertiser', '品牌营销部'),
 ('u_des_1', '李设计师', 'designer@cozi.com', 'designer', '视觉设计部')
 ON CONFLICT (id) DO NOTHING;

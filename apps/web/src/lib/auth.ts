@@ -2,9 +2,29 @@ export interface UserInfo {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'reviewer' | 'designer';
+  role: 'advertiser' | 'designer' | 'customer_service' | 'admin';
+  organizationId?: string;
+  isOrganizationAdmin?: boolean;
   department?: string;
   avatarUrl?: string;
+}
+
+export const ROLE_HOME: Record<UserInfo['role'], string> = {
+  advertiser: '/advertiser/dashboard',
+  designer: '/order-market',
+  customer_service: '/service/dashboard',
+  admin: '/admin',
+};
+
+export const ROLE_LABEL: Record<UserInfo['role'], string> = {
+  advertiser: '品牌方',
+  designer: '设计师',
+  customer_service: '客服',
+  admin: '系统管理员',
+};
+
+export function getRoleHome(role: UserInfo['role']): string {
+  return ROLE_HOME[role] || ROLE_HOME.designer;
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';

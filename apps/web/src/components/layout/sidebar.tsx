@@ -6,7 +6,6 @@ import { usePathname, useRouter } from 'next/navigation';
 import { 
   CheckSquare, 
   UploadCloud, 
-  Layers, 
   Sliders, 
   LogOut,
   Palette,
@@ -15,7 +14,8 @@ import {
   ChevronRight,
   User,
   ShoppingBag,
-  Percent
+  Percent,
+  type LucideIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,7 +31,9 @@ import {
 import { getCurrentUser, clearAuthSession, UserInfo } from '@/lib/auth';
 import { toast } from 'sonner';
 
-const NAV_GROUPS = [
+type NavItem = { href: string; label: string; icon: LucideIcon; badge?: string };
+
+const NAV_GROUPS: { groupTitle: string; items: NavItem[] }[] = [
   {
     groupTitle: '前台业务与接单',
     items: [
@@ -42,7 +44,6 @@ const NAV_GROUPS = [
   {
     groupTitle: '后台作业与质检管理',
     items: [
-      { href: '/review-workspace', label: '审核作业工作台', icon: Layers, badge: 'Pro' },
       { href: '/review-rules', label: '审核规则流程', icon: Sliders },
       { href: '/admin-config', label: '商业抽成与运营配置', icon: Percent },
     ]
@@ -74,13 +75,14 @@ export function Sidebar() {
   const getRoleLabel = (role?: string) => {
     switch (role) {
       case 'admin': return '系统管理员';
-      case 'reviewer': return '高级审核主管';
+      case 'customer_service': return '客服与争议专员';
+      case 'advertiser': return '品牌方';
       case 'designer': return '视觉设计师';
       default: return '访客人员';
     }
   };
 
-  const userName = user?.name || '王总监';
+  const userName = user?.name || '未登录';
   const roleTitle = getRoleLabel(user?.role);
   const dept = user?.department || '视觉设计部';
 
@@ -156,7 +158,7 @@ export function Sidebar() {
           <DropdownMenuContent className="w-56 glass-card-subtle p-1.5" align="end" side="top">
             <DropdownMenuLabel className="text-xs">
               <div className="font-semibold">{userName}</div>
-              <div className="text-[10px] text-slate-500 font-normal">{user?.email || 'reviewer@cozi.com'}</div>
+                <div className="text-[10px] text-slate-500 font-normal">{user?.email || '请登录后继续'}</div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-xs gap-2" onClick={() => router.push('/order-market')}>

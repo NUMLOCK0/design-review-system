@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import * as Select from '@radix-ui/react-select';
 import { 
   ShoppingBag, 
   PlusCircle, 
@@ -22,7 +23,8 @@ import {
   ExternalLink,
   ChevronDown,
   Loader2,
-  FileText
+  FileText,
+  Search
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,14 +33,16 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { getCurrentUser } from '@/lib/auth';
+import { fetchWithAuth } from '@/lib/auth';
+import { useCurrentUser } from '@/hooks/use-current-user';
 import { useRouter } from 'next/navigation';
 import type { 
   DesignOrder, 
   PlatformType, 
   ImageGroupType, 
   OrderImageRequirementItem,
-  OrderReferenceImageItem 
+  OrderReferenceImageItem,
+  ReviewRule
 } from '@design-review/shared';
 
 const CATEGORIES = ['全部', '主图设计', '详情页设计', '活动海报', '3D建模与渲染', '精修合成'];
@@ -52,12 +56,23 @@ const PLATFORMS: { id: PlatformType; name: string }[] = [
 
 export default function OrderMarketPage() {
   const router = useRouter();
-  const user = getCurrentUser();
+  const user = useCurrentUser();
   const [orders, setOrders] = useState<DesignOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(1);
   const [activeCategory, setActiveCategory] = useState('全部');
+  const [activePlatform, setActivePlatform] = useState('all');
+  const [activeUrgency, setActiveUrgency] = useState('all');
+  const [keyword, setKeyword] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [selectedOrder, setSelectedOrder] = useState<DesignOrder | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; label: string } | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [isPublishOpen, setIsPublishOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [reviewRules, setReviewRules] = useState<ReviewRule[]>([]);
 
   // 表单状态：每张图片均有独立的描述与要求
   const [formData, setFormData] = useState({
@@ -67,6 +82,7 @@ export default function OrderMarketPage() {
     budget: '',
     deadlineDays: '3',
     urgency: 'normal' as 'normal' | 'urgent' | 'super_urgent',
+    reviewRuleId: '',
     requirements: '',
     imageRequirementGroups: [
       {
@@ -112,25 +128,60 @@ export default function OrderMarketPage() {
 
   const [uploadingGroupIndex, setUploadingGroupIndex] = useState<number | null>(null);
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (nextPage = 1, append = false) => {
     try {
-      setLoading(true);
-      const res = await fetch('http://localhost:8080/api/design-orders');
+      append ? setLoadingMore(true) : setLoading(true);
+      const params = new URLSearchParams({
+        page: String(nextPage),
+        pageSize: '15',
+        category: activeCategory === '全部' ? 'all' : activeCategory,
+        platform: activePlatform,
+        urgency: activeUrgency,
+        keyword: searchKeyword
+      });
+      const res = await fetch(`http://localhost:8080/api/design-orders?${params}`);
       const data = await res.json();
       if (data.success) {
-        setOrders(data.data);
+        setOrders((current) => append ? [...current, ...data.data] : data.data);
+        setPage(nextPage);
+        setHasMore(data.hasMore);
       }
     } catch (e) {
       console.error(e);
       toast.error('获取接单广场数据失败');
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
   useEffect(() => {
     fetchOrders();
-  }, []);
+  }, [activeCategory, activePlatform, activeUrgency, searchKeyword]);
+
+  useEffect(() => {
+    if (user?.role !== 'advertiser') return;
+    fetchWithAuth('/review-rules/mine')
+      .then((response) => response.json())
+      .then((result) => {
+        const nextRules = result.success ? result.data || [] : [];
+        setReviewRules(nextRules);
+        if (nextRules[0]) setFormData((current) => ({ ...current, reviewRuleId: current.reviewRuleId || nextRules[0].id }));
+      })
+      .catch(() => setReviewRules([]));
+  }, [user?.role]);
+
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !hasMore) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && !loading && !loadingMore) {
+        fetchOrders(page + 1, true);
+      }
+    }, { rootMargin: '240px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [page, hasMore, loading, loadingMore, activeCategory, activePlatform, activeUrgency, searchKeyword]);
 
   // 增加图片需求组
   const handleAddImageGroup = () => {
@@ -172,7 +223,7 @@ export default function OrderMarketPage() {
     body.append('folder', 'reference-samples');
 
     try {
-      const res = await fetch('http://localhost:8080/api/upload', {
+      const res = await fetchWithAuth('/upload', {
         method: 'POST',
         body
       });
@@ -260,7 +311,7 @@ export default function OrderMarketPage() {
     setSubmitting(true);
     try {
       const deadline = new Date(Date.now() + Number(formData.deadlineDays) * 86400000).toISOString();
-      const res = await fetch('http://localhost:8080/api/design-orders', {
+      const res = await fetchWithAuth('/design-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -271,9 +322,11 @@ export default function OrderMarketPage() {
           urgency: formData.urgency,
           deadline,
           requirements: formData.requirements,
+          reviewRuleId: formData.reviewRuleId || undefined,
+          reviewRuleName: reviewRules.find((rule) => rule.id === formData.reviewRuleId)?.name,
           imageRequirementGroups: formData.imageRequirementGroups,
-          creatorId: user?.id || 'u_guest',
-          creatorName: user?.name || '前台商户/运营',
+          creatorId: user?.id,
+          creatorName: user?.name,
         }),
       });
 
@@ -294,7 +347,7 @@ export default function OrderMarketPage() {
 
   const handleClaimOrder = async (orderId: string) => {
     try {
-      const res = await fetch(`http://localhost:8080/api/design-orders/${orderId}/claim`, {
+      const res = await fetchWithAuth(`/design-orders/${orderId}/claim`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -319,9 +372,7 @@ export default function OrderMarketPage() {
     }
   };
 
-  const filteredOrders = orders.filter(
-    (o) => activeCategory === '全部' || o.category === activeCategory
-  );
+  const filteredOrders = orders;
 
   return (
     <div className="space-y-6">
@@ -339,19 +390,10 @@ export default function OrderMarketPage() {
               每张图片专属描述
             </Badge>
           </div>
-          <p className="text-xs text-slate-500">
-            设计师可在线抢单；商户可指定多组主图/长图/商详规格，为每张参考图独立编写具体设计要求与排版说明
-          </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <Dialog open={isPublishOpen} onOpenChange={setIsPublishOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold px-5 h-10 rounded-2xl shadow-md shadow-blue-500/20 gap-1.5">
-                <PlusCircle className="w-4 h-4" />
-                发布多组设计定制需求
-              </Button>
-            </DialogTrigger>
+          {user?.role === 'advertiser' && <Dialog open={isPublishOpen} onOpenChange={setIsPublishOpen}>
             <DialogContent className="max-w-3xl bg-white rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
@@ -379,28 +421,12 @@ export default function OrderMarketPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-700">设计类目</label>
-                    <select
-                      value={formData.category}
-                      onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                      className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none"
-                    >
-                      {CATEGORIES.filter((c) => c !== '全部').map((c) => (
-                        <option key={c} value={c}>{c}</option>
-                      ))}
-                    </select>
+                    <Select.Root value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{CATEGORIES.filter((category) => category !== '全部').map((category) => <Select.Item key={category} value={category} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{category}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-700">投放电商平台</label>
-                    <select
-                      value={formData.platform}
-                      onChange={(e) => setFormData({ ...formData, platform: e.target.value as PlatformType })}
-                      className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none"
-                    >
-                      {PLATFORMS.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
+                    <Select.Root value={formData.platform} onValueChange={(value) => setFormData({ ...formData, platform: value as PlatformType })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{PLATFORMS.map((platform) => <Select.Item key={platform.id} value={platform.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{platform.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
                 </div>
 
@@ -421,29 +447,12 @@ export default function OrderMarketPage() {
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-700">交付周期</label>
-                    <select
-                      value={formData.deadlineDays}
-                      onChange={(e) => setFormData({ ...formData, deadlineDays: e.target.value })}
-                      className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none"
-                    >
-                      <option value="1">24 小时极速交付</option>
-                      <option value="2">2 天交付</option>
-                      <option value="3">3 天标准交付</option>
-                      <option value="5">5 天深度打磨</option>
-                    </select>
+                    <Select.Root value={formData.deadlineDays} onValueChange={(value) => setFormData({ ...formData, deadlineDays: value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="1" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>24 小时极速交付</Select.ItemText></Select.Item><Select.Item value="2" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>2 天交付</Select.ItemText></Select.Item><Select.Item value="3" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>3 天标准交付</Select.ItemText></Select.Item><Select.Item value="5" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>5 天深度打磨</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-700">加急程度</label>
-                    <select
-                      value={formData.urgency}
-                      onChange={(e) => setFormData({ ...formData, urgency: e.target.value as any })}
-                      className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none"
-                    >
-                      <option value="normal">标准单</option>
-                      <option value="urgent">加急单</option>
-                      <option value="super_urgent">特急单 (置顶)</option>
-                    </select>
+                    <Select.Root value={formData.urgency} onValueChange={(value) => setFormData({ ...formData, urgency: value as any })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="normal" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>标准单</Select.ItemText></Select.Item><Select.Item value="urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>加急单</Select.ItemText></Select.Item><Select.Item value="super_urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>特急单 (置顶)</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
                 </div>
 
@@ -494,19 +503,11 @@ export default function OrderMarketPage() {
                                 placeholder="组名称 (如：1:1白底图)"
                                 className="text-xs rounded-xl h-8 bg-white font-semibold max-w-xs"
                               />
-                              <select
-                                value={group.groupType}
-                                onChange={(e) => {
+                              <Select.Root value={group.groupType} onValueChange={(value) => {
                                   const updated = [...formData.imageRequirementGroups];
-                                  updated[gIdx].groupType = e.target.value as ImageGroupType;
+                                  updated[gIdx].groupType = value as ImageGroupType;
                                   setFormData({ ...formData, imageRequirementGroups: updated });
-                                }}
-                                className="h-8 text-xs rounded-xl bg-white border border-slate-200 px-2 text-slate-700 outline-none"
-                              >
-                                <option value="main_1_1">1:1 方形主图</option>
-                                <option value="main_3_4">3:4 竖版长图</option>
-                                <option value="detail">商详长图切片</option>
-                              </select>
+                                }}><Select.Trigger className="flex h-8 w-36 items-center justify-between rounded-xl border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-3.5 w-3.5 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="main_1_1" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>1:1 方形主图</Select.ItemText></Select.Item><Select.Item value="main_3_4" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>3:4 竖版长图</Select.ItemText></Select.Item><Select.Item value="detail" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>商详长图切片</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
                             </div>
 
                             <div className="flex items-center gap-2">
@@ -691,7 +692,7 @@ export default function OrderMarketPage() {
                 </DialogFooter>
               </form>
             </DialogContent>
-          </Dialog>
+          </Dialog>}
         </div>
       </div>
 
@@ -712,9 +713,23 @@ export default function OrderMarketPage() {
             </button>
           ))}
         </div>
-        <div className="text-xs text-slate-500 font-medium">
-          当前共 <b className="text-blue-600">{filteredOrders.length}</b> 个需求待承接
+        <div className="text-xs text-slate-500 font-medium">已加载 <b className="text-blue-600">{filteredOrders.length}</b> 个需求</div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/70 bg-white/80 p-3 shadow-sm">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+          <Input
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && setSearchKeyword(keyword.trim())}
+            placeholder="搜索订单号、标题、需求说明或发布方"
+            className="h-9 rounded-xl pl-9 text-xs"
+          />
         </div>
+        <Select.Root value={activePlatform} onValueChange={setActivePlatform}><Select.Trigger className="flex h-9 w-32 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>全部平台</Select.ItemText></Select.Item>{PLATFORMS.map((platform) => <Select.Item key={platform.id} value={platform.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{platform.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
+        <Select.Root value={activeUrgency} onValueChange={setActiveUrgency}><Select.Trigger className="flex h-9 w-32 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>全部时效</Select.ItemText></Select.Item><Select.Item value="normal" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>标准单</Select.ItemText></Select.Item><Select.Item value="urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>加急单</Select.ItemText></Select.Item><Select.Item value="super_urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>特急单</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
+        <Button onClick={() => setSearchKeyword(keyword.trim())} className="h-9 rounded-xl bg-slate-800 px-4 text-xs text-white hover:bg-slate-700">查询</Button>
       </div>
 
       {/* 接单卡片列表 */}
@@ -726,7 +741,7 @@ export default function OrderMarketPage() {
           <p className="text-xs text-slate-500 font-medium">暂无对应分类的接单需求</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           {filteredOrders.map((order) => {
             const isClaimed = order.status !== 'open';
             const groupsCount = order.imageRequirementGroups?.length || 1;
@@ -734,11 +749,12 @@ export default function OrderMarketPage() {
             return (
               <Card
                 key={order.id}
-                className="rounded-3xl border border-slate-200/80 bg-white shadow-sm hover:shadow-md transition-all duration-300 flex flex-col justify-between overflow-hidden group"
+                onClick={() => setSelectedOrder(order)}
+                className="cursor-pointer rounded-2xl border border-slate-200/80 bg-white shadow-sm hover:-translate-y-0.5 hover:shadow-md transition-all duration-300 flex flex-col justify-between overflow-hidden group"
               >
                 <div>
                   {/* 卡片头部 */}
-                  <div className="p-5 pb-3">
+                  <div className="p-3 pb-2">
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <div className="flex items-center gap-1.5">
                         <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-200">
@@ -759,15 +775,15 @@ export default function OrderMarketPage() {
                         </span>
                       )}
                     </div>
-                    <h3 className="font-bold text-sm text-slate-800 line-clamp-2 group-hover:text-blue-600 transition">
+                    <h3 className="font-bold text-xs text-slate-800 line-clamp-2 group-hover:text-blue-600 transition">
                       {order.title}
                     </h3>
                   </div>
 
                   {/* 参考样例图展示 */}
                   {order.referenceImages && order.referenceImages.length > 0 && (
-                    <div className="px-5 pb-3">
-                      <div className="relative h-28 w-full rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/50">
+                    <div className="px-3 pb-2">
+                      <div className="relative h-24 w-full rounded-xl overflow-hidden bg-slate-100 border border-slate-200/50">
                         <img
                           src={order.referenceImages[0]}
                           alt="参考图"
@@ -782,7 +798,7 @@ export default function OrderMarketPage() {
 
                   {/* 需求组与图片说明预览 */}
                   {order.imageRequirementGroups && order.imageRequirementGroups.length > 0 && (
-                    <div className="px-5 pb-2">
+                    <div className="px-3 pb-2">
                       <div className="space-y-1">
                         {order.imageRequirementGroups.slice(0, 2).map((grp, idx) => (
                           <div key={idx} className="flex items-center justify-between text-[11px] bg-slate-50 p-1.5 px-2.5 rounded-xl text-slate-600">
@@ -795,15 +811,15 @@ export default function OrderMarketPage() {
                   )}
 
                   {/* 需求文案 */}
-                  <div className="px-5 pb-3">
-                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed bg-slate-50/70 p-2.5 rounded-xl">
+                  <div className="px-3 pb-2">
+                    <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed bg-slate-50/70 p-2 rounded-lg">
                       {order.requirements || '发布方已设定单图专属描述，请接单后查阅图例及外链。'}
                     </p>
                   </div>
                 </div>
 
                   {/* 卡片底部操作与金额 */}
-                <div className="p-5 pt-3 border-t border-slate-100 bg-slate-50/40">
+                <div className="p-3 pt-2 border-t border-slate-100 bg-slate-50/40">
                   <div className="flex items-center justify-between mb-3 text-xs">
                     <div>
                       <div className="text-[10px] text-slate-400">订单价格</div>
@@ -820,7 +836,7 @@ export default function OrderMarketPage() {
                   </div>
 
                   <Button
-                    onClick={() => handleClaimOrder(order.id)}
+                    onClick={(e) => { e.stopPropagation(); handleClaimOrder(order.id); }}
                     className="w-full rounded-2xl text-xs h-9 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/20 gap-1.5 font-semibold"
                   >
                     <Coins className="w-4 h-4" />
@@ -833,6 +849,97 @@ export default function OrderMarketPage() {
           })}
         </div>
       )}
+      <div ref={loadMoreRef} className="h-12 py-3 text-center text-xs text-slate-400">
+        {loadingMore ? '正在加载更多...' : hasMore ? '下拉加载更多' : filteredOrders.length > 0 ? '已加载全部需求' : ''}
+      </div>
+
+      <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto rounded-3xl bg-white p-6">
+          {selectedOrder && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-base text-slate-800">{selectedOrder.title}</DialogTitle>
+                <CardDescription className="text-xs">{selectedOrder.orderNo} · {selectedOrder.creatorName}</CardDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
+                <div>设计类目：<b>{selectedOrder.category}</b></div>
+                <div>投放平台：<b>{PLATFORMS.find((p) => p.id === selectedOrder.platform)?.name || selectedOrder.platform}</b></div>
+                <div>设计师收入：<b className="text-emerald-600">¥{selectedOrder.designerPayout || selectedOrder.budget}</b></div>
+                <div>交付时间：<b>{new Date(selectedOrder.deadline).toLocaleString('zh-CN')}</b></div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3 text-xs leading-6 text-slate-600 whitespace-pre-wrap">{selectedOrder.requirements || '暂无补充说明'}</div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-slate-800">图片需求组清单</h3>
+                  <span className="text-[11px] text-slate-400">共 {selectedOrder.imageRequirementGroups?.length || 0} 组</span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-700">作品审核流</label>
+                  <Select.Root value={formData.reviewRuleId || 'unselected'} onValueChange={(value) => setFormData({ ...formData, reviewRuleId: value === 'unselected' ? '' : value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="unselected" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>暂不绑定（后续补充）</Select.ItemText></Select.Item>{reviewRules.map((rule) => <Select.Item key={rule.id} value={rule.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{rule.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
+                </div>
+                <div className="space-y-2">
+                  {(selectedOrder.imageRequirementGroups || []).map((group, index) => (
+                    <div key={group.id || index} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold text-slate-800">{index + 1}. {group.name}</div>
+                          <div className="mt-1 text-[11px] text-slate-500">{group.quantity} 张 · {group.dimensions || '标准尺寸'} · {group.groupType}</div>
+                        </div>
+                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-600">需求组</span>
+                      </div>
+                      {group.description && <p className="mt-2 text-[11px] leading-5 text-slate-500">{group.description}</p>}
+                      {group.referenceImages?.length > 0 && (
+                        <div className="mt-2 flex gap-2 overflow-x-auto">
+                          {group.referenceImages.map((image, imageIndex) => (
+                            <button
+                              type="button"
+                              key={`${image}-${imageIndex}`}
+                              onClick={() => setPreviewImage({ url: image, label: `${group.name}参考图${imageIndex + 1}` })}
+                              className="group/image relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-slate-200"
+                            >
+                              <img src={image} alt={`${group.name}参考图${imageIndex + 1}`} className="h-full w-full object-cover transition group-hover/image:scale-105" />
+                              <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-center text-[9px] text-white">点击放大</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {group.referenceImageItems?.some((item) => item.description) && (
+                        <div className="mt-2 space-y-1 text-[11px] text-slate-500">
+                          {group.referenceImageItems.filter((item) => item.description).map((item) => <p key={item.id}>参考图说明：{item.description}</p>)}
+                        </div>
+                      )}
+                      {group.referenceLinks?.length > 0 && (
+                        <div className="mt-2 space-y-1 text-[11px]">
+                          {group.referenceLinks.map((link) => <a key={link} href={link} target="_blank" rel="noreferrer" className="block truncate text-blue-600 hover:underline">参考链接：{link}</a>)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <DialogFooter>
+                <Button onClick={() => { setSelectedOrder(null); handleClaimOrder(selectedOrder.id); }} className="rounded-xl bg-blue-600 text-xs text-white">立即抢单接取</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}>
+        <DialogContent className="max-w-4xl rounded-3xl border-slate-700 bg-slate-950 p-4">
+          {previewImage && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-sm text-slate-100">{previewImage.label}</DialogTitle>
+              </DialogHeader>
+              <div className="flex max-h-[75vh] items-center justify-center overflow-auto rounded-2xl bg-black/30 p-2">
+                <img src={previewImage.url} alt={previewImage.label} className="max-h-[70vh] max-w-full rounded-xl object-contain" />
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

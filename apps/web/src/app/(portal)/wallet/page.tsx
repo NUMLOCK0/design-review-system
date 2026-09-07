@@ -22,11 +22,11 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { getCurrentUser } from '@/lib/auth';
+import { useCurrentUser } from '@/hooks/use-current-user';
 import type { DesignerWallet } from '@design-review/shared';
 
 export default function DesignerWalletPage() {
-  const user = getCurrentUser();
+  const user = useCurrentUser();
   const [wallet, setWallet] = useState<DesignerWallet | null>(null);
   const [loading, setLoading] = useState(true);
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -34,6 +34,7 @@ export default function DesignerWalletPage() {
   const [withdrawing, setWithdrawing] = useState(false);
 
   const fetchWallet = async () => {
+    if (!user) return;
     try {
       setLoading(true);
       const res = await fetch(`http://localhost:8080/api/wallet/my-wallet?designerId=${user?.id || 'u_des_1'}`);
@@ -50,7 +51,7 @@ export default function DesignerWalletPage() {
 
   useEffect(() => {
     fetchWallet();
-  }, []);
+  }, [user?.id]);
 
   const handleWithdraw = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,9 +111,6 @@ export default function DesignerWalletPage() {
               T+1 极速清算
             </Badge>
           </div>
-          <p className="text-xs text-slate-500">
-            透明查看接单完结所得、平台扣点明细 (8%~15%) 与实名提现账户
-          </p>
         </div>
 
         <Dialog open={isWithdrawOpen} onOpenChange={setIsWithdrawOpen}>

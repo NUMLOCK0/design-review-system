@@ -9,8 +9,13 @@ import { authenticate } from '../middleware/auth.middleware.js';
 export const authRouter = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'design-review-secret-key-2026';
 
+// 兼容旧库中的 reviewer：历史审核员账号统一迁移为客服角色。
+function normalizeRole(role: string) {
+  return role === 'reviewer' ? 'customer_service' : role;
+}
+
 // 内存 Mock 数据（数据库连接不可用时的安全回退）
-let memoryUsers = [
+let memoryUsers: any[] = [
   {
     id: 'u_admin_1',
     name: '系统管理员',
@@ -25,8 +30,19 @@ let memoryUsers = [
     name: '王总监(高级审核)',
     email: 'reviewer@cozi.com',
     passwordHash: bcrypt.hashSync('123456', 10),
-    role: 'reviewer',
-    department: '视觉设计部',
+    role: 'customer_service',
+    department: '客服与争议处理部',
+    avatarUrl: ''
+  },
+  {
+    id: 'u_adv_1',
+    name: '陈品牌经理',
+    email: 'advertiser@cozi.com',
+    passwordHash: bcrypt.hashSync('123456', 10),
+    role: 'advertiser',
+    organizationId: 'org_demo_1',
+    isOrganizationAdmin: true,
+    department: '品牌营销部',
     avatarUrl: ''
   },
   {
@@ -49,7 +65,8 @@ const registerSchema = z.object({
   name: z.string().min(2, { message: '姓名长度不能少于2位' }),
   email: z.string().email({ message: '请输入有效的邮箱地址' }),
   password: z.string().min(6, { message: '密码长度不能少于6位' }),
-  role: z.enum(['admin', 'reviewer', 'designer']).default('designer'),
+  // 管理员与客服由平台侧配置，不允许通过公开注册提权。
+  role: z.enum(['advertiser', 'designer']).default('designer'),
   department: z.string().optional()
 });
 
@@ -77,9 +94,11 @@ authRouter.post('/login', async (req, res, next) => {
             name: rows[0].name,
             email: rows[0].email,
             passwordHash: rows[0].password_hash,
-            role: rows[0].role,
+            role: normalizeRole(rows[0].role),
             department: rows[0].department,
-            avatarUrl: rows[0].avatar_url
+            avatarUrl: rows[0].avatar_url,
+            organizationId: rows[0].organization_id,
+            isOrganizationAdmin: rows[0].is_organization_admin
           };
         }
       } catch (e) {
@@ -117,8 +136,10 @@ authRouter.post('/login', async (req, res, next) => {
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role,
-      department: user.department
+      role: normalizeRole(user.role),
+      department: user.department,
+      organizationId: user.organizationId,
+      isOrganizationAdmin: user.isOrganizationAdmin
     };
     const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
 
@@ -132,9 +153,11 @@ authRouter.post('/login', async (req, res, next) => {
           id: user.id,
           name: user.name,
           email: user.email,
-          role: user.role,
+          role: normalizeRole(user.role),
           department: user.department,
-          avatarUrl: user.avatarUrl
+          avatarUrl: user.avatarUrl,
+          organizationId: user.organizationId,
+          isOrganizationAdmin: user.isOrganizationAdmin
         }
       },
       timestamp: Date.now()
@@ -159,6 +182,8 @@ authRouter.post('/register', async (req, res, next) => {
     const { name, email, password, role, department } = parseResult.data;
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = `u_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    const organizationId = role === 'advertiser' ? 'org_demo_1' : undefined;
+    const isOrganizationAdmin = role === 'advertiser';
 
     if (dbPool) {
       try {
@@ -168,9 +193,9 @@ authRouter.post('/register', async (req, res, next) => {
         }
 
         await dbPool.query(
-          `INSERT INTO users (id, name, email, password_hash, role, department)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [userId, name, email, passwordHash, role, department || '视觉设计部']
+          `INSERT INTO users (id, name, email, password_hash, role, department, organization_id, is_organization_admin)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [userId, name, email, passwordHash, role, department || '视觉设计部', organizationId || null, isOrganizationAdmin]
         );
       } catch (err: any) {
         console.error('MySQL 注册插入失败:', err);
@@ -184,6 +209,8 @@ authRouter.post('/register', async (req, res, next) => {
       email,
       passwordHash,
       role,
+      organizationId,
+      isOrganizationAdmin,
       department: department || '视觉设计部',
       avatarUrl: ''
     };
@@ -193,7 +220,7 @@ authRouter.post('/register', async (req, res, next) => {
       id: newUser.id,
       name: newUser.name,
       email: newUser.email,
-      role: newUser.role,
+      role: normalizeRole(newUser.role),
       department: newUser.department
     };
     const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '7d' });
@@ -208,8 +235,10 @@ authRouter.post('/register', async (req, res, next) => {
           id: newUser.id,
           name: newUser.name,
           email: newUser.email,
-          role: newUser.role,
-          department: newUser.department
+          role: normalizeRole(newUser.role),
+          department: newUser.department,
+          organizationId: newUser.organizationId,
+          isOrganizationAdmin: newUser.isOrganizationAdmin
         }
       },
       timestamp: Date.now()
@@ -232,7 +261,12 @@ authRouter.get('/me', authenticate, async (req, res, next) => {
           [userId]
         );
         if (rows && rows.length > 0) {
-          user = rows[0];
+          user = {
+            ...rows[0],
+            role: normalizeRole(rows[0].role),
+            organizationId: rows[0].organization_id,
+            isOrganizationAdmin: rows[0].is_organization_admin
+          };
         }
       } catch (e) {
         console.error('从数据库读取当前用户失败:', e);

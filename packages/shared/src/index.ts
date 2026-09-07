@@ -1,5 +1,5 @@
 // ================= 用户与权限 =================
-export type UserRole = 'admin' | 'reviewer' | 'designer';
+export type UserRole = 'advertiser' | 'designer' | 'customer_service' | 'admin';
 
 export interface User {
   id: string;
@@ -7,6 +7,8 @@ export interface User {
   email: string;
   avatarUrl?: string;
   role: UserRole;
+  organizationId?: string;
+  isOrganizationAdmin?: boolean;
   department?: string;
   phone?: string;
   isActive: boolean;
@@ -85,6 +87,9 @@ export interface ReviewRuleLevel {
 export interface ReviewRule {
   id: string;
   name: string;
+  organizationId?: string;
+  ownerId?: string;
+  ownerName?: string;
   platform: PlatformType;
   category?: string;
   rejectLimit: number;
@@ -101,6 +106,7 @@ export interface ReviewImage {
   taskId: string;
   groupId: string;
   imageUrl: string;
+  originalAssetId?: string; // 无水印原图资产，仅在品牌方确认验收后可下载
   thumbnailUrl?: string;
   imageIndex: number;
   width?: number;
@@ -135,6 +141,9 @@ export interface ReviewTask {
   platform: PlatformType;
   designerId: string;
   designerName: string;
+  advertiserId?: string;
+  advertiserName?: string;
+  organizationId?: string;
   ruleId?: string;
   ruleName?: string;
   status: TaskStatus;
@@ -155,6 +164,9 @@ export interface ReviewTask {
   disputeReason?: string;
   submittedAt?: string;
   completedAt?: string;
+  acceptedAt?: string;
+  acceptedById?: string;
+  acceptedByName?: string;
   groups?: ReviewImageGroup[];
   createdAt: string;
   updatedAt?: string;
@@ -179,6 +191,7 @@ export interface PaginatedResult<T> {
 
 // ================= 设计接单与派单市场 (前台) =================
 export type OrderStatus = 'open' | 'claimed' | 'in_progress' | 'submitted' | 'completed' | 'cancelled';
+export type OrderPublicationStatus = 'draft' | 'pending_service_review' | 'published' | 'rejected';
 
 export interface OrderReferenceImageItem {
   id: string;
@@ -214,8 +227,18 @@ export interface DesignOrder {
   referenceImages?: string[]; // 兼容旧字段
   attachmentUrl?: string; // 附件包
   status: OrderStatus;
+  publicationStatus?: OrderPublicationStatus;
+  publicationReviewComment?: string;
+  publicationReviewedAt?: string;
+  publicationReviewerId?: string;
+  publicationReviewerName?: string;
   creatorId: string;
   creatorName: string;
+  organizationId?: string;
+  reviewRuleId?: string;
+  reviewRuleName?: string;
+  isDisputed?: boolean;
+  disputeId?: string;
   claimedById?: string;
   claimedByName?: string;
   claimedAt?: string;
@@ -223,6 +246,84 @@ export interface DesignOrder {
   taskId?: string; // 关联的审核任务ID
   createdAt: string;
   updatedAt?: string;
+}
+
+// ================= 设计师邀请与推荐 =================
+export type InvitationStatus = 'queued' | 'sent' | 'accepted' | 'declined' | 'expired' | 'cancelled';
+
+export interface DesignerProfile {
+  userId: string;
+  name: string;
+  avatarUrl?: string;
+  categories: string[];
+  platforms: PlatformType[];
+  styles: string[];
+  minBudget?: number;
+  maxActiveOrders: number;
+  availabilityStatus: 'available' | 'busy' | 'unavailable';
+  portfolioUrls: string[];
+  activeOrderCount: number;
+  qualityScore: number;
+  onTimeRate: number;
+  recommendationScore?: number;
+  recommendationReasons?: string[];
+}
+
+export interface OrderInvitation {
+  id: string;
+  orderId: string;
+  orderNo: string;
+  orderTitle: string;
+  inviterId: string;
+  inviterName: string;
+  designerId: string;
+  designerName: string;
+  status: InvitationStatus;
+  inviteMessage?: string;
+  recommendationScore?: number;
+  recommendationReasons?: string[];
+  expiresAt: string;
+  sentAt?: string;
+  respondedAt?: string;
+  createdAt: string;
+}
+
+export type DisputeStatus = 'open' | 'mediation' | 'resolved' | 'escalated';
+
+export interface OrderDispute {
+  id: string;
+  orderId: string;
+  orderNo: string;
+  initiatorId: string;
+  initiatorName: string;
+  initiatorRole: 'advertiser' | 'designer';
+  respondentId?: string;
+  respondentName?: string;
+  reason: string;
+  description: string;
+  evidenceUrls?: string[];
+  status: DisputeStatus;
+  handlerId?: string;
+  handlerName?: string;
+  resolutionComment?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+// ================= 站内信 =================
+export type SiteMessageType = 'system' | 'order' | 'review' | 'dispute' | 'announcement';
+
+export interface SiteMessage {
+  id: string;
+  recipientId: string;
+  senderName?: string;
+  type: SiteMessageType;
+  title: string;
+  content: string;
+  link?: string;
+  isRead: boolean;
+  createdAt: string;
+  readAt?: string;
 }
 
 // ================= 设计师钱包与财务结算 =================

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from "react";
+import * as Select from '@radix-ui/react-select';
 import Link from "next/link";
 import { 
   Search, 
@@ -22,7 +23,9 @@ import {
   Eye,
   ExternalLink,
   FileArchive,
-  Image as ImageIcon
+  Image as ImageIcon,
+  ChevronDown,
+  Download
 } from "lucide-react";
 import { TASK_STATUS_MAP, PLATFORM_MAP, type ReviewTask, type PlatformType } from "@design-review/shared";
 import { Button } from "@/components/ui/button";
@@ -57,10 +60,12 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { getCurrentUser } from "@/lib/auth";
+import { fetchWithAuth } from "@/lib/auth";
+import { useCurrentUser } from "@/hooks/use-current-user";
+import ReviewWorkspaceContent from "@/components/review-workspace";
 
 export default function ReviewTasksPage() {
-  const user = getCurrentUser();
+  const user = useCurrentUser();
   const [tasks, setTasks] = useState<ReviewTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -70,11 +75,12 @@ export default function ReviewTasksPage() {
   // 任务详情弹窗状态
   const [detailTask, setDetailTask] = useState<ReviewTask | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [workspaceTaskId, setWorkspaceTaskId] = useState<string | null>(null);
 
   const fetchTasks = async () => {
     try {
       setLoading(true);
-      const res = await fetch("http://localhost:8080/api/review-tasks", { cache: "no-store" });
+      const res = await fetchWithAuth('/review-tasks', { cache: "no-store" });
       const json = await res.json();
       if (json.success) {
         setTasks(json.data?.list || []);
@@ -96,11 +102,21 @@ export default function ReviewTasksPage() {
     setShowDetailModal(true);
   };
 
+  const handleOpenWorkspace = (taskId: string) => {
+    setShowDetailModal(false);
+    setWorkspaceTaskId(taskId);
+  };
+
+  const handleCloseWorkspace = () => {
+    setWorkspaceTaskId(null);
+    fetchTasks();
+  };
+
   // 1. 提交审核操作 (草稿或被驳回修改后重新提交)
   const handleSubmitTask = async (taskId: string) => {
     setOperatingTaskId(taskId);
     try {
-      const res = await fetch(`http://localhost:8080/api/review-tasks/${taskId}/submit`, {
+      const res = await fetchWithAuth(`/review-tasks/${taskId}/submit`, {
         method: "POST",
       });
       const data = await res.json();
@@ -121,7 +137,7 @@ export default function ReviewTasksPage() {
   const handleReturnTask = async (taskId: string) => {
     setOperatingTaskId(taskId);
     try {
-      const res = await fetch(`http://localhost:8080/api/review-tasks/${taskId}/return`, {
+      const res = await fetchWithAuth(`/review-tasks/${taskId}/return`, {
         method: "POST",
       });
       const data = await res.json();
@@ -135,6 +151,37 @@ export default function ReviewTasksPage() {
       toast.error(err.message || "退单失败");
     } finally {
       setOperatingTaskId(null);
+    }
+  };
+
+  const handleAcceptTask = async (taskId: string) => {
+    setOperatingTaskId(taskId);
+    try {
+      const response = await fetchWithAuth(`/review-tasks/${taskId}/acceptance`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || '确认验收失败');
+      setDetailTask(result.data);
+      toast.success(result.message);
+      fetchTasks();
+    } catch (error: any) {
+      toast.error(error.message || '确认验收失败');
+    } finally {
+      setOperatingTaskId(null);
+    }
+  };
+
+  const downloadDelivery = async (url: string, filename: string) => {
+    try {
+      const response = await fetchWithAuth(url);
+      if (!response.ok) throw new Error('下载失败');
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error: any) {
+      toast.error(error.message || '下载失败');
     }
   };
 
@@ -152,6 +199,21 @@ export default function ReviewTasksPage() {
   const inReviewCount = tasks.filter(t => t.status === 'pending' || t.status === 'in_review').length;
   const rejectedCount = tasks.filter(t => t.status === 'needs_revision').length;
   const approvedCount = tasks.filter(t => t.status === 'approved').length;
+  const hasListFilter = Boolean(searchKeyword || statusFilter !== 'all');
+  const emptyTaskMessage = hasListFilter
+    ? '暂无符合筛选条件的审核任务'
+    : user?.role === 'designer'
+      ? '当前没有待处理的设计任务，去接单广场承接新订单吧'
+      : user?.role === 'advertiser'
+        ? '当前审核节点暂无待处理任务，请稍后刷新'
+        : user?.role === 'admin'
+          ? '当前暂无审核任务'
+          : '当前暂无待处理审核任务';
+  const emptyTaskAction = !hasListFilter && user?.role === 'designer'
+    ? { href: '/order-market', label: '去抢单' }
+    : !hasListFilter && user?.role === 'advertiser'
+      ? { href: '/advertiser/orders?create=1', label: '去发布设计订单' }
+      : null;
 
   return (
     <div className="space-y-6">
@@ -169,9 +231,6 @@ export default function ReviewTasksPage() {
               支持在线提审与退单释放
             </Badge>
           </div>
-          <p className="text-xs text-slate-500">
-            随时跟踪已接取的设计任务，支持查看任务实际详情、上传切图一键提审及主动退单流转
-          </p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -184,12 +243,14 @@ export default function ReviewTasksPage() {
             <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
             刷新状态
           </Button>
-          <Link href="/order-market">
-            <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-2xl text-xs font-semibold px-5 h-10 gap-1.5 shadow-md shadow-blue-500/20">
-              <Plus className="w-4 h-4" />
-              <span>去接单广场抢新单</span>
-            </Button>
-          </Link>
+          {user?.role !== 'advertiser' && (
+            <Link href="/order-market">
+              <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-2xl text-xs font-semibold px-5 h-10 gap-1.5 shadow-md shadow-blue-500/20">
+                <Plus className="w-4 h-4" />
+                <span>去接单广场抢新单</span>
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -270,27 +331,16 @@ export default function ReviewTasksPage() {
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-9 text-xs rounded-xl bg-white border border-slate-200 px-3 text-slate-700 outline-none"
-            >
-              <option value="all">全部任务状态</option>
-              <option value="draft">待交付 (制作中)</option>
-              <option value="pending">待初审质检</option>
-              <option value="in_review">审核会审中</option>
-              <option value="needs_revision">待修改 (驳回)</option>
-              <option value="approved">终审已通过</option>
-              <option value="returned">已退单释放</option>
-            </select>
+            <Select.Root value={statusFilter} onValueChange={setStatusFilter}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15 sm:w-48"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>全部任务状态</Select.ItemText></Select.Item><Select.Item value="draft" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>待交付 (制作中)</Select.ItemText></Select.Item><Select.Item value="pending" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>待初审质检</Select.ItemText></Select.Item><Select.Item value="in_review" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>审核会审中</Select.ItemText></Select.Item><Select.Item value="needs_revision" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>待修改 (驳回)</Select.ItemText></Select.Item><Select.Item value="approved" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>终审已通过</Select.ItemText></Select.Item><Select.Item value="returned" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>已退单释放</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
           </div>
         </div>
 
         {loading ? (
           <div className="py-16 text-center text-xs text-slate-400">正在同步审核任务中心数据...</div>
         ) : filteredTasks.length === 0 ? (
-          <div className="py-16 text-center text-xs text-slate-400">
-            暂无匹配的审核任务，请先去【接单与派单大厅】抢单接取
+          <div className="space-y-2 py-16 text-center text-xs text-slate-400">
+            <p>{emptyTaskMessage}</p>
+            {emptyTaskAction && <Link href={emptyTaskAction.href} className="inline-flex items-center gap-1 font-medium text-blue-600 hover:text-blue-700 hover:underline">{emptyTaskAction.label}<ArrowUpRight className="h-3.5 w-3.5" /></Link>}
           </div>
         ) : (
           <div className="rounded-2xl border border-slate-100 overflow-hidden bg-white/90">
@@ -424,11 +474,9 @@ export default function ReviewTasksPage() {
                           {/* 状态 2: 待修改驳回 (可查看批注 / 重新提交审核) */}
                           {task.status === 'needs_revision' && (
                             <>
-                              <Link href={`/admin/review-workspace?taskId=${task.id}`}>
-                                <Button size="sm" variant="outline" className="h-7 text-[11px] rounded-xl px-2.5 border-rose-200 text-rose-600 bg-rose-50/50">
-                                  查看批注
-                                </Button>
-                              </Link>
+                              <Button size="sm" variant="outline" onClick={() => handleOpenWorkspace(task.id)} className="h-7 text-[11px] rounded-xl px-2.5 border-rose-200 text-rose-600 bg-rose-50/50">
+                                查看批注
+                              </Button>
                               <Button
                                 size="sm"
                                 onClick={() => handleSubmitTask(task.id)}
@@ -443,22 +491,18 @@ export default function ReviewTasksPage() {
 
                           {/* 状态 3: 待审核 / 审核中 (进入审核工作台) */}
                           {(task.status === 'pending' || task.status === 'in_review') && (
-                            <Link href={`/admin/review-workspace?taskId=${task.id}`}>
-                              <Button size="sm" variant="ghost" className="h-7 text-[11px] rounded-xl text-blue-600 hover:text-blue-700 gap-1 font-semibold">
-                                审核进度
-                                <ChevronRight className="w-3 h-3" />
-                              </Button>
-                            </Link>
+                            <Button size="sm" variant="ghost" onClick={() => handleOpenWorkspace(task.id)} className="h-7 text-[11px] rounded-xl text-blue-600 hover:text-blue-700 gap-1 font-semibold">
+                              审核进度
+                              <ChevronRight className="w-3 h-3" />
+                            </Button>
                           )}
 
                           {/* 状态 4: 已通过 (查看终审结果) */}
                           {task.status === 'approved' && (
-                            <Link href={`/admin/review-workspace?taskId=${task.id}`}>
-                              <Button size="sm" variant="ghost" className="h-7 text-[11px] rounded-xl text-emerald-600 hover:text-emerald-700 gap-1 font-semibold">
-                                终审成果
-                                <ChevronRight className="w-3 h-3" />
-                              </Button>
-                            </Link>
+                            <Button size="sm" variant="ghost" onClick={() => handleOpenWorkspace(task.id)} className="h-7 text-[11px] rounded-xl text-emerald-600 hover:text-emerald-700 gap-1 font-semibold">
+                              终审成果
+                              <ChevronRight className="w-3 h-3" />
+                            </Button>
                           )}
 
                           {/* 状态 5: 已退单 */}
@@ -578,6 +622,15 @@ export default function ReviewTasksPage() {
                     {detailTask.sourceFileName ? '已附带' : '待上传'}
                   </Badge>
                 </div>
+                {user?.role === 'advertiser' && detailTask.acceptedAt && (
+                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-3">
+                    <div className="mb-2 text-xs font-bold text-emerald-800">验收交付文件</div>
+                    <div className="flex flex-wrap gap-2">
+                      {detailTask.sourceFileUrl && <Button type="button" variant="outline" onClick={() => downloadDelivery(detailTask.sourceFileUrl!, detailTask.sourceFileName || '设计源文件')} className="h-8 rounded-xl border-emerald-200 bg-white text-xs text-emerald-700"><Download className="mr-1 h-3.5 w-3.5" />下载源文件</Button>}
+                      {detailTask.groups?.flatMap((group) => group.images.filter((image) => image.originalAssetId).map((image) => <Button type="button" key={image.id} variant="outline" onClick={() => downloadDelivery(`/upload/assets/${image.originalAssetId}`, `设计原图-${image.imageIndex}`)} className="h-8 rounded-xl border-emerald-200 bg-white text-xs text-emerald-700"><Download className="mr-1 h-3.5 w-3.5" />下载原图 {image.imageIndex}</Button>))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <DialogFooter className="gap-2 mt-2">
@@ -593,16 +646,35 @@ export default function ReviewTasksPage() {
                     立即提交审核
                   </Button>
                 )}
-                {(detailTask.status === 'in_review' || detailTask.status === 'needs_revision' || detailTask.status === 'approved') && (
-                  <Link href={`/admin/review-workspace?taskId=${detailTask.id}`}>
-                    <Button className="rounded-xl text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold gap-1">
-                      进入审核工作台
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    </Button>
-                  </Link>
+                {(detailTask.status === 'pending' || detailTask.status === 'in_review' || detailTask.status === 'needs_revision' || detailTask.status === 'approved') && (
+                  <Button onClick={() => handleOpenWorkspace(detailTask.id)} className="rounded-xl text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold gap-1">
+                    进入审核工作台
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                )}
+                {user?.role === 'advertiser' && detailTask.status === 'approved' && !detailTask.acceptedAt && (
+                  <Button onClick={() => handleAcceptTask(detailTask.id)} disabled={operatingTaskId === detailTask.id} className="rounded-xl bg-emerald-600 text-xs text-white hover:bg-emerald-700"><CheckCircle2 className="mr-1 h-3.5 w-3.5" />确认验收</Button>
                 )}
               </DialogFooter>
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(workspaceTaskId)}
+        onOpenChange={(open) => {
+          if (!open) handleCloseWorkspace();
+        }}
+      >
+        <DialogContent
+          showCloseButton={false}
+          className="fixed inset-0 left-0 top-0 z-50 h-screen w-screen max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none border-0 bg-slate-950 p-0 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right duration-300"
+        >
+          <DialogTitle className="sr-only">审核作业工作台</DialogTitle>
+          <DialogDescription className="sr-only">全屏审核图片、添加坐标批注并更新审核状态</DialogDescription>
+          {workspaceTaskId && (
+            <ReviewWorkspaceContent taskId={workspaceTaskId} onClose={handleCloseWorkspace} />
           )}
         </DialogContent>
       </Dialog>

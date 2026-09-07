@@ -3,13 +3,17 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import { reviewTasksRouter } from './routes/review-tasks.js';
-import { reviewRulesRouter } from './routes/review-rules.js';
+import { reviewTasksRouter, tasks } from './routes/review-tasks.js';
+import { reviewRulesRouter, rules } from './routes/review-rules.js';
 import { authRouter } from './routes/auth.js';
 import { uploadRouter } from './routes/upload.js';
-import { designOrdersRouter } from './routes/design-orders.js';
+import { designOrders, designOrdersRouter } from './routes/design-orders.js';
 import { systemConfigRouter } from './routes/system-config.js';
 import { walletRouter } from './routes/wallet.js';
+import { disputes, disputesRouter } from './routes/disputes.js';
+import { messages, messagesRouter } from './routes/messages.js';
+import { invitationsRouter } from './routes/invitations.js';
+import { initializePersistence } from './config/persistence.js';
 
 dotenv.config();
 
@@ -21,12 +25,13 @@ app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// 静态文件目录（用于本地文件上传预览）
+// 仅公开带水印预览目录；原图统一存储在 private-uploads 或私有 OSS。
 const uploadsDir = path.join(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+const previewUploadsDir = path.join(uploadsDir, 'previews');
+if (!fs.existsSync(previewUploadsDir)) {
+  fs.mkdirSync(previewUploadsDir, { recursive: true });
 }
-app.use('/uploads', express.static(uploadsDir));
+app.use('/uploads/previews', express.static(previewUploadsDir, { dotfiles: 'deny', index: false }));
 
 // 健康检查路由
 app.get('/api/health', (req, res) => {
@@ -46,6 +51,9 @@ app.use('/api/upload', uploadRouter);
 app.use('/api/design-orders', designOrdersRouter);
 app.use('/api/system-config', systemConfigRouter);
 app.use('/api/wallet', walletRouter);
+app.use('/api/disputes', disputesRouter);
+app.use('/api/messages', messagesRouter);
+app.use('/api', invitationsRouter);
 
 // 全局错误处理中间件
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -59,11 +67,16 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`=======================================================`);
-  console.log(` [API Server] 设计审核系统后端服务启动成功!`);
-  console.log(` 访问地址: http://localhost:${PORT}`);
-  console.log(` API 基础路径: http://localhost:${PORT}/api`);
-  console.log(` 上传静态目录: http://localhost:${PORT}/uploads`);
-  console.log(`=======================================================`);
-});
+async function startServer() {
+  await initializePersistence({ designOrders, rules, tasks, disputes, messages });
+  app.listen(PORT, () => {
+    console.log(`=======================================================`);
+    console.log(` [API Server] 设计审核系统后端服务启动成功!`);
+    console.log(` 访问地址: http://localhost:${PORT}`);
+    console.log(` API 基础路径: http://localhost:${PORT}/api`);
+    console.log(` 图片预览目录: http://localhost:${PORT}/uploads/previews`);
+    console.log(`=======================================================`);
+  });
+}
+
+void startServer();

@@ -7,7 +7,9 @@ export interface AuthUserPayload {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'reviewer' | 'designer';
+  role: 'advertiser' | 'designer' | 'customer_service' | 'admin';
+  organizationId?: string;
+  isOrganizationAdmin?: boolean;
   department?: string;
 }
 
@@ -43,7 +45,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   }
 }
 
-export function requireRoles(...roles: Array<'admin' | 'reviewer' | 'designer'>) {
+export function requireRoles(...roles: Array<'advertiser' | 'designer' | 'customer_service' | 'admin'>) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ code: 401, success: false, message: '请先登录' });

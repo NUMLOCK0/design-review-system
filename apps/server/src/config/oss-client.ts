@@ -4,7 +4,7 @@ import path from 'path';
 
 dotenv.config();
 
-const region = process.env.OSS_REGION || 'oss-cn-hangzhou';
+const region = process.env.OSS_REGION || 'oss-cn-guangzhou';
 const accessKeyId = process.env.OSS_ACCESS_KEY_ID;
 const accessKeySecret = process.env.OSS_ACCESS_KEY_SECRET;
 const bucket = process.env.OSS_BUCKET;
@@ -61,7 +61,12 @@ export async function uploadBufferToOss(
   const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const objectKey = `${folderName}/${datePrefix}/${Date.now()}_${baseName}${ext}`;
 
-  const result = await ossClient.put(objectKey, fileBuffer);
+  const result = await ossClient.put(objectKey, fileBuffer, {
+    headers: {
+      // 原图与带水印预览都保持私有，只能通过服务端权限校验后生成签名地址读取。
+      'x-oss-object-acl': 'private'
+    }
+  });
 
   // 若配置了自定义加速 CDN 域名则优先使用，否则返回 OSS 标准直链
   let fileUrl = result.url;
@@ -75,6 +80,20 @@ export async function uploadBufferToOss(
     name: objectKey,
     size: fileBuffer.length
   };
+}
+
+export function getSignedOssUrl(objectKey: string, expires = 300) {
+  if (!ossClient) {
+    throw new Error('OSS 客户端未配置或未就绪');
+  }
+  return ossClient.signatureUrl(objectKey, { expires, method: 'GET' });
+}
+
+export async function getObjectFromOss(objectKey: string) {
+  if (!ossClient) {
+    throw new Error('OSS 客户端未配置或未就绪');
+  }
+  return ossClient.get(objectKey);
 }
 
 export { ossClient };

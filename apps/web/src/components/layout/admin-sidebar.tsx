@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
-  Layers, 
   Sliders, 
   Percent, 
   LogOut, 
@@ -12,6 +11,7 @@ import {
   ArrowLeft,
   ShoppingBag
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -23,12 +23,11 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { getCurrentUser, clearAuthSession, UserInfo } from '@/lib/auth';
+import { getCurrentUser, clearAuthSession, getRoleHome, UserInfo } from '@/lib/auth';
 import { toast } from 'sonner';
 
-const ALL_ADMIN_NAV_ITEMS = [
-  { href: '/admin/review-workspace', label: '审核作业工作台', icon: Layers, badge: 'Pro', roles: ['admin', 'reviewer'] },
-  { href: '/admin/review-rules', label: '多级审核规则流', icon: Sliders, roles: ['admin', 'reviewer'] },
+const ALL_ADMIN_NAV_ITEMS: Array<{ href: string; label: string; icon: LucideIcon; badge?: string; roles: string[] }> = [
+  { href: '/admin/review-rules', label: '平台审核规则（迁移中）', icon: Sliders, roles: ['admin'] },
   { href: '/admin/admin-config', label: '商业抽成与运营配置', icon: Percent, roles: ['admin'] },
 ];
 
@@ -38,7 +37,13 @@ export function AdminSidebar() {
   const [user, setUser] = useState<UserInfo | null>(null);
 
   useEffect(() => {
-    setUser(getCurrentUser());
+    const currentUser = getCurrentUser();
+    setUser(currentUser);
+    if (!currentUser) {
+      router.replace('/login?redirect=/admin');
+    } else if (currentUser.role !== 'admin') {
+      router.replace(getRoleHome(currentUser.role));
+    }
     const handleAuthChange = () => setUser(getCurrentUser());
     window.addEventListener('auth-state-change', handleAuthChange);
     return () => window.removeEventListener('auth-state-change', handleAuthChange);
@@ -50,8 +55,8 @@ export function AdminSidebar() {
     router.push('/login');
   };
 
-  const userRole = user?.role || 'admin';
-  const filteredNavItems = ALL_ADMIN_NAV_ITEMS.filter(item => item.roles.includes(userRole));
+  const userRole = user?.role;
+  const filteredNavItems = userRole ? ALL_ADMIN_NAV_ITEMS.filter(item => item.roles.includes(userRole)) : [];
 
   const userName = user?.name || '管理员';
   const dept = user?.department || '运营管理部';
@@ -109,7 +114,7 @@ export function AdminSidebar() {
                 <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                 <span>{item.label}</span>
               </div>
-              {item.badge && (
+              {'badge' in item && item.badge && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${isActive ? 'bg-white/20 text-white' : 'bg-indigo-100/60 text-indigo-600'}`}>
                   {item.badge}
                 </span>

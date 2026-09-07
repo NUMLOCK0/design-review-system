@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import * as Select from '@radix-ui/react-select';
 import { 
   Sliders, 
   Plus, 
@@ -15,7 +16,8 @@ import {
   UserCheck,
   ChevronRight,
   Save,
-  RotateCcw
+  RotateCcw,
+  ChevronDown
 } from 'lucide-react';
 import { PLATFORM_MAP, type PlatformType, type ReviewRule, type ReviewRuleLevel } from '@design-review/shared';
 import { Button } from '@/components/ui/button';
@@ -24,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { fetchWithAuth } from '@/lib/auth';
 
 export default function ReviewRulesPage() {
   const [rules, setRules] = useState<ReviewRule[]>([]);
@@ -42,7 +45,7 @@ export default function ReviewRulesPage() {
     levels: [
       {
         level: 1,
-        reviewerIds: ['u_rev_1'],
+        reviewerIds: ['u_adv_2'],
         approvalMode: 'any' as 'any' | 'all'
       }
     ]
@@ -51,7 +54,7 @@ export default function ReviewRulesPage() {
   const fetchRules = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:8080/api/review-rules');
+      const res = await fetchWithAuth('/review-rules');
       const data = await res.json();
       if (data.success) {
         setRules(data.data);
@@ -121,7 +124,7 @@ export default function ReviewRulesPage() {
 
     setSubmitting(true);
     try {
-      const res = await fetch('http://localhost:8080/api/review-rules', {
+      const res = await fetchWithAuth('/review-rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
@@ -142,7 +145,7 @@ export default function ReviewRulesPage() {
         levels: [
           {
             level: 1,
-            reviewerIds: ['u_rev_1'],
+            reviewerIds: ['u_adv_2'],
             approvalMode: 'any'
           }
         ]
@@ -209,15 +212,7 @@ export default function ReviewRulesPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">适用平台</label>
-                  <select
-                    value={formData.platform}
-                    onChange={(e) => setFormData({ ...formData, platform: e.target.value as any })}
-                    className="w-full h-9 bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-xl px-3 outline-none"
-                  >
-                    {Object.entries(PLATFORM_MAP).map(([k, v]) => (
-                      <option key={k} value={k}>{v.label}</option>
-                    ))}
-                  </select>
+                  <Select.Root value={formData.platform} onValueChange={(value) => setFormData({ ...formData, platform: value as any })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{Object.entries(PLATFORM_MAP).map(([key, item]) => <Select.Item key={key} value={key} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{item.label}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                 </div>
 
                 <div className="space-y-1.5">
@@ -268,28 +263,11 @@ export default function ReviewRulesPage() {
                       </div>
 
                       <div className="flex items-center gap-2 flex-1 max-w-xs">
-                        <select
-                          value={lvl.reviewerIds[0] || 'u_rev_1'}
-                          onChange={(e) => handleLevelReviewerChange(idx, e.target.value)}
-                          className="w-full h-8 text-xs rounded-xl bg-white border border-slate-200 px-2 text-slate-800 outline-none"
-                        >
-                          {reviewers.map((r) => (
-                            <option key={r.id} value={r.id}>
-                              {r.name} ({r.department})
-                            </option>
-                          ))}
-                        </select>
+                        <Select.Root value={lvl.reviewerIds[0] || 'u_adv_2'} onValueChange={(value) => handleLevelReviewerChange(idx, value)}><Select.Trigger className="flex h-8 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-3.5 w-3.5 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{reviewers.map((reviewer) => <Select.Item key={reviewer.id} value={reviewer.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{reviewer.name} ({reviewer.department})</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <select
-                          value={lvl.approvalMode}
-                          onChange={(e) => handleLevelModeChange(idx, e.target.value as any)}
-                          className="h-8 text-[11px] rounded-xl bg-white border border-slate-200 px-2 text-slate-600 outline-none"
-                        >
-                          <option value="any">单人通过即流转</option>
-                          <option value="all">全员必须会签</option>
-                        </select>
+                        <Select.Root value={lvl.approvalMode} onValueChange={(value) => handleLevelModeChange(idx, value as any)}><Select.Trigger className="flex h-8 w-36 items-center justify-between rounded-xl border border-slate-200 bg-white px-2 text-[11px] text-slate-600 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-3.5 w-3.5 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="any" className="cursor-pointer rounded-lg px-2 py-1.5 text-[11px] outline-none hover:bg-slate-100"><Select.ItemText>单人通过即流转</Select.ItemText></Select.Item><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-[11px] outline-none hover:bg-slate-100"><Select.ItemText>全员必须会签</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
 
                         {formData.levels.length > 1 && (
                           <Button

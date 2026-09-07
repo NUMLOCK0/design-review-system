@@ -12,6 +12,7 @@ let systemConfig: SystemConfig = {
   urgentMarkupRate: 0.20,      // 加急单 20%
   minOrderBudget: 100,         // 最低 100 元
   autoClaimTimeoutMinutes: 120, // 2小时未响应自动释放
+  maxRevisionLimit: 3,         // 免费返修 3 次后进入纠纷处理
   allowDesignerBidding: true,
   reviewStrictLevel: 'strict',
   commissionTiers: [
@@ -61,7 +62,7 @@ let systemConfig: SystemConfig = {
 };
 
 // 1. 获取全局系统配置与抽成方案
-systemConfigRouter.get('/', (req, res) => {
+systemConfigRouter.get('/', authenticate, requireRoles('admin'), (req, res) => {
   res.json({
     code: 200,
     success: true,

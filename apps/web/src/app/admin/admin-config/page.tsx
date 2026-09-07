@@ -22,7 +22,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { toast } from 'sonner';
 import type { SystemConfig, CommissionTier } from '@design-review/shared';
-import { getCurrentUser } from '@/lib/auth';
+import { fetchWithAuth, getCurrentUser } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 
 export default function AdminConfigPage() {
@@ -35,7 +35,7 @@ export default function AdminConfigPage() {
   const fetchConfig = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:8080/api/system-config');
+      const res = await fetchWithAuth('/system-config');
       const data = await res.json();
       if (data.success) {
         setConfig(data.data);
@@ -54,7 +54,7 @@ export default function AdminConfigPage() {
     // 非管理员拦截重定向
     if (currentUser && currentUser.role !== 'admin') {
       toast.error('权限不足：仅系统管理员 (admin) 拥有商业抽成与系统配置权限');
-      router.replace('/admin/review-workspace');
+      router.replace('/review-tasks');
       return;
     }
 
@@ -65,7 +65,7 @@ export default function AdminConfigPage() {
     if (!config) return;
     setSaving(true);
     try {
-      const res = await fetch('http://localhost:8080/api/system-config', {
+      const res = await fetchWithAuth('/system-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
@@ -113,9 +113,6 @@ export default function AdminConfigPage() {
               管理后台专区
             </Badge>
           </div>
-          <p className="text-xs text-slate-500">
-            精细化调控前台接单各设计类目抽成比例、加急单溢价系数、质检与超时规则
-          </p>
         </div>
 
         <div className="flex items-center gap-3">

@@ -1,38 +1,40 @@
 'use client';
 
 import React, { useState } from 'react';
+import * as Select from '@radix-ui/react-select';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Palette, Lock, Mail, User, ShieldCheck, ArrowRight, Sparkles } from 'lucide-react';
+import { Palette, Lock, Mail, User, ShieldCheck, ArrowRight, Sparkles, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { setAuthSession } from '@/lib/auth';
+import { getRoleHome, setAuthSession } from '@/lib/auth';
 
 const PRESET_ACCOUNTS = [
   { role: 'admin', name: '系统管理员', email: 'admin@cozi.com', tag: '全局配置/质检管理' },
-  { role: 'reviewer', name: '王总监', email: 'reviewer@cozi.com', tag: '审核工作台/多级审批' },
+  { role: 'customer_service', name: '王总监', email: 'reviewer@cozi.com', tag: '订单发布审核/纠纷处理' },
+  { role: 'advertiser', name: '陈品牌经理', email: 'advertiser@cozi.com', tag: '发单/配置作品审核流' },
   { role: 'designer', name: '李设计师', email: 'designer@cozi.com', tag: '设计提审/历史版本' },
 ];
 
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectUrl = searchParams.get('redirect') || '/review-tasks';
+  const redirectUrl = searchParams.get('redirect');
 
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
   const [loading, setLoading] = useState(false);
 
   // 登录表单
-  const [email, setEmail] = useState('reviewer@cozi.com');
+  const [email, setEmail] = useState('advertiser@cozi.com');
   const [password, setPassword] = useState('123456');
 
   // 注册表单
   const [regName, setRegName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
-  const [regRole, setRegRole] = useState<'designer' | 'reviewer' | 'admin'>('designer');
+  const [regRole, setRegRole] = useState<'designer' | 'advertiser'>('advertiser');
   const [regDept, setRegDept] = useState('视觉设计部');
 
   const handleLogin = async (e?: React.FormEvent) => {
@@ -57,7 +59,7 @@ export default function LoginPage() {
 
       setAuthSession(data.data.token, data.data.user);
       toast.success(`欢迎回来，${data.data.user.name}`);
-      router.push(redirectUrl);
+      router.push(redirectUrl || getRoleHome(data.data.user.role));
     } catch (err: any) {
       toast.error(err.message || '网络连接异常，请检查后端服务是否启动');
     } finally {
@@ -93,7 +95,7 @@ export default function LoginPage() {
 
       setAuthSession(data.data.token, data.data.user);
       toast.success('注册成功并已自动登录');
-      router.push(redirectUrl);
+      router.push(redirectUrl || getRoleHome(data.data.user.role));
     } catch (err: any) {
       toast.error(err.message || '注册发生错误');
     } finally {
@@ -248,15 +250,7 @@ export default function LoginPage() {
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs text-slate-300">所属角色</Label>
-                    <select
-                      value={regRole}
-                      onChange={(e) => setRegRole(e.target.value as any)}
-                      className="w-full h-9 bg-slate-800/60 border border-white/10 text-white text-xs rounded-xl px-3 outline-none focus:ring-1 focus:ring-blue-500"
-                    >
-                      <option value="designer" className="bg-slate-900 text-white">设计师 (提交与修订)</option>
-                      <option value="reviewer" className="bg-slate-900 text-white">审核员 (多级审批与打标)</option>
-                      <option value="admin" className="bg-slate-900 text-white">系统管理员 (规则与全局)</option>
-                    </select>
+                    <Select.Root value={regRole} onValueChange={(value) => setRegRole(value as any)}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-white/10 bg-slate-800/60 px-3 text-xs text-white outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-500"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-white/10 bg-slate-900 p-1 text-white shadow-md"><Select.Viewport><Select.Item value="advertiser" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-800"><Select.ItemText>品牌方 (发单与配置审核流)</Select.ItemText></Select.Item><Select.Item value="designer" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-800"><Select.ItemText>设计师 (接单与提交作品)</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
                 </div>
 
