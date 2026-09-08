@@ -5,12 +5,14 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   avatarUrl?: string;
   role: UserRole;
+  /** 当前会话角色；普通用户默认同时拥有 advertiser 与 designer。 */
+  roles?: UserRole[];
   organizationId?: string;
   isOrganizationAdmin?: boolean;
   department?: string;
-  phone?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt?: string;
@@ -191,7 +193,8 @@ export interface PaginatedResult<T> {
 
 // ================= 设计接单与派单市场 (前台) =================
 export type OrderStatus = 'open' | 'claimed' | 'in_progress' | 'submitted' | 'completed' | 'cancelled';
-export type OrderPublicationStatus = 'draft' | 'pending_service_review' | 'published' | 'rejected';
+export type OrderPublicationStatus = 'draft' | 'pending_deposit' | 'pending_service_review' | 'published' | 'rejected';
+export type OrderPaymentStatus = 'deposit_pending' | 'deposit_paid' | 'balance_pending' | 'paid';
 
 export interface OrderReferenceImageItem {
   id: string;
@@ -218,8 +221,8 @@ export interface DesignOrder {
   category: string; // 主图设计 / 详情页设计 / 活动海报 / 3D建模 / 精修合成
   platform: PlatformType;
   budget: number; // 客户支付预算 (元)
-  platformCommissionRate: number; // 平台抽成比例 (例如 0.15 = 15%)
-  designerPayout: number; // 设计师实际到手金额 (元)
+  platformCommissionRate: number; // 尾款平台抽成比例 (例如 0.15 = 15%)
+  designerPayout: number; // 设计师实际到手金额：定金全额 + 尾款扣除平台服务费 (元)
   deadline: string; // 交付截止时间
   urgency: 'normal' | 'urgent' | 'super_urgent';
   requirements: string; // 需求详细说明与文案
@@ -228,10 +231,25 @@ export interface DesignOrder {
   attachmentUrl?: string; // 附件包
   status: OrderStatus;
   publicationStatus?: OrderPublicationStatus;
+  paymentStatus?: OrderPaymentStatus;
+  depositRate?: number;
+  depositAmount?: number;
+  depositOutTradeNo?: string;
+  depositTradeNo?: string;
+  depositPaidAt?: string;
+  balanceAmount?: number;
+  balanceOutTradeNo?: string;
+  balanceTradeNo?: string;
+  balancePaidAt?: string;
   publicationReviewComment?: string;
   publicationReviewedAt?: string;
   publicationReviewerId?: string;
   publicationReviewerName?: string;
+  serviceAssigneeId?: string;
+  serviceAssigneeName?: string;
+  serviceClaimedAt?: string;
+  serviceDueAt?: string;
+  servicePriority?: ServicePriority;
   creatorId: string;
   creatorName: string;
   organizationId?: string;
@@ -305,9 +323,27 @@ export interface OrderDispute {
   status: DisputeStatus;
   handlerId?: string;
   handlerName?: string;
+  serviceClaimedAt?: string;
+  serviceDueAt?: string;
+  servicePriority?: ServicePriority;
   resolutionComment?: string;
   createdAt: string;
   updatedAt?: string;
+}
+
+export type ServicePriority = 'normal' | 'high' | 'urgent';
+
+export type ServiceTaskType = 'order_audit' | 'dispute' | 'withdrawal_review';
+
+export interface ServiceActionLog {
+  id: string;
+  taskType: ServiceTaskType;
+  taskId: string;
+  action: string;
+  comment?: string;
+  operatorId: string;
+  operatorName: string;
+  createdAt: string;
 }
 
 // ================= 站内信 =================
@@ -329,6 +365,22 @@ export interface SiteMessage {
 // ================= 设计师钱包与财务结算 =================
 export type TransactionType = 'order_income' | 'withdrawal' | 'commission_deduct' | 'dispute_refund';
 export type TransactionStatus = 'pending' | 'settled' | 'processing' | 'failed';
+
+export type WithdrawalStatus = 'pending_review' | 'approved' | 'rejected';
+
+export interface WithdrawalRequest {
+  id: string;
+  designerId: string;
+  designerName: string;
+  amount: number;
+  bankAccount: { bankName: string; accountNo: string; holderName: string };
+  status: WithdrawalStatus;
+  createdAt: string;
+  reviewedAt?: string;
+  reviewerId?: string;
+  reviewerName?: string;
+  reviewComment?: string;
+}
 
 export interface WalletTransaction {
   id: string;
@@ -355,6 +407,7 @@ export interface DesignerWallet {
     accountNo: string;
     holderName: string;
   };
+  withdrawalRequests?: WithdrawalRequest[];
   transactions: WalletTransaction[];
 }
 
@@ -380,6 +433,7 @@ export interface SystemConfig {
   reviewStrictLevel: 'strict' | 'standard' | 'relaxed'; // 质检严格度
   commissionTiers: CommissionTier[]; // 各分类分级抽成
   announcement?: string; // 全局前台公告
+  depositRate: number; // 发布订单时支付的定金比例（0.00 - 1.00）
   updatedAt: string;
 }
 

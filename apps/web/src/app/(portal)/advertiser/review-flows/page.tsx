@@ -20,15 +20,15 @@ type RuleDraft = {
   levels: Array<{ reviewerIds: string[]; approvalMode: 'any' | 'all' }>;
 };
 
-const emptyDraft: RuleDraft = {
+const createEmptyDraft = (reviewerId = ''): RuleDraft => ({
   name: '', platform: 'tmall', category: '全品类', rejectLimit: 3, reviewHoursLimit: 24,
-  levels: [{ reviewerIds: ['u_adv_2'], approvalMode: 'any' }]
-};
+  levels: [{ reviewerIds: reviewerId ? [reviewerId] : [], approvalMode: 'any' }]
+});
 
 export default function AdvertiserReviewFlowsPage() {
   const [rules, setRules] = useState<ReviewRule[]>([]);
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
-  const [draft, setDraft] = useState<RuleDraft>(emptyDraft);
+  const [draft, setDraft] = useState<RuleDraft>(() => createEmptyDraft());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -47,7 +47,7 @@ export default function AdvertiserReviewFlowsPage() {
 
   useEffect(() => { load().catch((error) => toast.error(error.message || '加载审核流失败')); }, []);
 
-  const openCreate = () => { setEditingId(null); setFormOpen(true); setDraft({ ...emptyDraft, levels: [{ ...emptyDraft.levels[0], reviewerIds: [...emptyDraft.levels[0].reviewerIds] }] }); };
+  const openCreate = () => { setEditingId(null); setFormOpen(true); setDraft(createEmptyDraft(reviewers[0]?.id)); };
   const openEdit = (rule: ReviewRule) => {
     const level = rule.levels?.[0];
     setEditingId(rule.id);
@@ -58,7 +58,7 @@ export default function AdvertiserReviewFlowsPage() {
       category: rule.category || '全品类',
       rejectLimit: rule.rejectLimit,
       reviewHoursLimit: rule.reviewHoursLimit,
-      levels: [{ reviewerIds: [...(level?.reviewerIds || ['u_adv_2'])], approvalMode: level?.approvalMode || 'any' }]
+      levels: [{ reviewerIds: [...(level?.reviewerIds || (reviewers[0] ? [reviewers[0].id] : []))], approvalMode: level?.approvalMode || 'any' }]
     });
   };
 
@@ -75,7 +75,7 @@ export default function AdvertiserReviewFlowsPage() {
       toast.success(result.message);
       setEditingId(null);
       setFormOpen(false);
-      setDraft(emptyDraft);
+      setDraft(createEmptyDraft(reviewers[0]?.id));
       await load();
     } catch (error: any) {
       toast.error(error.message || '保存失败');
@@ -117,7 +117,7 @@ export default function AdvertiserReviewFlowsPage() {
             <span className="text-xs font-semibold text-slate-700">第一级审核人</span>
             <Select.Root value={draft.levels[0].reviewerIds[0]} onValueChange={(value) => setDraft({ ...draft, levels: [{ ...draft.levels[0], reviewerIds: [value] }] })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-md border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15 md:w-48"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{reviewers.map((reviewer) => <Select.Item key={reviewer.id} value={reviewer.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{reviewer.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
             <Select.Root value={draft.levels[0].approvalMode} onValueChange={(value) => setDraft({ ...draft, levels: [{ ...draft.levels[0], approvalMode: value as 'any' | 'all' }] })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-md border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15 md:w-48"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="any" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>任一审核人通过</Select.ItemText></Select.Item><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>全部审核人通过</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
-            <div className="ml-auto flex gap-2"><Button variant="outline" onClick={() => { setEditingId(null); setFormOpen(false); setDraft(emptyDraft); }} className="h-8 rounded-xl text-xs">取消</Button><Button onClick={save} disabled={saving} className="h-8 rounded-xl bg-blue-600 text-xs text-white">{saving ? '保存中…' : '保存'}</Button></div>
+            <div className="ml-auto flex gap-2"><Button variant="outline" onClick={() => { setEditingId(null); setFormOpen(false); setDraft(createEmptyDraft(reviewers[0]?.id)); }} className="h-8 rounded-xl text-xs">取消</Button><Button onClick={save} disabled={saving} className="h-8 rounded-xl bg-blue-600 text-xs text-white">{saving ? '保存中…' : '保存'}</Button></div>
           </div>
         </div>
       )}

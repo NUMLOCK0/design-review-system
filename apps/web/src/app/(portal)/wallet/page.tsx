@@ -24,12 +24,16 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { toast } from 'sonner';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import type { DesignerWallet } from '@design-review/shared';
+import { fetchWithAuth } from '@/lib/auth';
 
 export default function DesignerWalletPage() {
   const user = useCurrentUser();
   const [wallet, setWallet] = useState<DesignerWallet | null>(null);
   const [loading, setLoading] = useState(true);
   const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [bankName, setBankName] = useState('');
+  const [accountNo, setAccountNo] = useState('');
+  const [holderName, setHolderName] = useState('');
   const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
 
@@ -37,10 +41,12 @@ export default function DesignerWalletPage() {
     if (!user) return;
     try {
       setLoading(true);
-      const res = await fetch(`http://localhost:8080/api/wallet/my-wallet?designerId=${user?.id || 'u_des_1'}`);
+      const res = await fetchWithAuth('/wallet/my-wallet');
       const data = await res.json();
       if (data.success) {
         setWallet(data.data);
+        setBankName(data.data.bankAccount?.bankName || '');
+        setHolderName(data.data.bankAccount?.holderName || '');
       }
     } catch (e) {
       toast.error('加载钱包资产失败');
@@ -64,15 +70,21 @@ export default function DesignerWalletPage() {
       toast.error('提现金额超出可提现余额');
       return;
     }
+    if (!bankName.trim() || !/^\d{8,30}$/.test(accountNo.replace(/\s/g, '')) || !holderName.trim()) {
+      toast.error('请填写银行名称、完整银行卡号和持卡人姓名');
+      return;
+    }
 
     setWithdrawing(true);
     try {
-      const res = await fetch('http://localhost:8080/api/wallet/withdraw', {
+      const res = await fetchWithAuth('/wallet/withdraw', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          designerId: user?.id || 'u_des_1',
           amount,
+          bankName: bankName.trim(),
+          accountNo: accountNo.replace(/\s/g, ''),
+          holderName: holderName.trim(),
         }),
       });
       const data = await res.json();
@@ -83,6 +95,7 @@ export default function DesignerWalletPage() {
       toast.success(data.message);
       setIsWithdrawOpen(false);
       setWithdrawAmount('');
+      setAccountNo('');
       setWallet(data.data);
     } catch (err: any) {
       toast.error(err.message || '提现发生错误');
@@ -127,7 +140,7 @@ export default function DesignerWalletPage() {
                 收益提现申请
               </DialogTitle>
               <CardDescription className="text-xs text-slate-500">
-                提现款项将原路结算转账至您绑定的实名银行卡
+                提现申请需由客服审核；审核不通过时金额原路退回收益钱包
               </CardDescription>
             </DialogHeader>
 
@@ -156,14 +169,19 @@ export default function DesignerWalletPage() {
                 </div>
               </div>
 
+              <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                <label className="block text-xs font-semibold text-slate-700">收款银行卡</label>
+                <Input required value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="开户银行，如招商银行" className="h-9 rounded-xl text-xs" />
+                <Input required value={accountNo} onChange={(e) => setAccountNo(e.target.value)} placeholder="完整银行卡号" inputMode="numeric" className="h-9 rounded-xl text-xs font-mono" />
+                <Input required value={holderName} onChange={(e) => setHolderName(e.target.value)} placeholder="持卡人姓名" className="h-9 rounded-xl text-xs" />
+              </div>
+
               <div className="p-3 bg-emerald-50/60 rounded-2xl border border-emerald-100 text-[11px] text-emerald-800 space-y-1">
                 <div className="font-semibold flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5" />
-                  提现到账银行账户
+                  本次提现规则
                 </div>
-                <div className="text-emerald-900 font-mono font-medium">
-                  {wallet.bankAccount?.bankName} ({wallet.bankAccount?.accountNo})
-                </div>
+                <div className="text-emerald-900 font-medium">客服审核通过后处理，驳回时提现金额原路退回收益钱包。</div>
               </div>
 
               <DialogFooter className="mt-4 gap-2">
@@ -293,6 +311,9 @@ export default function DesignerWalletPage() {
                           )}
                           {tx.status === 'processing' && (
                             <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.2 rounded-full font-medium">银行处理中</span>
+                          )}
+                          {tx.status === 'failed' && (
+                            <span className="text-[10px] bg-rose-50 text-rose-600 px-2 py-0.2 rounded-full font-medium">已原路退回</span>
                           )}
                         </div>
                         <p className="text-[11px] text-slate-400 truncate">{tx.description}</p>

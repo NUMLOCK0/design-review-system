@@ -39,8 +39,8 @@ export async function createWatermarkedPreview(buffer: Buffer, text: string) {
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <pattern id="watermark" width="${fontSize * 12}" height="${fontSize * 6}" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)">
-          <text x="0" y="${fontSize}" fill="#ffffff" fill-opacity="0.42" font-size="${fontSize}" font-family="Arial, Microsoft YaHei, sans-serif" font-weight="700">${watermark}</text>
-          <text x="0" y="${fontSize * 4}" fill="#111827" fill-opacity="0.22" font-size="${fontSize}" font-family="Arial, Microsoft YaHei, sans-serif" font-weight="700">${watermark}</text>
+          <text x="0" y="${fontSize}" fill="#111827" fill-opacity="0.58" font-size="${fontSize}" font-family="Arial, Microsoft YaHei, sans-serif" font-weight="700">${watermark}</text>
+          <text x="0" y="${fontSize * 4}" fill="#111827" fill-opacity="0.58" font-size="${fontSize}" font-family="Arial, Microsoft YaHei, sans-serif" font-weight="700">${watermark}</text>
         </pattern>
       </defs>
       <rect width="100%" height="100%" fill="url(#watermark)" />

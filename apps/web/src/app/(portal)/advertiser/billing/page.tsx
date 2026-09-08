@@ -102,7 +102,8 @@ export default function AdvertiserBillingPage() {
               <tbody className="divide-y divide-slate-100">
                 {orders.map((order) => {
                   const status = statusMap[order.publicationStatus || order.status] || { label: order.status, className: 'bg-slate-100 text-slate-600' };
-                  const fee = order.budget * order.platformCommissionRate;
+                  const balanceAmount = order.balanceAmount ?? (order.budget - (order.depositAmount || 0));
+                  const fee = balanceAmount * order.platformCommissionRate;
                   return (
                     <tr key={order.id} className="hover:bg-slate-50">
                       <td className="max-w-[260px] px-5 py-4">
@@ -111,7 +112,7 @@ export default function AdvertiserBillingPage() {
                       </td>
                       <td className="px-5 py-4"><Badge className={'text-[10px] ' + status.className}>{status.label}</Badge></td>
                       <td className="px-5 py-4 text-right font-semibold text-slate-800">{money(order.budget)}</td>
-                      <td className="px-5 py-4 text-right text-slate-500">{money(fee)} · {(order.platformCommissionRate * 100).toFixed(0)}%</td>
+                      <td className="px-5 py-4 text-right text-slate-500">{money(fee)} · 尾款 {(order.platformCommissionRate * 100).toFixed(0)}%</td>
                       <td className="px-5 py-4 text-right text-slate-600">{money(order.designerPayout)}</td>
                       <td className="px-5 py-4 text-right text-slate-400">{new Date(order.updatedAt || order.createdAt).toLocaleDateString('zh-CN')}</td>
                     </tr>

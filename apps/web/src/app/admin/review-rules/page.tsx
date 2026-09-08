@@ -28,6 +28,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { toast } from 'sonner';
 import { fetchWithAuth } from '@/lib/auth';
 
+type AdminRuleFormData = {
+  name: string;
+  platform: PlatformType;
+  category: string;
+  rejectLimit: number;
+  reviewHoursLimit: number;
+  levels: Array<{ level: number; reviewerIds: string[]; approvalMode: 'any' | 'all' }>;
+};
+
 export default function ReviewRulesPage() {
   const [rules, setRules] = useState<ReviewRule[]>([]);
   const [reviewers, setReviewers] = useState<any[]>([]);
@@ -36,7 +45,7 @@ export default function ReviewRulesPage() {
   const [submitting, setSubmitting] = useState(false);
 
   // 表单状态：支持动态增加审核层级与指定人员
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<AdminRuleFormData>({
     name: '',
     platform: 'tmall' as PlatformType,
     category: '服饰鞋包',
@@ -45,7 +54,7 @@ export default function ReviewRulesPage() {
     levels: [
       {
         level: 1,
-        reviewerIds: ['u_adv_2'],
+        reviewerIds: [],
         approvalMode: 'any' as 'any' | 'all'
       }
     ]
@@ -84,7 +93,7 @@ export default function ReviewRulesPage() {
         ...formData.levels,
         {
           level: formData.levels.length + 1,
-          reviewerIds: ['u_rev_2'],
+          reviewerIds: [],
           approvalMode: 'any'
         }
       ]
@@ -145,7 +154,7 @@ export default function ReviewRulesPage() {
         levels: [
           {
             level: 1,
-            reviewerIds: ['u_adv_2'],
+            reviewerIds: [],
             approvalMode: 'any'
           }
         ]
@@ -263,7 +272,7 @@ export default function ReviewRulesPage() {
                       </div>
 
                       <div className="flex items-center gap-2 flex-1 max-w-xs">
-                        <Select.Root value={lvl.reviewerIds[0] || 'u_adv_2'} onValueChange={(value) => handleLevelReviewerChange(idx, value)}><Select.Trigger className="flex h-8 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-3.5 w-3.5 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{reviewers.map((reviewer) => <Select.Item key={reviewer.id} value={reviewer.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{reviewer.name} ({reviewer.department})</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
+                        <Select.Root value={lvl.reviewerIds[0]} onValueChange={(value) => handleLevelReviewerChange(idx, value)}><Select.Trigger className="flex h-8 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-2 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value placeholder="选择审核人" /><Select.Icon><ChevronDown className="h-3.5 w-3.5 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{reviewers.map((reviewer) => <Select.Item key={reviewer.id} value={reviewer.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{reviewer.name} ({reviewer.department})</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                       </div>
 
                       <div className="flex items-center gap-2">

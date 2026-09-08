@@ -6,8 +6,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'design-review-secret-key-2026';
 export interface AuthUserPayload {
   id: string;
   email: string;
+  phone?: string;
   name: string;
   role: 'advertiser' | 'designer' | 'customer_service' | 'admin';
+  roles?: Array<'advertiser' | 'designer' | 'customer_service' | 'admin'>;
   organizationId?: string;
   isOrganizationAdmin?: boolean;
   department?: string;

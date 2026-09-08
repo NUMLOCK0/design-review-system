@@ -110,7 +110,8 @@ const isCurrentNodeReviewer = (task: ReviewTask, user: AuthUserPayload) =>
 
 const canAccessTask = (task: ReviewTask, user: AuthUserPayload) => {
   if (user.role === 'admin') return true;
-  if (user.role === 'designer') return task.designerId === user.id && ['draft', 'needs_revision'].includes(task.status);
+  // 设计师需要持续看到自己已接单、已提审、审核中及已完成的任务；只有主动退单的任务移出列表。
+  if (user.role === 'designer') return task.designerId === user.id && task.status !== 'returned';
   if (user.role === 'advertiser') {
     if (['pending', 'in_review'].includes(task.status)) return isCurrentNodeReviewer(task, user);
     return ['approved', 'archived'].includes(task.status) && task.advertiserId === user.id;
@@ -119,7 +120,7 @@ const canAccessTask = (task: ReviewTask, user: AuthUserPayload) => {
 };
 
 const canReviewTask = (task: ReviewTask, user: AuthUserPayload) =>
-  user.role === 'admin' || (['pending', 'in_review'].includes(task.status) && isCurrentNodeReviewer(task, user));
+  user.role === 'admin' || (task.designerId !== user.id && ['pending', 'in_review'].includes(task.status) && isCurrentNodeReviewer(task, user));
 
 // 1. 获取审核任务列表 (支持分页与多条件筛选)
 reviewTasksRouter.get('/', authenticate, (req, res) => {
@@ -382,6 +383,8 @@ reviewTasksRouter.post('/:id/acceptance', authenticate, requireRoles('advertiser
 
   const { designOrders } = await import('./design-orders.js');
   const order = designOrders.find((item) => item.id === task.orderId);
+  if (!order || order.paymentStatus !== 'paid') return res.status(402).json({ code: 402, success: false, message: '请先支付订单尾款，支付成功后自动确认验收并开放下载' });
+  if (task.designerId === req.user!.id) return res.status(403).json({ code: 403, success: false, message: '设计师角色不能验收自己交付的作品' });
   const isOrderOwner = order && (order.creatorId === req.user!.id || (Boolean(req.user!.organizationId) && order.organizationId === req.user!.organizationId));
   if (!isOrderOwner) return res.status(403).json({ code: 403, success: false, message: '无权验收该订单' });
 

@@ -143,10 +143,10 @@ export default function AdminConfigPage() {
               <CardTitle className="text-sm font-bold text-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <TrendingUp className="w-4 h-4 text-blue-600" />
-                  各设计类目阶梯抽成比率 (Take Rate)
+                  各设计类目尾款服务费比率 (Take Rate)
                 </div>
                 <span className="text-[11px] font-normal text-slate-500">
-                  前台派单自动按此比例扣取平台服务费
+                  仅在尾款支付时扣取，定金不抽成
                 </span>
               </CardTitle>
               <CardDescription className="text-xs text-slate-500">
@@ -184,7 +184,7 @@ export default function AdminConfigPage() {
 
                         {/* 收益模拟预览 */}
                         <div className="w-24 text-right">
-                          <div className="text-[10px] text-slate-400">千元订单抽成</div>
+                          <div className="text-[10px] text-slate-400">千元尾款服务费</div>
                           <div className="text-xs font-bold font-mono text-indigo-600">
                             ¥{(1000 * tier.defaultRate).toFixed(0)}
                           </div>
@@ -263,6 +263,22 @@ export default function AdminConfigPage() {
                   />
                   <span className="text-xs text-slate-500 font-semibold">%</span>
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-700">发布订单定金比例</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={Math.round(config.depositRate * 100)}
+                    onChange={(e) => setConfig({ ...config, depositRate: Number(e.target.value) / 100 })}
+                    className="text-xs rounded-xl font-mono h-9 bg-slate-50 w-24"
+                  />
+                  <span className="text-xs text-slate-500 font-semibold">%</span>
+                </div>
+                <p className="text-[10px] text-slate-400">品牌方发布订单时先支付该比例，验收时支付剩余尾款。</p>
               </div>
 
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between">

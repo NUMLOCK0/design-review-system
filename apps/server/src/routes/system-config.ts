@@ -58,8 +58,11 @@ let systemConfig: SystemConfig = {
     }
   ],
   announcement: '📢 2026 Q3 视觉大促季接单补贴已开启，详情页设计类目抽成下调至 12%！',
+  depositRate: 0.30,
   updatedAt: new Date().toISOString()
 };
+
+export const getSystemConfig = () => systemConfig;
 
 // 1. 获取全局系统配置与抽成方案
 systemConfigRouter.get('/', authenticate, requireRoles('admin'), (req, res) => {
@@ -74,6 +77,9 @@ systemConfigRouter.get('/', authenticate, requireRoles('admin'), (req, res) => {
 // 2. 更新全局系统配置与抽成比例（仅限 admin 管理员）
 systemConfigRouter.put('/', authenticate, requireRoles('admin'), (req, res) => {
   const updates = req.body;
+  if (updates.depositRate !== undefined && (!Number.isFinite(Number(updates.depositRate)) || Number(updates.depositRate) < 0.01 || Number(updates.depositRate) > 1)) {
+    return res.status(400).json({ code: 400, success: false, message: '定金比例必须在 1% 至 100% 之间' });
+  }
   systemConfig = {
     ...systemConfig,
     ...updates,

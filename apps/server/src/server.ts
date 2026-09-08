@@ -13,7 +13,10 @@ import { walletRouter } from './routes/wallet.js';
 import { disputes, disputesRouter } from './routes/disputes.js';
 import { messages, messagesRouter } from './routes/messages.js';
 import { invitationsRouter } from './routes/invitations.js';
+import { serviceRouter, serviceLogs } from './routes/service.js';
 import { initializePersistence } from './config/persistence.js';
+import { paymentsRouter } from './routes/payments.js';
+import { ensureOssCors } from './config/oss-client.js';
 
 dotenv.config();
 
@@ -50,10 +53,12 @@ app.use('/api/review-rules', reviewRulesRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/design-orders', designOrdersRouter);
 app.use('/api/system-config', systemConfigRouter);
+app.use('/api/payments', paymentsRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/disputes', disputesRouter);
 app.use('/api/messages', messagesRouter);
 app.use('/api', invitationsRouter);
+app.use('/api/service', serviceRouter);
 
 // 全局错误处理中间件
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -68,7 +73,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 async function startServer() {
-  await initializePersistence({ designOrders, rules, tasks, disputes, messages });
+  await initializePersistence({ designOrders, rules, tasks, disputes, messages, serviceLogs });
+  await ensureOssCors();
   app.listen(PORT, () => {
     console.log(`=======================================================`);
     console.log(` [API Server] 设计审核系统后端服务启动成功!`);

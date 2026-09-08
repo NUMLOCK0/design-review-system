@@ -9,6 +9,7 @@
     "dev:mp": "pnpm --filter @design-review/uni-app dev:mp-weixin",
     "build:server": "pnpm --filter @design-review/server build",
     "build:web": "pnpm --filter @design-review/web build",
+    "package:deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-deploy.ps1",
     "build:mp": "pnpm --filter @design-review/uni-app build:mp-weixin"
   },
   "devDependencies": {

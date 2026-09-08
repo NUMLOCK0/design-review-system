@@ -33,6 +33,16 @@ const ddlStatements = [
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
+  // 普通用户的可用业务角色。users.role 仍保存默认/当前角色，便于兼容旧接口。
+  `CREATE TABLE IF NOT EXISTS user_roles (
+    user_id VARCHAR(64) NOT NULL,
+    role VARCHAR(32) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, role),
+    INDEX idx_user_roles_role (role, user_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
   // 2. 审核规则配置表
   `CREATE TABLE IF NOT EXISTS review_rules (
     id VARCHAR(64) PRIMARY KEY,
@@ -190,6 +200,13 @@ async function main() {
          ON DUPLICATE KEY UPDATE name=VALUES(name), department=VALUES(department), role=VALUES(role);`,
         user
       );
+      const roles = user[3] === 'admin' || user[3] === 'customer_service' ? [user[3]] : ['advertiser', 'designer'];
+      for (const role of roles) {
+        await connection.execute(
+          `INSERT IGNORE INTO user_roles (user_id, role) VALUES (?, ?);`,
+          [user[0], role]
+        );
+      }
     }
     console.log('✅ 种子用户初始化完成 (4个初始账号: admin, customer_service, advertiser, designer)');
 

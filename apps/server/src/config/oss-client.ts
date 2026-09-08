@@ -23,6 +23,14 @@ export const isOssConfigured = Boolean(
   bucket !== 'your_oss_bucket_name'
 );
 
+export function createOssObjectKey(filename: string, folderName = 'design-images', prefix?: string) {
+  const ext = path.extname(filename);
+  const baseName = path.basename(filename, ext).replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_');
+  const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const uniquePrefix = prefix || `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  return `${folderName}/${datePrefix}/${uniquePrefix}_${baseName}${ext}`;
+}
+
 if (isOssConfigured) {
   try {
     ossClient = new OSS({
@@ -56,14 +64,11 @@ export async function uploadBufferToOss(
     throw new Error('OSS 客户端未配置或未就绪');
   }
 
-  const ext = path.extname(filename);
-  const baseName = path.basename(filename, ext).replace(/[^a-zA-Z0-9_\-\u4e00-\u9fa5]/g, '_');
-  const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const objectKey = `${folderName}/${datePrefix}/${Date.now()}_${baseName}${ext}`;
+  const objectKey = createOssObjectKey(filename, folderName);
 
   const result = await ossClient.put(objectKey, fileBuffer, {
     headers: {
-      // 原图与带水印预览都保持私有，只能通过服务端权限校验后生成签名地址读取。
+      // OSS 对象保持私有，只能通过受控流程生成签名地址读取。
       'x-oss-object-acl': 'private'
     }
   });
@@ -87,6 +92,72 @@ export function getSignedOssUrl(objectKey: string, expires = 300) {
     throw new Error('OSS 客户端未配置或未就绪');
   }
   return ossClient.signatureUrl(objectKey, { expires, method: 'GET' });
+}
+
+/** 为浏览器直传 OSS 生成仅限 PUT 的临时签名地址。 */
+export function getSignedOssUploadUrl(objectKey: string, contentType: string, expires = 300) {
+  if (!ossClient) {
+    throw new Error('OSS 客户端未配置或未就绪');
+  }
+  return ossClient.signatureUrl(objectKey, {
+    expires,
+    method: 'PUT',
+    'Content-Type': contentType
+  });
+}
+
+export async function headOssObject(objectKey: string) {
+  if (!ossClient) {
+    throw new Error('OSS 客户端未配置或未就绪');
+  }
+  return ossClient.head(objectKey);
+}
+
+/** 为浏览器直传补齐 CORS 规则；只追加缺失规则，不覆盖 Bucket 现有配置。 */
+export async function ensureOssCors() {
+  if (!ossClient || !bucket) return;
+  const origins = (process.env.OSS_CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (!origins.length) return;
+
+  const rule = {
+    allowedOrigin: origins,
+    allowedMethod: ['PUT', 'GET', 'HEAD'],
+    allowedHeader: ['*'],
+    exposeHeader: ['ETag', 'x-oss-request-id'],
+    maxAgeSeconds: '600'
+  } as const;
+
+  try {
+    const current = await ossClient.getBucketCORS(bucket);
+    const hasDirectUploadRule = current.rules.some((currentRule) =>
+      origins.every((origin) => Array.isArray(currentRule.allowedOrigin)
+        ? currentRule.allowedOrigin.includes(origin)
+        : currentRule.allowedOrigin === origin)
+      && (Array.isArray(currentRule.allowedMethod)
+        ? currentRule.allowedMethod.includes('PUT')
+        : currentRule.allowedMethod === 'PUT')
+    );
+    if (!hasDirectUploadRule) {
+      await ossClient.putBucketCORS(bucket, [...current.rules, rule]);
+      console.log(`✅ [Aliyun OSS] 已补充浏览器直传 CORS 规则: ${origins.join(', ')}`);
+    }
+  } catch (err) {
+    console.warn('⚠️ [Aliyun OSS] CORS 规则检查失败，请在 OSS Bucket 控制台手动放行前端域名:', err);
+  }
+}
+
+/**
+ * 为私有 OSS 图片生成带图片处理参数的临时地址。
+ * 水印由 OSS 图片处理服务执行，服务器不需要下载、解码或重新编码原图。
+ */
+export function getSignedOssProcessUrl(objectKey: string, process: string, expires = 300) {
+  if (!ossClient) {
+    throw new Error('OSS 客户端未配置或未就绪');
+  }
+  return ossClient.signatureUrl(objectKey, { expires, method: 'GET', process });
 }
 
 export async function getObjectFromOss(objectKey: string) {

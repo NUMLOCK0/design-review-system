@@ -7,7 +7,9 @@ node_modules/
 dist/
 build/
 .next/
+.next-cache-stale/
 out/
+/release/
 coverage/
 
 # Runtime media (originals are private; previews are generated)
@@ -23,6 +25,7 @@ apps/server/uploads/
 *.env
 
 # Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

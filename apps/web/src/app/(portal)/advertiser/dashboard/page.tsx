@@ -95,7 +95,14 @@ export default function AdvertiserDashboardPage() {
         </div>
       </div>
 
-      <CreateOrderDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={loadDashboard} />
+      <CreateOrderDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(order) => {
+          void loadDashboard();
+          window.location.href = `/advertiser/orders?payOrderId=${encodeURIComponent(order.id)}`;
+        }}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[

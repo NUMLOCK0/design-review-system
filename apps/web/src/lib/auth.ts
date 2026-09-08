@@ -2,7 +2,9 @@ export interface UserInfo {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: 'advertiser' | 'designer' | 'customer_service' | 'admin';
+  roles?: UserInfo['role'][];
   organizationId?: string;
   isOrganizationAdmin?: boolean;
   department?: string;

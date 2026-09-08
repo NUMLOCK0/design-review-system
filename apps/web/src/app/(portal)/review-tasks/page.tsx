@@ -157,14 +157,22 @@ export default function ReviewTasksPage() {
   const handleAcceptTask = async (taskId: string) => {
     setOperatingTaskId(taskId);
     try {
-      const response = await fetchWithAuth(`/review-tasks/${taskId}/acceptance`, { method: 'POST' });
+      const task = tasks.find((item) => item.id === taskId) || detailTask;
+      if (!task?.orderId) throw new Error('该任务未关联设计订单');
+      const response = await fetchWithAuth(`/payments/orders/${task.orderId}/checkout`, { method: 'POST', body: JSON.stringify({ stage: 'balance' }) });
       const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.message || '确认验收失败');
-      setDetailTask(result.data);
-      toast.success(result.message);
-      fetchTasks();
+      if (!response.ok || !result.success) throw new Error(result.message || '生成尾款支付订单失败');
+      const form = document.createElement('form');
+      form.method = result.data.method;
+      form.action = result.data.action;
+      Object.entries(result.data.fields as Record<string, string | number>).forEach(([name, value]) => {
+        const input = document.createElement('input');
+        input.type = 'hidden'; input.name = name; input.value = String(value); form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
     } catch (error: any) {
-      toast.error(error.message || '确认验收失败');
+      toast.error(error.message || '发起尾款支付失败');
     } finally {
       setOperatingTaskId(null);
     }
@@ -424,7 +432,7 @@ export default function ReviewTasksPage() {
                           {/* 状态 1: 待交付制作中 (可提交审核 / 可退单) */}
                           {task.status === 'draft' && (
                             <>
-                              <Link href="/review-submit">
+                              <Link href={`/review-submit?taskId=${encodeURIComponent(task.id)}`}>
                                 <Button size="sm" variant="outline" className="h-7 text-[11px] rounded-xl px-2.5 border-slate-300 text-slate-700">
                                   上传素材
                                 </Button>
@@ -653,7 +661,7 @@ export default function ReviewTasksPage() {
                   </Button>
                 )}
                 {user?.role === 'advertiser' && detailTask.status === 'approved' && !detailTask.acceptedAt && (
-                  <Button onClick={() => handleAcceptTask(detailTask.id)} disabled={operatingTaskId === detailTask.id} className="rounded-xl bg-emerald-600 text-xs text-white hover:bg-emerald-700"><CheckCircle2 className="mr-1 h-3.5 w-3.5" />确认验收</Button>
+                  <Button onClick={() => handleAcceptTask(detailTask.id)} disabled={operatingTaskId === detailTask.id} className="rounded-xl bg-emerald-600 text-xs text-white hover:bg-emerald-700"><CheckCircle2 className="mr-1 h-3.5 w-3.5" />支付尾款并确认验收</Button>
                 )}
               </DialogFooter>
             </>

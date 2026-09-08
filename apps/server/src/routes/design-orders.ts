@@ -6,139 +6,83 @@ import { rules } from './review-rules.js';
 import { persistDesignOrder, persistReviewTask } from '../config/persistence.js';
 import { notifyUser } from './messages.js';
 import { dbPool } from '../config/database.js';
+import { getSystemConfig } from './system-config.js';
+import { calculateOrderSettlement } from '../utils/order-finance.js';
 
 export const designOrdersRouter = Router();
 
-// 内存 Mock 接单市场数据
-export let designOrders: DesignOrder[] = [
-  {
-    id: 'ord_001',
-    orderNo: 'ORD-20260905-01',
-    title: '秋冬新款羽绒服天猫首屏高定主图(5张套装)',
-    category: '主图设计',
-    platform: 'tmall',
-    budget: 800,
-    platformCommissionRate: 0.15,
-    designerPayout: 680,
-    deadline: new Date(Date.now() + 86400000 * 2).toISOString(),
-    urgency: 'urgent',
-    requirements: '需要突出轻盈保暖与防水科技面料纹理，提供白底透气图+场景图+卖点排版图。',
-    referenceImages: [
-      'https://images.unsplash.com/photo-1544441893-675973e31985?w=800&auto=format&fit=crop&q=80',
-      'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=800&auto=format&fit=crop&q=80'
-    ],
-    status: 'open',
-    creatorId: 'u_admin_1',
-    creatorName: '系统运营中心',
-    createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-  },
-  {
-    id: 'ord_002',
-    orderNo: 'ORD-20260905-02',
-    title: '智能降噪蓝牙耳机全套商详页长图设计(含3D渲染卖点图)',
-    category: '详情页设计',
-    platform: 'douyin',
-    budget: 1800,
-    platformCommissionRate: 0.12,
-    designerPayout: 1584,
-    deadline: new Date(Date.now() + 86400000 * 4).toISOString(),
-    urgency: 'normal',
-    requirements: '抖音极简科技风，包含声学结构爆炸图拆解、佩戴舒适度对比、降噪分贝实测图。',
-    referenceImages: [
-      'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&auto=format&fit=crop&q=80'
-    ],
-    status: 'claimed',
-    creatorId: 'u_admin_1',
-    creatorName: '数码运营组',
-    claimedById: 'u_des_1',
-    claimedByName: '李设计师',
-    claimedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    createdAt: new Date(Date.now() - 3600000 * 8).toISOString(),
-  },
-  {
-    id: 'ord_003',
-    orderNo: 'ORD-20260905-03',
-    title: '国风美妆口红新色上市促销海报',
-    category: '活动海报',
-    platform: 'taobao',
-    budget: 450,
-    platformCommissionRate: 0.15,
-    designerPayout: 382.5,
-    deadline: new Date(Date.now() + 86400000).toISOString(),
-    urgency: 'super_urgent',
-    requirements: '东方美学配色，丝绒雾面质感突出，需要附带手机淘宝首焦尺寸。',
-    status: 'open',
-    creatorId: 'u_admin_1',
-    creatorName: '美妆运营组',
-    createdAt: new Date(Date.now() - 1800000).toISOString(),
-  }
+const seedCategories = ['主图设计', '详情页设计', '活动海报', '3D建模与渲染', '精修合成'];
+const seedPlatforms: PlatformType[] = ['tmall', 'taobao', 'douyin', 'pinduoduo', 'universal'];
+const seedProducts = ['轻户外服饰', '智能数码', '国风美妆', '生活家居', '健康食品'];
+const seedImageSources = [
+  'https://images.unsplash.com/photo-1556228578-0d85b1a4d571?w=800&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&auto=format&fit=crop&q=80'
+];
+const seedGroupTemplates: { name: string; groupType: ImageGroupType; dimensions: string }[] = [
+  { name: '方形主图', groupType: 'main_1_1', dimensions: '800x800' },
+  { name: '竖版场景图', groupType: 'main_3_4', dimensions: '750x1000' },
+  { name: '详情页长图', groupType: 'detail', dimensions: '750x1500' }
 ];
 
-// 50 条分页/筛选演示数据：每条订单固定包含 3-4 个图片需求组。
-const mockCategories = ['主图设计', '详情页设计', '活动海报', '3D建模与渲染', '精修合成'];
-const mockPlatforms: PlatformType[] = ['tmall', 'taobao', 'douyin', 'pinduoduo', 'universal'];
-const mockGroupTemplates: { name: string; groupType: ImageGroupType; dimensions: string }[] = [
-  { name: '白底产品主图', groupType: 'main_1_1', dimensions: '800x800' },
-  { name: '场景氛围主图', groupType: 'main_3_4', dimensions: '750x1000' },
-  { name: '卖点拆解图', groupType: 'detail', dimensions: '1920x1080' },
-  { name: '详情页首屏长图', groupType: 'detail', dimensions: '750x1500' }
-];
-
-designOrders.push(...Array.from({ length: 50 }, (_, index) => {
-  const category = mockCategories[index % mockCategories.length];
-  const platform = mockPlatforms[index % mockPlatforms.length];
-  const groupCount = 3 + (index % 2);
+// 100 条按照当前订单与图片分组结构生成的演示订单，使用稳定 ID 便于幂等刷新。
+export let designOrders: DesignOrder[] = Array.from({ length: 100 }, (_, index) => {
+  const number = index + 1;
+  const category = seedCategories[index % seedCategories.length];
+  const platform = seedPlatforms[index % seedPlatforms.length];
+  const product = seedProducts[index % seedProducts.length];
   const rate = category === '详情页设计' ? 0.12 : category === '3D建模与渲染' ? 0.10 : 0.15;
-  const budget = 500 + (index % 6) * 200;
-  const imageRequirementGroups = mockGroupTemplates.slice(0, groupCount).map((template, groupIndex) => ({
-    id: `mock_grp_${index + 1}_${groupIndex + 1}`,
-    name: `${template.name} ${groupIndex + 1}`,
-    groupType: template.groupType,
-    quantity: groupIndex === 0 ? 2 : 1,
-    dimensions: template.dimensions,
-    description: `围绕${category}主题，突出产品核心卖点与品牌质感。`,
-    referenceImages: [`https://images.unsplash.com/photo-${['1556228578-0d85b1a4d571', '1542291026-7eec264c27ff', '1495474472287-4d71bcdd2085', '1523275335684-37898b6baf30'][index % 4]}?w=800&auto=format&fit=crop&q=80`],
-    referenceLinks: []
-  }));
-
+  const budget = 500 + (index % 8) * 250;
+  const settlement = calculateOrderSettlement(budget, rate, 0.3);
+  const createdAt = new Date(Date.now() - (index + 1) * 3600000).toISOString();
+  const pendingReview = index % 10 === 0;
+  const imageRequirementGroups = seedGroupTemplates.slice(0, 2 + (index % 2)).map((template, groupIndex) => {
+    const imageUrl = seedImageSources[(index + groupIndex) % seedImageSources.length];
+    return {
+      id: `seed_order_${String(number).padStart(3, '0')}_group_${groupIndex + 1}`,
+      name: `${template.name} ${groupIndex + 1}`,
+      groupType: template.groupType,
+      quantity: 1,
+      dimensions: template.dimensions,
+      description: `围绕${product}的${category}需求，突出产品卖点、品牌调性与平台展示效果。`,
+      referenceImages: [imageUrl],
+      referenceImageItems: [{ id: `seed_order_${String(number).padStart(3, '0')}_reference_${groupIndex + 1}`, url: imageUrl, description: `参考${template.name}的构图与视觉层次。` }],
+      referenceLinks: index % 4 === 0 ? [`https://www.behance.net/gallery/${2026000 + number}`] : []
+    };
+  });
   return {
-    id: `mock_ord_${String(index + 1).padStart(3, '0')}`,
-    orderNo: `ORD-202609-${String(index + 10).padStart(3, '0')}`,
-    title: `${['春季新品', '爆款单品', '品牌升级', '大促活动'][index % 4]}${['服饰', '数码', '美妆', '家居', '食品'][index % 5]}电商视觉设计需求 ${index + 1}`,
+    id: `seed_order_${String(number).padStart(3, '0')}`,
+    orderNo: `ORD-DEMO-202609-${String(number).padStart(3, '0')}`,
+    title: `${product}${['春季新品', '爆款单品', '品牌升级', '大促活动'][index % 4]}视觉设计需求 ${number}`,
     category,
     platform,
     budget,
     platformCommissionRate: rate,
-    designerPayout: Number((budget * (1 - rate)).toFixed(2)),
+    designerPayout: settlement.designerPayout,
     deadline: new Date(Date.now() + (2 + index % 6) * 86400000).toISOString(),
     urgency: index % 7 === 0 ? 'super_urgent' : index % 3 === 0 ? 'urgent' : 'normal',
-    requirements: `请完成${groupCount}组视觉物料，统一品牌风格并适配${platform}投放规范。`,
+    requirements: `请完成${imageRequirementGroups.length}组图片物料，适配${platform}投放规范，保持${product}品牌视觉统一。`,
     imageRequirementGroups,
-    referenceImages: imageRequirementGroups.map(group => group.referenceImages[0]),
+    referenceImages: imageRequirementGroups.flatMap((group) => group.referenceImages),
     status: 'open',
-    creatorId: `mock_creator_${(index % 5) + 1}`,
-    creatorName: `${['品牌电商部', '市场运营组', '产品中心', '增长团队', '视觉设计部'][index % 5]}${(index % 5) + 1}`,
-    createdAt: new Date(Date.now() - (index + 1) * 3600000).toISOString()
+    publicationStatus: pendingReview ? 'pending_service_review' : 'published',
+    paymentStatus: 'deposit_paid',
+    depositRate: 0.3,
+    depositAmount: settlement.depositAmount,
+    balanceAmount: settlement.balanceAmount,
+    publicationReviewedAt: pendingReview ? undefined : createdAt,
+    publicationReviewerId: pendingReview ? undefined : 'u_rev_1',
+    publicationReviewerName: pendingReview ? undefined : '王总监',
+    servicePriority: index % 7 === 0 ? 'urgent' : index % 3 === 0 ? 'high' : 'normal',
+    creatorId: 'u_adv_1',
+    creatorName: '陈品牌经理',
+    organizationId: 'org_demo_1',
+    reviewRuleId: 'rule_self_u_adv_1',
+    reviewRuleName: '自己审核',
+    createdAt,
+    updatedAt: createdAt
   } satisfies DesignOrder;
-}));
-
-// 让原有演示订单也具备完整的图片需求清单，详情弹窗展示保持一致。
-designOrders.forEach((order, index) => {
-  order.publicationStatus = order.publicationStatus || 'published';
-  if ((order.imageRequirementGroups?.length || 0) >= 3) return;
-  order.imageRequirementGroups = mockGroupTemplates.slice(0, 3).map((template, groupIndex) => ({
-    id: `${order.id}_grp_${groupIndex + 1}`,
-    name: `${template.name} ${groupIndex + 1}`,
-    groupType: template.groupType,
-    quantity: 1,
-    dimensions: template.dimensions,
-    description: `补充${order.category}图片需求，突出产品核心卖点。`,
-    referenceImages: groupIndex === 0 && order.referenceImages?.length
-      ? [order.referenceImages[0]]
-      : [],
-    referenceLinks: []
-  }));
-  order.referenceImages = order.imageRequirementGroups.flatMap(group => group.referenceImages);
 });
 
 // 客服订单发布审核队列：客服只审核订单是否允许进入接单大厅，不审核设计师作品。
@@ -149,10 +93,24 @@ designOrdersRouter.get('/service/pending', authenticate, requireRoles('customer_
 
 // 品牌方订单视图包含待客服审核、已驳回和已发布订单；接单大厅不会暴露这些内部状态。
 designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'admin'), (req, res) => {
-  const list = req.user!.role === 'admin'
+  const status = String(req.query.status || 'all');
+  const keyword = String(req.query.keyword || '').trim().toLowerCase();
+  const pageSize = Math.min(Math.max(Math.floor(Number(req.query.pageSize) || 10), 1), 10);
+  const page = Math.max(Math.floor(Number(req.query.page) || 1), 1);
+  let list = req.user!.role === 'admin'
     ? designOrders
     : designOrders.filter((order) => order.creatorId === req.user!.id || order.organizationId === req.user!.organizationId);
-  res.json({ code: 200, success: true, data: list, timestamp: Date.now() });
+  list = list.filter((order) => {
+    const currentStatus = order.status === 'cancelled' && order.publicationStatus !== 'rejected'
+      ? 'cancelled'
+      : order.publicationStatus || order.status;
+    const statusMatched = status === 'all' || currentStatus === status;
+    const keywordMatched = !keyword || order.title.toLowerCase().includes(keyword);
+    return statusMatched && keywordMatched;
+  });
+  const start = (page - 1) * pageSize;
+  const data = list.slice(start, start + pageSize);
+  res.json({ code: 200, success: true, data, total: list.length, page, pageSize, hasMore: start + data.length < list.length, timestamp: Date.now() });
 });
 
 // 品牌方订单进度：仅返回关联任务的阶段与审核节点，不暴露审核工作台任务列表。
@@ -198,7 +156,7 @@ designOrdersRouter.get('/', (req, res) => {
   let filtered = [...designOrders];
 
   // 接单大厅只展示客服已审核通过的订单。
-  filtered = filtered.filter((order) => order.publicationStatus === 'published' || !order.publicationStatus);
+  filtered = filtered.filter((order) => (order.publicationStatus === 'published' || !order.publicationStatus) && order.paymentStatus !== 'deposit_pending');
 
   // 默认过滤掉已被接单的订单，仅展示 open 待接单需求
   if (status && status !== 'all') {
@@ -275,7 +233,7 @@ designOrdersRouter.post('/', authenticate, requireRoles('advertiser'), (req, res
   // 默认根据分类计算抽成比例
   const rate = category === '详情页设计' ? 0.12 : (category === '3D建模与渲染' ? 0.10 : 0.15);
   const numBudget = Number(budget);
-  const payout = Number((numBudget * (1 - rate)).toFixed(2));
+  const settlement = calculateOrderSettlement(numBudget, rate, getSystemConfig().depositRate);
 
   // 收集所有组中的首图作为封面
   const allGroupImages: string[] = [];
@@ -295,14 +253,18 @@ designOrdersRouter.post('/', authenticate, requireRoles('advertiser'), (req, res
     platform: platform || 'tmall',
     budget: numBudget,
     platformCommissionRate: rate,
-    designerPayout: payout,
+    designerPayout: settlement.designerPayout,
     deadline: deadline || new Date(Date.now() + 86400000 * 3).toISOString(),
     urgency: urgency || 'normal',
     requirements: requirements || '',
     imageRequirementGroups: imageRequirementGroups || [],
     referenceImages: allGroupImages.length > 0 ? allGroupImages : (referenceImages || []),
     status: 'open',
-    publicationStatus: 'pending_service_review',
+    publicationStatus: 'pending_deposit',
+    paymentStatus: 'deposit_pending',
+    depositRate: getSystemConfig().depositRate,
+    depositAmount: settlement.depositAmount,
+    balanceAmount: settlement.balanceAmount,
     creatorId: creatorId || req.user!.id,
     creatorName: creatorName || req.user!.name,
     organizationId: organizationId || req.user!.organizationId,
@@ -312,18 +274,10 @@ designOrdersRouter.post('/', authenticate, requireRoles('advertiser'), (req, res
   };
 
   designOrders.unshift(newOrder);
-  void persistDesignOrder(newOrder);
-  notifyUser('u_rev_1', {
-    type: 'order',
-    title: '新的订单待审核',
-    content: `${newOrder.creatorName}提交了订单「${newOrder.title}」，请完成发布审核。`,
-    link: '/service/order-audits',
-  });
-
   res.status(201).json({
     code: 200,
     success: true,
-    message: '需求已提交客服审核，审核通过后进入接单大厅',
+    message: '订单已创建，请先支付定金',
     data: newOrder,
     timestamp: Date.now()
   });
@@ -345,7 +299,10 @@ designOrdersRouter.patch('/:id', authenticate, requireRoles('advertiser'), (req,
   });
   if (req.body?.budget !== undefined) {
     order.budget = Number(req.body.budget);
-    order.designerPayout = Number((order.budget * (1 - order.platformCommissionRate)).toFixed(2));
+    const settlement = calculateOrderSettlement(order.budget, order.platformCommissionRate, order.depositRate || getSystemConfig().depositRate);
+    order.designerPayout = settlement.designerPayout;
+    order.depositAmount = settlement.depositAmount;
+    order.balanceAmount = settlement.balanceAmount;
   }
   if (wasPublished) {
     order.publicationStatus = 'pending_service_review';
@@ -357,7 +314,7 @@ designOrdersRouter.patch('/:id', authenticate, requireRoles('advertiser'), (req,
       type: 'order',
       title: '已发布订单修改待审核',
       content: `${order.creatorName}修改了订单「${order.title}」，请重新完成发布审核。`,
-      link: '/service/order-audits',
+      link: '/service/dashboard?tab=order_audit',
     });
   }
   order.updatedAt = new Date().toISOString();
@@ -373,7 +330,7 @@ designOrdersRouter.post('/:id/resubmit', authenticate, requireRoles('advertiser'
   order.status = 'open';
   order.updatedAt = new Date().toISOString();
   void persistDesignOrder(order);
-  notifyUser('u_rev_1', { type: 'order', title: '订单重新提交待审核', content: `${order.creatorName}重新提交了订单「${order.title}」。`, link: '/service/order-audits' });
+  notifyUser('u_rev_1', { type: 'order', title: '订单重新提交待审核', content: `${order.creatorName}重新提交了订单「${order.title}」。`, link: '/service/dashboard?tab=order_audit' });
   res.json({ code: 200, success: true, message: '订单已重新提交审核', data: order, timestamp: Date.now() });
 });
 
@@ -441,6 +398,9 @@ designOrdersRouter.post('/:id/publication-review', authenticate, requireRoles('c
 
 // 抢单与邀请接受共用同一个任务创建入口，避免两条路径产生不同的订单状态。
 export function claimDesignOrder(order: DesignOrder, designerId: string, designerName: string) {
+  if (order.creatorId === designerId) {
+    throw new Error('不能接取自己发布的订单');
+  }
   if (order.status !== 'open' || (order.publicationStatus && order.publicationStatus !== 'published')) {
     throw new Error('手慢了，该订单已被接取或已下架');
   }

@@ -16,7 +16,9 @@ import {
   ArrowRight,
   Bell,
   ReceiptText,
-  Inbox
+  Inbox,
+  Building2,
+  PenTool
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,7 +31,7 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { fetchWithAuth, getCurrentUser, clearAuthSession, getRoleHome, ROLE_LABEL, UserInfo } from '@/lib/auth';
+import { fetchWithAuth, getCurrentUser, clearAuthSession, getRoleHome, ROLE_LABEL, setAuthSession, UserInfo } from '@/lib/auth';
 import { toast } from 'sonner';
 
 const PORTAL_NAV_ITEMS: Record<UserInfo['role'], Array<{ href: string; label: string; icon: typeof ShoppingBag; badge?: string }>> = {
@@ -40,13 +42,11 @@ const PORTAL_NAV_ITEMS: Record<UserInfo['role'], Array<{ href: string; label: st
   ],
   designer: [
     { href: '/order-market', label: '接单与派单大厅', icon: ShoppingBag, badge: '热' },
-    { href: '/invitations', label: '订单邀请', icon: Inbox },
     { href: '/review-tasks', label: '我的任务中心', icon: CheckSquare },
     { href: '/wallet', label: '收益钱包与结算', icon: ShieldCheck, badge: '资金' },
   ],
   customer_service: [
     { href: '/service/dashboard', label: '客服工作台', icon: CheckSquare },
-    { href: '/service/order-audits', label: '订单发布审核', icon: ShoppingBag },
     { href: '/service/disputes', label: '纠纷处理中心', icon: ShieldCheck },
   ],
   admin: [
@@ -58,6 +58,7 @@ export function PortalNavbar() {
   const router = useRouter();
   const [user, setUser] = useState<UserInfo | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [switchingRole, setSwitchingRole] = useState(false);
 
   useEffect(() => {
     setUser(getCurrentUser());
@@ -81,6 +82,23 @@ export function PortalNavbar() {
     clearAuthSession();
     toast.info('已退出登录');
     router.push('/login');
+  };
+
+  const handleSwitchRole = async (role: UserInfo['role']) => {
+    if (!user || role === user.role || switchingRole) return;
+    setSwitchingRole(true);
+    try {
+      const response = await fetchWithAuth('/auth/switch-role', { method: 'POST', body: JSON.stringify({ role }) });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || '角色切换失败');
+      setAuthSession(result.data.token, result.data.user);
+      toast.success(`已切换为${ROLE_LABEL[role]}角色`);
+      router.push(getRoleHome(role));
+    } catch (error: any) {
+      toast.error(error.message || '角色切换失败');
+    } finally {
+      setSwitchingRole(false);
+    }
   };
 
   const userName = user?.name || '未登录';
@@ -155,14 +173,42 @@ export function PortalNavbar() {
 
           {/* 站内信通知 */}
           {user && (
-            <Link href="/messages" aria-label="站内信" className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-blue-50 hover:text-blue-600">
-              <Bell className="h-4 w-4" />
-              {unreadCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-rose-500 px-1 text-center text-[9px] font-bold leading-4 text-white ring-2 ring-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
-            </Link>
+            <>
+              {user.roles && user.roles.length > 1 && (
+                <div className="hidden items-center gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1 sm:flex" aria-label="切换工作空间">
+                  {(['advertiser', 'designer'] as const).filter((role) => user.roles?.includes(role)).map((role) => {
+                    const Icon = role === 'advertiser' ? Building2 : PenTool;
+                    const isActive = role === userRole;
+                    return (
+                      <button
+                        key={role}
+                        type="button"
+                        title={isActive ? `当前处于${ROLE_LABEL[role]}工作空间` : `切换到${ROLE_LABEL[role]}工作空间`}
+                        aria-label={isActive ? `当前处于${ROLE_LABEL[role]}工作空间` : `切换到${ROLE_LABEL[role]}工作空间`}
+                        disabled={switchingRole || isActive}
+                        onClick={() => handleSwitchRole(role)}
+                        className={`flex h-7 items-center gap-1 rounded-xl px-2.5 text-[11px] font-semibold transition ${isActive ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:bg-white hover:text-slate-800'}`}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        <span>{ROLE_LABEL[role]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <Link href="/messages" aria-label="站内信" className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-blue-50 hover:text-blue-600">
+                <Bell className="h-4 w-4" />
+                {unreadCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-rose-500 px-1 text-center text-[9px] font-bold leading-4 text-white ring-2 ring-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
+              </Link>
+            </>
           )}
 
-          {/* 用户头像与菜单 */}
-          <DropdownMenu>
+          {/* 未登录显示登录按钮，登录后显示用户菜单 */}
+          {!user ? (
+            <Link href={pathname === '/login' ? '/login' : `/login?redirect=${encodeURIComponent(pathname)}`} className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                登录
+            </Link>
+          ) : <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button className="flex items-center gap-2.5 p-1 rounded-2xl hover:bg-slate-100 transition outline-none">
                 <Avatar className="w-8 h-8 border border-slate-200">
@@ -207,13 +253,22 @@ export function PortalNavbar() {
                   </DropdownMenuItem>
                 </>
               )}
+              {userRole === 'designer' && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="text-xs gap-2 cursor-pointer" onClick={() => router.push('/invitations')}>
+                    <Inbox className="w-3.5 h-3.5 text-blue-500" />
+                    <span>订单邀请</span>
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-xs gap-2 text-rose-600 focus:text-rose-600 cursor-pointer" onClick={handleLogout}>
                 <LogOut className="w-3.5 h-3.5" />
                 <span>退出登录</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
-          </DropdownMenu>
+          </DropdownMenu>}
         </div>
       </div>
     </header>

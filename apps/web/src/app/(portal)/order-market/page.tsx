@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import * as Select from '@radix-ui/react-select';
+import { Masonry } from 'masonic';
 import { 
   ShoppingBag, 
   PlusCircle, 
@@ -34,6 +35,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { fetchWithAuth } from '@/lib/auth';
+import { uploadFile } from '@/lib/upload';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useRouter } from 'next/navigation';
 import type { 
@@ -218,23 +220,12 @@ export default function OrderMarketPage() {
     if (!file) return;
 
     setUploadingGroupIndex(groupIndex);
-    const body = new FormData();
-    body.append('file', file);
-    body.append('folder', 'reference-samples');
-
     try {
-      const res = await fetchWithAuth('/upload', {
-        method: 'POST',
-        body
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || '上传失败');
-      }
+      const data = await uploadFile(file, 'reference-samples');
 
       const updatedGroups = [...formData.imageRequirementGroups];
       const targetGroup = updatedGroups[groupIndex];
-      const newImgUrl = data.data.url;
+      const newImgUrl = data.url;
 
       // 同步更新纯链接数组与对象数组
       targetGroup.referenceImages = targetGroup.referenceImages || [];
@@ -437,7 +428,8 @@ export default function OrderMarketPage() {
                     <Input
                       type="number"
                       required
-                      min="50"
+                      min="0.01"
+                      step="0.01"
                       placeholder="800"
                       value={formData.budget}
                       onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
@@ -741,8 +733,15 @@ export default function OrderMarketPage() {
           <p className="text-xs text-slate-500 font-medium">暂无对应分类的接单需求</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-          {filteredOrders.map((order) => {
+        <Masonry
+          items={filteredOrders}
+          columnWidth={280}
+          columnGutter={12}
+          rowGutter={12}
+          itemHeightEstimate={360}
+          itemKey={(order) => order.id}
+          overscanBy={1}
+          render={({ data: order }) => {
             const isClaimed = order.status !== 'open';
             const groupsCount = order.imageRequirementGroups?.length || 1;
 
@@ -754,8 +753,8 @@ export default function OrderMarketPage() {
               >
                 <div>
                   {/* 卡片头部 */}
-                  <div className="p-3 pb-2">
-                    <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="p-2.5 pb-1.5">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
                       <div className="flex items-center gap-1.5">
                         <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-200">
                           {order.category}
@@ -782,8 +781,8 @@ export default function OrderMarketPage() {
 
                   {/* 参考样例图展示 */}
                   {order.referenceImages && order.referenceImages.length > 0 && (
-                    <div className="px-3 pb-2">
-                      <div className="relative h-24 w-full rounded-xl overflow-hidden bg-slate-100 border border-slate-200/50">
+                    <div className="px-2.5 pb-1.5">
+                      <div className="relative h-20 w-full rounded-xl overflow-hidden bg-slate-100 border border-slate-200/50">
                         <img
                           src={order.referenceImages[0]}
                           alt="参考图"
@@ -798,7 +797,7 @@ export default function OrderMarketPage() {
 
                   {/* 需求组与图片说明预览 */}
                   {order.imageRequirementGroups && order.imageRequirementGroups.length > 0 && (
-                    <div className="px-3 pb-2">
+                    <div className="px-2.5 pb-1.5">
                       <div className="space-y-1">
                         {order.imageRequirementGroups.slice(0, 2).map((grp, idx) => (
                           <div key={idx} className="flex items-center justify-between text-[11px] bg-slate-50 p-1.5 px-2.5 rounded-xl text-slate-600">
@@ -811,19 +810,19 @@ export default function OrderMarketPage() {
                   )}
 
                   {/* 需求文案 */}
-                  <div className="px-3 pb-2">
-                    <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed bg-slate-50/70 p-2 rounded-lg">
+                  <div className="px-2.5 pb-1.5">
+                    <p className="text-[11px] text-slate-500 line-clamp-2 leading-snug bg-slate-50/70 p-1.5 rounded-lg">
                       {order.requirements || '发布方已设定单图专属描述，请接单后查阅图例及外链。'}
                     </p>
                   </div>
                 </div>
 
                   {/* 卡片底部操作与金额 */}
-                <div className="p-3 pt-2 border-t border-slate-100 bg-slate-50/40">
-                  <div className="flex items-center justify-between mb-3 text-xs">
+                <div className="p-2.5 pt-1.5 border-t border-slate-100 bg-slate-50/40">
+                  <div className="flex items-center justify-between mb-2 text-xs">
                     <div>
                       <div className="text-[10px] text-slate-400">订单价格</div>
-                      <div className="font-extrabold text-base text-emerald-600 font-mono">
+                    <div className="font-extrabold text-sm text-emerald-600 font-mono">
                         ¥{order.designerPayout || order.budget}
                       </div>
                     </div>
@@ -837,7 +836,7 @@ export default function OrderMarketPage() {
 
                   <Button
                     onClick={(e) => { e.stopPropagation(); handleClaimOrder(order.id); }}
-                    className="w-full rounded-2xl text-xs h-9 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/20 gap-1.5 font-semibold"
+                    className="w-full rounded-xl text-xs h-8 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/20 gap-1.5 font-semibold"
                   >
                     <Coins className="w-4 h-4" />
                     立即抢单接取
@@ -846,8 +845,8 @@ export default function OrderMarketPage() {
                 </div>
               </Card>
             );
-          })}
-        </div>
+          }}
+        />
       )}
       <div ref={loadMoreRef} className="h-12 py-3 text-center text-xs text-slate-400">
         {loadingMore ? '正在加载更多...' : hasMore ? '下拉加载更多' : filteredOrders.length > 0 ? '已加载全部需求' : ''}

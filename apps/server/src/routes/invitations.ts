@@ -50,7 +50,9 @@ async function profiles(orderId: string, keyword = '') {
   let result: DesignerProfile[] = fallbackProfiles;
   if (dbPool) {
     const [rows]: any = await dbPool.query(`SELECT u.id, u.name, u.avatar_url, p.categories, p.platforms, p.styles, p.min_budget, p.max_active_orders, p.availability_status, p.portfolio_urls
-      FROM users u JOIN designer_profiles p ON p.user_id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci WHERE u.role = 'designer'`);
+      FROM users u JOIN user_roles ur ON ur.user_id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci
+      JOIN designer_profiles p ON p.user_id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci
+      WHERE ur.role = 'designer'`);
     result = rows.map((row: any) => ({
       userId: row.id, name: row.name, avatarUrl: row.avatar_url || undefined, categories: parseJson(row.categories, []), platforms: parseJson(row.platforms, []), styles: parseJson(row.styles, []),
       minBudget: Number(row.min_budget || 0), maxActiveOrders: Number(row.max_active_orders || 3), availabilityStatus: row.availability_status, portfolioUrls: parseJson(row.portfolio_urls, []), activeOrderCount: 0, qualityScore: 85, onTimeRate: 92
@@ -71,7 +73,7 @@ async function profiles(orderId: string, keyword = '') {
     const score = Math.max(0, Math.min(100, (categoryMatch ? 25 : 0) + (platformMatch ? 15 : 0) + Math.min(10, styleMatches.length * 5) + Math.round(qualityScore * .2) + Math.round(onTimeRate * .15) + Math.round(Math.min(1, capacity / Math.max(1, profile.maxActiveOrders)) * 10) + Math.min(5, prior * 2) - (profile.availabilityStatus === 'busy' ? 5 : 0)));
     const reasons = [categoryMatch && `擅长${order.category}`, platformMatch && `${order.platform === 'tmall' ? '天猫' : order.platform}项目经验匹配`, `历史质量分${qualityScore}`, `准时交付率${onTimeRate}%`, capacity > 0 && `当前可接${capacity}单`].filter(Boolean) as string[];
     return { ...profile, activeOrderCount, qualityScore, onTimeRate, recommendationScore: score, recommendationReasons: reasons };
-  }).filter((profile) => profile.availabilityStatus !== 'unavailable' && profile.activeOrderCount < profile.maxActiveOrders && !invited.has(profile.userId) && (!profile.minBudget || order.budget >= profile.minBudget) && (!query || `${profile.name} ${profile.categories.join(' ')} ${profile.platforms.join(' ')} ${profile.styles.join(' ')}`.toLowerCase().includes(query))).sort((a, b) => (b.recommendationScore || 0) - (a.recommendationScore || 0));
+  }).filter((profile) => profile.userId !== order.creatorId && profile.availabilityStatus !== 'unavailable' && profile.activeOrderCount < profile.maxActiveOrders && !invited.has(profile.userId) && (!profile.minBudget || order.budget >= profile.minBudget) && (!query || `${profile.name} ${profile.categories.join(' ')} ${profile.platforms.join(' ')} ${profile.styles.join(' ')}`.toLowerCase().includes(query))).sort((a, b) => (b.recommendationScore || 0) - (a.recommendationScore || 0));
 }
 
 function awaitedTasks(designerId: string) { return tasks.filter((task) => task.designerId === designerId); }

@@ -29,6 +29,9 @@ disputesRouter.post('/', authenticate, requireRoles('advertiser', 'designer'), (
   if (order.disputeId && disputes.some((item) => item.id === order.disputeId && item.status !== 'resolved')) {
     return res.status(400).json({ code: 400, success: false, message: '该订单已有处理中纠纷' });
   }
+  if ((order.creatorId === req.user!.id && order.claimedById === req.user!.id) || !order.claimedById) {
+    return res.status(400).json({ code: 400, success: false, message: !order.claimedById ? '订单尚未接单，暂不能发起订单纠纷' : '同一账号不能作为纠纷双方' });
+  }
 
   const dispute: OrderDispute = {
     id: `disp_${Date.now()}`,

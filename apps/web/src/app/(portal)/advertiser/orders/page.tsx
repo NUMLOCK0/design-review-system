@@ -1,22 +1,24 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import * as Select from '@radix-ui/react-select';
-import { ChevronDown } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Search } from 'lucide-react';
+import { QrCode, CheckCircle2, Loader2 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import type { DesignOrder, TaskStatus } from '@design-review/shared';
 import { fetchWithAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { CreateOrderDialog } from '@/components/create-order-dialog';
 import { DesignerInviteDrawer } from '@/components/designer-invite-drawer';
 import { toast } from 'sonner';
 
 const statusMap: Record<string, { label: string; className: string }> = {
+  pending_deposit: { label: '待支付定金', className: 'bg-orange-50 text-orange-700' },
   pending_service_review: { label: '待客服审核', className: 'bg-amber-50 text-amber-700' },
   published: { label: '已上架接单', className: 'bg-emerald-50 text-emerald-700' },
   rejected: { label: '客服已驳回', className: 'bg-rose-50 text-rose-700' },
@@ -30,6 +32,8 @@ const statusFilters = [{ value: 'all', label: '全部订单状态' }, ...Object.
 const orderStatus = (order: DesignOrder) => order.status === 'cancelled' && order.publicationStatus !== 'rejected' ? 'cancelled' : order.publicationStatus || order.status;
 const taskStatusMap: Record<TaskStatus, string> = { draft: '设计师制作中', pending: '等待当前节点审核', in_review: '当前节点审核中', needs_revision: '已退回设计师修改', approved: '审核已通过', returned: '设计师已退单', archived: '已归档' };
 type OrderProgress = { task: { status: TaskStatus; currentLevel: number; totalImages: number; approvedCount: number; rejectedCount: number; designerName: string; submittedAt?: string; completedAt?: string; updatedAt?: string } | null; nodes: Array<{ level: number; reviewerNames: string[]; approvalMode: 'any' | 'all' }> };
+type PaymentType = 'wxpay' | 'alipay';
+type PaymentState = { order: DesignOrder; stage: 'deposit' | 'balance'; type: PaymentType; amount: number; outTradeNo?: string; qrcode?: string; loading: boolean; paid: boolean };
 
 function OrderProgressPanel({ progress }: { progress: OrderProgress }) {
   const task = progress.task;
@@ -52,31 +56,60 @@ function OrderProgressPanel({ progress }: { progress: OrderProgress }) {
 export default function AdvertiserOrdersPage() {
   const [orders, setOrders] = useState<DesignOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalOrders, setTotalOrders] = useState(0);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingOrder, setEditingOrder] = useState<DesignOrder | null>(null);
   const [inviteOrder, setInviteOrder] = useState<DesignOrder | null>(null);
   const [detailOrder, setDetailOrder] = useState<DesignOrder | null>(null);
-  const [editOrder, setEditOrder] = useState<DesignOrder | null>(null);
-  const [editForm, setEditForm] = useState({ title: '', budget: '', deadline: '', requirements: '' });
   const [operatingId, setOperatingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [keyword, setKeyword] = useState('');
   const [progressOrder, setProgressOrder] = useState<DesignOrder | null>(null);
   const [progress, setProgress] = useState<OrderProgress | null>(null);
   const [progressLoading, setProgressLoading] = useState(false);
+  const [payment, setPayment] = useState<PaymentState | null>(null);
+  const [pendingPaymentOrderId, setPendingPaymentOrderId] = useState<string | null>(null);
+  const paymentRequestId = useRef(0);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
-  const loadOrders = async () => {
+  const loadOrders = async ({ reset = true, nextPage }: { reset?: boolean; nextPage?: number } = {}) => {
+    const targetPage = nextPage || (reset ? 1 : page + 1);
+    if (reset) {
+      setLoading(true);
+      setLoadingMore(false);
+    }
+    else setLoadingMore(true);
     try {
-      const response = await fetchWithAuth('/design-orders/mine');
+      const query = new URLSearchParams({ status: statusFilter, keyword, page: String(targetPage), pageSize: '10' });
+      const response = await fetchWithAuth(`/design-orders/mine?${query.toString()}`);
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || '加载订单失败');
-      setOrders(result.data || []);
+      setOrders((current) => reset ? result.data || [] : [...current, ...(result.data || [])]);
+      setTotalOrders(Number(result.total) || 0);
+      setPage(targetPage);
+      setHasMore(Boolean(result.hasMore));
     } catch (error: any) {
       toast.error(error.message || '加载订单失败');
     } finally {
-      setLoading(false);
+      if (reset) setLoading(false);
+      else setLoadingMore(false);
     }
   };
 
-  useEffect(() => { loadOrders(); }, []);
+  useEffect(() => { void loadOrders({ reset: true, nextPage: 1 }); }, [statusFilter, keyword]);
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || loading || loadingMore || !hasMore) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) void loadOrders({ reset: false });
+    }, { rootMargin: '240px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [loading, loadingMore, hasMore, page, statusFilter, keyword]);
   useEffect(() => { if (new URLSearchParams(window.location.search).get('create') === '1') setCreateOpen(true); }, []);
 
   const operate = async (order: DesignOrder, action: 'resubmit' | 'cancel') => {
@@ -86,31 +119,9 @@ export default function AdvertiserOrdersPage() {
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || '操作失败');
       toast.success(result.message);
-      loadOrders();
+      void loadOrders({ reset: true, nextPage: 1 });
     } catch (error: any) {
       toast.error(error.message || '操作失败');
-    } finally {
-      setOperatingId(null);
-    }
-  };
-
-  const openEdit = (order: DesignOrder) => {
-    setEditOrder(order);
-    setEditForm({ title: order.title, budget: String(order.budget), deadline: order.deadline.slice(0, 10), requirements: order.requirements });
-  };
-
-  const saveEdit = async () => {
-    if (!editOrder || !editForm.title.trim() || !editForm.budget) return;
-    setOperatingId(editOrder.id);
-    try {
-      const response = await fetchWithAuth(`/design-orders/${editOrder.id}`, { method: 'PATCH', body: JSON.stringify({ ...editForm, title: editForm.title.trim(), budget: Number(editForm.budget), deadline: new Date(editForm.deadline).toISOString() }) });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.message || '保存失败');
-      toast.success(result.message || '订单已更新');
-      setEditOrder(null);
-      loadOrders();
-    } catch (error: any) {
-      toast.error(error.message || '保存失败');
     } finally {
       setOperatingId(null);
     }
@@ -132,7 +143,66 @@ export default function AdvertiserOrdersPage() {
     }
   };
 
-  const filteredOrders = orders.filter((order) => statusFilter === 'all' || orderStatus(order) === statusFilter);
+  const startPayment = async (order: DesignOrder, stage: 'deposit' | 'balance', type: PaymentType = 'wxpay') => {
+    const requestId = ++paymentRequestId.current;
+    setPayment({ order, stage, type, amount: stage === 'deposit' ? order.depositAmount || 0 : order.balanceAmount || 0, loading: true, paid: false });
+    try {
+      const response = await fetchWithAuth(`/payments/orders/${order.id}/checkout`, { method: 'POST', body: JSON.stringify({ stage, type }) });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || '生成支付订单失败');
+      if (requestId === paymentRequestId.current) {
+        setPayment({ order, stage, type, amount: Number(result.data.amount) || 0, outTradeNo: result.data.outTradeNo, qrcode: result.data.qrcode, loading: false, paid: false });
+      }
+    } catch (error: any) {
+      if (requestId === paymentRequestId.current) setPayment(null);
+      toast.error(error.message || '发起支付失败');
+    }
+  };
+
+  const closePayment = () => {
+    paymentRequestId.current += 1;
+    setPayment(null);
+  };
+
+  useEffect(() => {
+    const outTradeNo = payment?.outTradeNo;
+    if (!outTradeNo || payment.loading || payment.paid) return;
+    let cancelled = false;
+    const checkPayment = async () => {
+      try {
+        const response = await fetchWithAuth(`/payments/status/${encodeURIComponent(outTradeNo)}`);
+        const result = await response.json();
+        if (cancelled || !response.ok || !result.success) return;
+        const paid = payment.stage === 'deposit'
+          ? ['deposit_paid', 'paid'].includes(result.data.paymentStatus)
+          : result.data.paymentStatus === 'paid';
+        if (paid) {
+          setPayment((current) => current?.outTradeNo === outTradeNo ? { ...current, paid: true } : current);
+          void loadOrders({ reset: true, nextPage: 1 });
+          toast.success(payment.stage === 'deposit' ? '定金支付成功' : '尾款支付成功');
+        }
+      } catch {
+        // 支付状态以异步通知为准，轮询失败时保留弹窗等待下一次检查。
+      }
+    };
+    void checkPayment();
+    const timer = window.setInterval(() => void checkPayment(), 3000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [payment?.outTradeNo, payment?.stage, payment?.loading, payment?.paid]);
+
+  useEffect(() => {
+    const paymentOrderId = new URLSearchParams(window.location.search).get('payOrderId');
+    if (paymentOrderId) setPendingPaymentOrderId(paymentOrderId);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingPaymentOrderId) return;
+    const order = orders.find((item) => item.id === pendingPaymentOrderId);
+    if (!order) return;
+    setPendingPaymentOrderId(null);
+    window.history.replaceState({}, '', '/advertiser/orders');
+    void startPayment(order, 'deposit');
+  }, [orders, pendingPaymentOrderId]);
 
   return (
     <section className="space-y-5">
@@ -146,42 +216,76 @@ export default function AdvertiserOrdersPage() {
         </div>
       </div>
 
-      <CreateOrderDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={(order) => { loadOrders(); setInviteOrder(order); }} />
+      <CreateOrderDialog
+        open={createOpen}
+        editingOrder={editingOrder}
+        onOpenChange={(open) => { setCreateOpen(open); if (!open) setEditingOrder(null); }}
+        onCreated={(order) => { void loadOrders({ reset: true, nextPage: 1 }); void startPayment(order, 'deposit'); }}
+        onUpdated={() => { setCreateOpen(false); setEditingOrder(null); void loadOrders({ reset: true, nextPage: 1 }); }}
+      />
       <DesignerInviteDrawer open={Boolean(inviteOrder)} onOpenChange={(open) => !open && setInviteOrder(null)} order={inviteOrder} onUpdated={loadOrders} />
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-3">
-        <p className="text-xs text-slate-500">共 <span className="font-semibold text-slate-800">{filteredOrders.length}</span> 个订单</p>
-        <Select.Root value={statusFilter} onValueChange={setStatusFilter}><Select.Trigger className="flex h-9 w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 text-xs outline-none focus:border-blue-300 focus:ring-[3px] focus:ring-blue-500/15 sm:w-48"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 min-w-[12rem] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{statusFilters.map((status) => <Select.Item key={status.value} value={status.value} className="flex cursor-pointer items-center rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100 data-[state=checked]:bg-blue-50 data-[state=checked]:text-blue-700"><Select.ItemText>{status.label}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
+      <Dialog open={Boolean(payment)} onOpenChange={(open) => { if (!open) closePayment(); }}>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-md rounded-3xl p-6">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base"><QrCode className="h-5 w-5 text-blue-600" />{payment?.stage === 'deposit' ? '支付订单定金' : '支付订单尾款'}</DialogTitle>
+            <DialogDescription className="text-xs">订单：{payment?.order.title}</DialogDescription>
+          </DialogHeader>
+          {payment && <div className="space-y-4">
+            <div className="flex rounded-xl bg-slate-100 p-1">
+              {([['wxpay', '微信支付'], ['alipay', '支付宝']] as const).map(([type, label]) => <button key={type} type="button" disabled={payment.loading} onClick={() => { if (type !== payment.type) void startPayment(payment.order, payment.stage, type); }} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${payment.type === type ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>)}
+            </div>
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-center">
+              <p className="text-xs text-slate-500">应付金额</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900">¥{payment.amount.toFixed(2)}</p>
+              {payment.loading ? <div className="flex h-52 flex-col items-center justify-center gap-2 text-xs text-slate-400"><Loader2 className="h-7 w-7 animate-spin text-blue-600" />正在生成支付二维码…</div> : payment.paid ? <div className="flex h-52 flex-col items-center justify-center gap-2 text-sm font-semibold text-emerald-600"><CheckCircle2 className="h-12 w-12" />支付成功</div> : payment.qrcode ? <div className="mt-3 flex flex-col items-center gap-2"><div className="rounded-xl bg-white p-3 shadow-sm"><QRCodeSVG value={payment.qrcode} size={180} includeMargin /></div><p className="text-[11px] text-slate-500">请使用{payment.type === 'wxpay' ? '微信' : '支付宝'}扫码支付</p></div> : <div className="flex h-52 items-center justify-center text-xs text-rose-500">未获取到支付二维码，请重试</div>}
+            </div>
+            <p className="text-center text-[11px] text-slate-400">支付完成后页面会自动确认订单状态</p>
+            {payment.paid && <Button onClick={closePayment} className="w-full rounded-xl bg-emerald-600 text-xs text-white hover:bg-emerald-700">完成</Button>}
+          </div>}
+        </DialogContent>
+      </Dialog>
+
+      <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-slate-500">共 <span className="font-semibold text-slate-800">{loading ? '-' : totalOrders}</span> 个订单</p>
+          <div className="flex w-full gap-2 sm:w-auto"><div className="relative min-w-0 flex-1 sm:w-64"><Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" /><Input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setKeyword(searchInput.trim()); }} placeholder="搜索订单名称" className="h-9 rounded-xl pl-9 text-xs" /></div><Button variant="outline" onClick={() => setKeyword(searchInput.trim())} className="h-9 rounded-xl text-xs">搜索</Button></div>
+        </div>
+        <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+          <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-xl bg-slate-50 p-1">
+            {statusFilters.map((status) => <TabsTrigger key={status.value} value={status.value} className="h-8 flex-none rounded-lg px-3 text-xs text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm">{status.label}</TabsTrigger>)}
+          </TabsList>
+        </Tabs>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {loading && <div className="rounded-2xl bg-white p-10 text-center text-sm text-slate-400">正在加载订单…</div>}
         {!loading && orders.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-400">还没有订单，先发布一个设计需求吧</div>}
-        {!loading && orders.length > 0 && filteredOrders.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-400">当前状态下没有订单</div>}
-        {filteredOrders.map((order) => {
+        {orders.map((order) => {
           const status = statusMap[orderStatus(order)] || { label: order.status, className: 'bg-slate-100 text-slate-600' };
           const canEdit = order.status === 'open';
           const canCancel = ['open', 'pending_service_review'].includes(order.status) && order.publicationStatus !== 'rejected';
           const hasProgress = ['claimed', 'in_progress', 'submitted', 'completed'].includes(order.status);
           return (
-            <article key={order.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <article key={order.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="truncate text-sm font-bold text-slate-800">{order.title}</h2>
                     <Badge className={`text-[10px] ${status.className}`}>{status.label}</Badge>
                   </div>
-                  <p className="mt-2 text-xs text-slate-500">{order.orderNo} · {order.category} · 预算 ¥{order.budget}</p>
-                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-400">{order.publicationReviewComment || order.requirements || '暂无需求说明'}</p>
+                  <p className="mt-1 text-[11px] text-slate-500">{order.orderNo} · {order.category} · 预算 ¥{order.budget}</p>
+                  <p className="mt-1 line-clamp-1 text-[11px] leading-4 text-slate-400">{order.publicationReviewComment || order.requirements || '暂无需求说明'}</p>
                 </div>
                 <div className="shrink-0 text-right text-xs text-slate-400">
                   <p>审核流：{order.reviewRuleName || '未绑定'}</p>
-                  <p className="mt-1">截止：{new Date(order.deadline).toLocaleDateString('zh-CN')}</p>
+                  <p className="mt-0.5">截止：{new Date(order.deadline).toLocaleDateString('zh-CN')}</p>
                 </div>
               </div>
-              <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
+              <div className="mt-2 flex flex-wrap justify-end gap-1.5 border-t border-slate-100 pt-2">
                 <Button variant="outline" onClick={() => setDetailOrder(order)} className="h-8 rounded-xl text-xs">查看详情</Button>
-                {canEdit && <Button variant="outline" onClick={() => openEdit(order)} className="h-8 rounded-xl text-xs">编辑订单</Button>}
+                {canEdit && <Button variant="outline" onClick={() => { setEditingOrder(order); setCreateOpen(true); }} className="h-8 rounded-xl text-xs">编辑订单</Button>}
+                {order.paymentStatus === 'deposit_pending' && <Button onClick={() => startPayment(order, 'deposit')} disabled={operatingId === order.id} className="h-8 rounded-xl bg-orange-500 text-xs text-white hover:bg-orange-600">支付定金 ¥{order.depositAmount?.toFixed(2)}</Button>}
                 {order.publicationStatus === 'rejected' && <Button onClick={() => operate(order, 'resubmit')} disabled={operatingId === order.id} className="h-8 rounded-xl bg-amber-500 text-xs text-white hover:bg-amber-600">重新提交</Button>}
                 {!['claimed', 'in_progress', 'submitted', 'completed', 'cancelled'].includes(order.status) && order.publicationStatus !== 'rejected' && <Button variant="outline" onClick={() => setInviteOrder(order)} className="h-8 rounded-xl border-blue-200 text-xs text-blue-600 hover:bg-blue-50">邀请接单</Button>}
                 {hasProgress && <Button variant="outline" onClick={() => openProgress(order)} className="h-8 rounded-xl border-blue-200 text-xs text-blue-600">查看进度</Button>}
@@ -191,6 +295,9 @@ export default function AdvertiserOrdersPage() {
             </article>
           );
         })}
+        {!loading && orders.length > 0 && !hasMore && <p className="py-3 text-center text-[11px] text-slate-400">没有更多订单了</p>}
+        {loadingMore && <p className="py-3 text-center text-[11px] text-slate-400">正在加载更多…</p>}
+        <div ref={loadMoreRef} className="h-1" />
       </div>
 
       <Dialog open={Boolean(detailOrder)} onOpenChange={(open) => !open && setDetailOrder(null)}>
@@ -207,9 +314,6 @@ export default function AdvertiserOrdersPage() {
         </DrawerContent>
       </Drawer>
 
-      <Drawer direction="right" open={Boolean(editOrder)} onOpenChange={(open) => !open && setEditOrder(null)}>
-        <DrawerContent className="h-full max-h-full overflow-y-auto rounded-l-3xl bg-white p-6 [--drawer-width:64rem]"><DrawerHeader className="p-0 pb-5"><DrawerTitle>编辑订单</DrawerTitle><DrawerDescription>{editOrder?.publicationStatus === 'published' ? '保存后订单将退出接单大厅，并重新提交客服审核。' : '修改后可重新提交客服审核。'}</DrawerDescription></DrawerHeader><div className="space-y-3"><Input value={editForm.title} onChange={(event) => setEditForm({ ...editForm, title: event.target.value })} placeholder="需求标题" /><div className="grid gap-3 sm:grid-cols-2"><Input type="number" min="50" value={editForm.budget} onChange={(event) => setEditForm({ ...editForm, budget: event.target.value })} placeholder="预算" /><Input type="date" value={editForm.deadline} onChange={(event) => setEditForm({ ...editForm, deadline: event.target.value })} /></div><Textarea rows={5} value={editForm.requirements} onChange={(event) => setEditForm({ ...editForm, requirements: event.target.value })} placeholder="需求说明" /></div><DrawerFooter className="flex-row justify-end p-0 pt-5"><Button variant="outline" onClick={() => setEditOrder(null)}>取消</Button><Button onClick={saveEdit} disabled={operatingId === editOrder?.id}>保存修改</Button></DrawerFooter></DrawerContent>
-      </Drawer>
     </section>
   );
 }
