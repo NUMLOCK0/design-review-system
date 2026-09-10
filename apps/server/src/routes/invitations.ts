@@ -9,14 +9,7 @@ import { tasks } from './review-tasks.js';
 
 export const invitationsRouter = Router();
 const memoryInvitations: OrderInvitation[] = [];
-const fallbackProfiles: DesignerProfile[] = [
-  ['u_des_1', '李设计师', ['主图设计', '详情页设计'], ['tmall', 'taobao'], ['简约', '科技'], 'available'],
-  ['u_des_2', '周视觉', ['活动海报', '主图设计'], ['douyin', 'tmall'], ['国潮', '潮流'], 'available'],
-  ['u_des_3', '林创意', ['详情页设计', '精修合成'], ['taobao', 'pinduoduo'], ['轻奢', '美妆'], 'available'],
-  ['u_des_4', '张三维', ['3D建模与渲染', '主图设计'], ['tmall', 'universal'], ['科技', '写实'], 'busy'],
-  ['u_des_5', '许墨', ['活动海报', '详情页设计'], ['douyin', 'universal'], ['极简', '品牌'], 'available'],
-  ['u_des_6', '韩小满', ['主图设计', '精修合成'], ['taobao', 'tmall'], ['食品', '清新'], 'available'],
-].map(([userId, name, categories, platforms, styles, availabilityStatus]) => ({ userId: userId as string, name: name as string, categories: categories as string[], platforms: platforms as DesignerProfile['platforms'], styles: styles as string[], availabilityStatus: availabilityStatus as DesignerProfile['availabilityStatus'], minBudget: 200, maxActiveOrders: 3, portfolioUrls: [], activeOrderCount: 0, qualityScore: 85, onTimeRate: 92 }));
+const fallbackProfiles: DesignerProfile[] = [];
 
 const parseJson = <T,>(value: unknown, fallback: T): T => {
   if (!value) return fallback;
@@ -49,12 +42,12 @@ async function profiles(orderId: string, keyword = '') {
   const invited = new Set((await invitationRows('i.order_id = ?', [orderId])).filter((item) => activeStatuses.has(item.status)).map((item) => item.designerId));
   let result: DesignerProfile[] = fallbackProfiles;
   if (dbPool) {
-    const [rows]: any = await dbPool.query(`SELECT u.id, u.name, u.avatar_url, p.categories, p.platforms, p.styles, p.min_budget, p.max_active_orders, p.availability_status, p.portfolio_urls
+    const [rows]: any = await dbPool.query(`SELECT u.id, u.name, u.avatar_url, p.categories, p.platforms, p.styles, p.min_budget, p.max_active_orders, p.availability_status, p.portfolio_urls, p.headline, p.bio, p.industries, p.years_experience, p.public_status, p.profile_completed
       FROM users u JOIN user_roles ur ON ur.user_id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci
       JOIN designer_profiles p ON p.user_id COLLATE utf8mb4_unicode_ci = u.id COLLATE utf8mb4_unicode_ci
-      WHERE ur.role = 'designer'`);
+      WHERE ur.role = 'designer' AND p.public_status = 'published' AND p.profile_completed = TRUE`);
     result = rows.map((row: any) => ({
-      userId: row.id, name: row.name, avatarUrl: row.avatar_url || undefined, categories: parseJson(row.categories, []), platforms: parseJson(row.platforms, []), styles: parseJson(row.styles, []),
+      userId: row.id, name: row.name, avatarUrl: row.avatar_url || undefined, headline: row.headline || undefined, bio: row.bio || undefined, industries: parseJson(row.industries, []), yearsExperience: Number(row.years_experience || 0), publicStatus: row.public_status, profileCompleted: Boolean(row.profile_completed), categories: parseJson(row.categories, []), platforms: parseJson(row.platforms, []), styles: parseJson(row.styles, []),
       minBudget: Number(row.min_budget || 0), maxActiveOrders: Number(row.max_active_orders || 3), availabilityStatus: row.availability_status, portfolioUrls: parseJson(row.portfolio_urls, []), activeOrderCount: 0, qualityScore: 85, onTimeRate: 92
     }));
   }
@@ -84,6 +77,7 @@ invitationsRouter.get('/design-orders/:id/recommended-designers', authenticate, 
     const order = designOrders.find((item) => item.id === req.params.id);
     if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
     if (!canManage(order, req.user)) return res.status(403).json({ code: 403, success: false, message: '无权邀请该订单的设计师' });
+    if (order.status !== 'open' || order.publicationStatus !== 'published') return res.status(400).json({ code: 400, success: false, message: '只有已发布且开放接单的订单才能邀请设计师' });
     const list = await profiles(order.id, String(req.query.keyword || ''));
     return res.json({ code: 200, success: true, data: list.slice(0, Math.min(Number(req.query.limit) || 12, 30)), timestamp: Date.now() });
   } catch (error) { next(error); }
@@ -95,6 +89,7 @@ invitationsRouter.post('/design-orders/:id/invitations', authenticate, requireRo
     const order = designOrders.find((item) => item.id === req.params.id);
     if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
     if (!canManage(order, req.user)) return res.status(403).json({ code: 403, success: false, message: '无权邀请该订单的设计师' });
+    if (order.status !== 'open' || order.publicationStatus !== 'published') return res.status(400).json({ code: 400, success: false, message: '只有已发布且开放接单的订单才能邀请设计师' });
     const designerIds = [...new Set(Array.isArray(req.body?.designerIds) ? req.body.designerIds.map(String) : [])].slice(0, 5);
     if (!designerIds.length) return res.status(400).json({ code: 400, success: false, message: '请至少选择一位设计师' });
     const current = await invitationRows('i.order_id = ?', [order.id]);

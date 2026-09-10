@@ -32,6 +32,7 @@ import {
 import { TASK_STATUS_MAP, GROUP_MAP, type AnnotationItem, type ReviewTask, type ReviewImage } from '@design-review/shared';
 import { fetchWithAuth } from '@/lib/auth';
 import { useCurrentUser } from '@/hooks/use-current-user';
+import { useToast } from '@/components/ui/app-toast';
 
 const PRESET_REASONS = [
   '极限词/违反广告法',
@@ -50,6 +51,7 @@ export default function ReviewWorkspaceContent({
   onClose?: () => void;
 }) {
   const user = useCurrentUser();
+  const { confirm } = useToast();
   const [task, setTask] = useState<ReviewTask | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -68,22 +70,8 @@ export default function ReviewWorkspaceContent({
   const [currentBox, setCurrentBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
 
   // 批注列表与当前新建批注
-  const [annotations, setAnnotations] = useState<AnnotationItem[]>([
-    {
-      id: 'ann_001',
-      type: 'rect',
-      x: 12,
-      y: 15,
-      width: 35,
-      height: 18,
-      color: '#ef4444',
-      comment: '促销文案字号过大且未与主体对齐，需调整间距',
-      creatorId: 'u_rev_1',
-      creatorName: '王总监',
-      createdAt: new Date().toISOString()
-    }
-  ]);
-  const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>('ann_001');
+  const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
+  const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const [newComment, setNewComment] = useState('');
   const [showAddCommentModal, setShowAddCommentModal] = useState(false);
   const [tempAnnotation, setTempAnnotation] = useState<any>(null);
@@ -129,15 +117,8 @@ export default function ReviewWorkspaceContent({
   // 获取当前正在审核的图片
   const reviewImages = task?.groups?.flatMap((group) => group.images.map((image) => ({ ...image, groupType: group.groupType }))) || [];
   const currentImage: ReviewImage = reviewImages[selectedImageIndex] || {
-    id: 'img_002',
-    taskId: 'task_001',
-    groupId: 'grp_002',
-    imageUrl: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=1200&auto=format&fit=crop&q=80',
-    imageIndex: 1,
-    designDescription: '3:4 模特场景图，自然采光氛围',
-    version: 1,
-    status: 'pending',
-    createdAt: new Date().toISOString()
+    id: 'empty-image', taskId: '', groupId: '', imageUrl: '', imageIndex: 0,
+    designDescription: '暂无待审核图片', version: 0, status: 'pending', createdAt: new Date().toISOString()
   };
 
   useEffect(() => {
@@ -146,7 +127,7 @@ export default function ReviewWorkspaceContent({
   }, [currentImage.id]);
 
   // v1 对比图 (上一版本)
-  const previousVersionUrl = 'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=1200&auto=format&fit=crop&q=80';
+  const previousVersionUrl = currentImage.imageUrl;
 
   // 画布鼠标按下：开始框选或打点
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -247,7 +228,8 @@ export default function ReviewWorkspaceContent({
   };
 
   // 删除批注
-  const handleDeleteAnnotation = (id: string) => {
+  const handleDeleteAnnotation = async (id: string) => {
+    if (!await confirm({ title: '确认删除批注？', message: '删除后该批注及其修改提示将从当前图片中移除。', confirmText: '确认删除', type: 'danger' })) return;
     const updated = annotations.filter(a => a.id !== id);
     setAnnotations(updated);
     if (activeAnnotationId === id) {
@@ -266,6 +248,7 @@ export default function ReviewWorkspaceContent({
   // 审批通过操作
   const handleApprove = async () => {
     if (!task) return;
+    if (!await confirm({ title: '确认通过当前设计图？', message: '通过后当前图片将放行；当整套图片审核完成时，订单会进入后续结算与验收流程。', confirmText: '确认通过放行', type: 'warning' })) return;
     try {
       const res = await fetchWithAuth(`/review-tasks/${task.id}/images/${currentImage.id}/review`, {
         method: 'POST',
@@ -336,10 +319,10 @@ export default function ReviewWorkspaceContent({
             </Button>
           )}
           <Badge variant="outline" className="font-mono text-xs text-indigo-400 border-indigo-500/40 bg-indigo-500/10">
-            {task?.taskNo || 'REV-20260905-001'}
+            {task?.taskNo || '暂无审核任务'}
           </Badge>
           <h2 className="font-bold text-xs text-slate-700 truncate max-w-sm sm:max-w-md">
-            {task?.productName || '2026秋季新款复古工装夹克外衣'} - {currentImage.designDescription} (V{currentImage.version})
+            {task?.productName || '暂无审核任务'} - {currentImage.designDescription} (V{currentImage.version})
           </h2>
           {task && (
             <Badge variant="outline" className="text-[10px] border-slate-200" style={{ color: TASK_STATUS_MAP[task.status].color }}>

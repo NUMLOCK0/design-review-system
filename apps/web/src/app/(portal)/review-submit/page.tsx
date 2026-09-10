@@ -18,7 +18,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { PLATFORM_MAP, type PlatformType, type DesignOrder, type ReviewTask, type OrderImageRequirementItem } from '@design-review/shared';
+import { GROUP_MAP, PLATFORM_MAP, type PlatformType, type DesignOrder, type ReviewTask, type OrderImageRequirementItem } from '@design-review/shared';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -138,7 +138,7 @@ function ReviewSubmitPageContent() {
     ? selectedOrder.imageRequirementGroups
     : (task?.groups || []).map((group) => ({
         id: group.id,
-        name: group.groupType === 'main_1_1' ? '1:1 方形主图' : group.groupType === 'main_3_4' ? '3:4 竖版主图' : '详情页长图',
+        name: GROUP_MAP[group.groupType]?.label || '图片需求',
         groupType: group.groupType,
         quantity: group.requiredCount,
         dimensions: '',
@@ -359,7 +359,7 @@ function ReviewSubmitPageContent() {
           {requirementGroups.length ? <div className="space-y-3">{requirementGroups.map((group) => {
             const groupImages = images.filter((image) => image.groupId === getGroupKey(group));
             const requiredCount = group.quantity || 1;
-            const ratioLabel = group.groupType === 'main_1_1' ? '1:1' : group.groupType === 'main_3_4' ? '3:4' : '详情长图';
+            const ratioLabel = GROUP_MAP[group.groupType]?.ratio || '自适应';
             return <div key={group.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-2"><div><div className="flex items-center gap-2"><span className="text-xs font-bold text-slate-800">{group.name}</span><Badge variant="outline" className="border-blue-200 bg-blue-50 text-[10px] text-blue-700">{ratioLabel}</Badge>{group.dimensions && <span className="text-[10px] font-mono text-slate-400">{group.dimensions}</span>}</div>{group.description && <p className="mt-1 text-[11px] leading-5 text-slate-500">{group.description}</p>}</div><span className={`text-[11px] font-semibold ${groupImages.length >= requiredCount ? 'text-emerald-600' : 'text-amber-600'}`}>{groupImages.length} / {requiredCount} 张</span></div>
               {(group.referenceImageItems?.length || group.referenceImages?.length || group.referenceLinks?.length) ? <div className="mt-2 rounded-xl bg-slate-50 p-2"><p className="text-[10px] font-semibold text-slate-500">品牌方参考要求</p>{(group.referenceImageItems || group.referenceImages.map((url, index) => ({ id: `${group.id}-ref-${index}`, url, description: '' }))).map((reference) => <div key={reference.id} className="mt-1 flex items-center gap-2 text-[10px] text-slate-500"><img src={reference.url} alt="参考图" className="h-8 w-8 rounded-md border border-slate-200 object-cover" /><span className="truncate">{reference.description || '参考图片'}</span></div>)}{group.referenceLinks?.map((link) => <a key={link} href={link} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[10px] text-blue-600 hover:underline">参考链接：{link}</a>)}</div> : null}

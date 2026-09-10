@@ -30,7 +30,7 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-const allowedFolders = new Set(['design-images', 'reference-samples', 'annotations', 'source-files']);
+const allowedFolders = new Set(['design-images', 'reference-samples', 'annotations', 'source-files', 'order-materials', 'designer-portfolio']);
 const imageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const apiOrigin = process.env.PUBLIC_API_ORIGIN || `http://localhost:${process.env.PORT || 8080}`;
 const maxUploadSize = 100 * 1024 * 1024;

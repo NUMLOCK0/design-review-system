@@ -18,92 +18,8 @@ const syncOrderStatus = async (orderId: string | undefined, status: 'in_progress
   void persistDesignOrder(order);
 };
 
-// 内存 Mock 数据仓库（已对标完整数据库表字段，连接数据库后无缝替换）
-export let tasks: ReviewTask[] = [
-  {
-    id: 'task_001',
-    taskNo: 'REV-20260905-001',
-    productName: '2026秋季新款复古工装夹克外衣',
-    sku: 'JK-2026-09-A',
-    platform: 'tmall',
-    designerId: 'u_des_1',
-    designerName: '李设计师',
-    advertiserId: 'u_adv_1',
-    organizationId: 'org_demo_1',
-    ruleId: 'rule_001',
-    ruleName: '天猫/淘宝 主图与长图三级质检审核流',
-    status: 'in_review',
-    currentLevel: 1,
-    totalImages: 3,
-    approvedCount: 1,
-    rejectedCount: 1,
-    version: 1,
-    urgency: 'high',
-    submittedAt: new Date(Date.now() - 3600 * 1000 * 2).toISOString(),
-    createdAt: new Date(Date.now() - 3600 * 1000 * 5).toISOString(),
-    groups: [
-      {
-        id: 'grp_001',
-        taskId: 'task_001',
-        groupType: 'main_1_1',
-        requiredCount: 1,
-        images: [
-          {
-            id: 'img_001',
-            taskId: 'task_001',
-            groupId: 'grp_001',
-            imageUrl: 'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=1200&auto=format&fit=crop&q=80',
-            imageIndex: 1,
-            designDescription: '首屏1:1白底透气主图，突出面料微距质感',
-            version: 1,
-            status: 'approved',
-            reviewerName: '王总监',
-            reviewedAt: new Date(Date.now() - 1800 * 1000).toISOString(),
-            createdAt: new Date().toISOString(),
-          }
-        ]
-      },
-      {
-        id: 'grp_002',
-        taskId: 'task_001',
-        groupType: 'main_3_4',
-        requiredCount: 1,
-        images: [
-          {
-            id: 'img_002',
-            taskId: 'task_001',
-            groupId: 'grp_002',
-            imageUrl: 'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=1200&auto=format&fit=crop&q=80',
-            imageIndex: 1,
-            designDescription: '3:4 模特场景图，自然采光氛围',
-            version: 1,
-            status: 'rejected',
-            reviewerName: '王总监',
-            rejectReasons: ['文案违规/极限词', '版式结构混乱'],
-            rejectComment: '左上角促销文字太拥挤，缺少主副标题层级感，请重新排版。',
-            reviewedAt: new Date(Date.now() - 900 * 1000).toISOString(),
-            annotations: [
-              {
-                id: 'ann_001',
-                type: 'rect',
-                x: 12,
-                y: 15,
-                width: 35,
-                height: 18,
-                color: '#ef4444',
-                comment: '促销文案字号过大且未对齐',
-                creatorId: 'u_rev_1',
-                creatorName: '王总监',
-                createdAt: new Date().toISOString()
-              }
-            ],
-            createdAt: new Date().toISOString(),
-          }
-        ]
-      }
-    ]
-  }
-];
+// 审核任务只来自真实接单，不再预置演示任务。
+export let tasks: ReviewTask[] = [];
 
 const isCurrentNodeReviewer = (task: ReviewTask, user: AuthUserPayload) =>
   rules.find((rule) => rule.id === task.ruleId)?.levels?.some((level) => level.level === task.currentLevel && level.reviewerIds.includes(user.id)) || false;
@@ -190,8 +106,8 @@ reviewTasksRouter.post('/', (req, res) => {
     productName: body.productName || '未命名设计任务',
     sku: body.sku || '',
     platform: body.platform || 'universal',
-    designerId: body.designerId || 'u_des_1',
-    designerName: body.designerName || '李设计师',
+    designerId: body.designerId || req.user!.id,
+    designerName: body.designerName || req.user!.name,
     status: body.isDraft ? 'draft' : 'pending',
     currentLevel: 1,
     totalImages: groups.reduce((acc: number, g: ReviewImageGroup) => acc + (g.images?.length || 0), 0),

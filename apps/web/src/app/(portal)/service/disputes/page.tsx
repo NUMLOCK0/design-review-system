@@ -5,9 +5,11 @@ import type { OrderDispute } from '@design-review/shared';
 import { fetchWithAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/components/ui/app-toast';
 import { toast } from 'sonner';
 
 export default function ServiceDisputesPage() {
+  const { confirm } = useToast();
   const [disputes, setDisputes] = useState<OrderDispute[]>([]);
 
   const loadDisputes = async () => {
@@ -22,6 +24,8 @@ export default function ServiceDisputesPage() {
   }, []);
 
   const handleAction = async (id: string, action: 'mediation' | 'resolve' | 'escalate') => {
+    const labels = { mediation: '进入调解', resolve: '结案', escalate: '升级处理' } as const;
+    if (!await confirm({ title: `确认${labels[action]}？`, message: '该操作会改变纠纷处理状态，并通知纠纷相关方。', confirmText: `确认${labels[action]}`, type: action === 'mediation' ? 'warning' : 'danger' })) return;
     try {
       const response = await fetchWithAuth(`/disputes/${id}/action`, {
         method: 'POST',

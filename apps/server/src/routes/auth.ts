@@ -5,7 +5,8 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { dbPool } from '../config/database.js';
 import { authenticate } from '../middleware/auth.middleware.js';
-import { consumeSmsCode, createSliderChallenge, isValidPhone, normalizePhone, sendSmsCode, verifySliderChallenge } from '../services/phone-verification.js';
+import { consumeEmailCode, consumeSmsCode, createSliderChallenge, isValidPhone, normalizePhone, sendEmailCode, sendSmsCode, verifySliderChallenge } from '../services/phone-verification.js';
+import { recordAdminAudit } from '../services/admin-audit.js';
 
 export const authRouter = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'design-review-secret-key-2026';
@@ -87,26 +88,6 @@ let memoryUsers: any[] = [
     department: '客服与争议处理部',
     avatarUrl: ''
   },
-  {
-    id: 'u_adv_1',
-    name: '陈品牌经理',
-    email: 'advertiser@cozi.com',
-    passwordHash: bcrypt.hashSync('123456', 10),
-    role: 'advertiser',
-    organizationId: 'org_demo_1',
-    isOrganizationAdmin: true,
-    department: '品牌营销部',
-    avatarUrl: ''
-  },
-  {
-    id: 'u_des_1',
-    name: '李设计师',
-    email: 'designer@cozi.com',
-    passwordHash: bcrypt.hashSync('123456', 10),
-    role: 'designer',
-    department: '视觉设计部',
-    avatarUrl: ''
-  },
 ];
 
 const loginSchema = z.object({
@@ -116,8 +97,10 @@ const loginSchema = z.object({
 
 const registerSchema = z.object({
   name: z.string().min(2, { message: '姓名长度不能少于2位' }),
-  phone: z.string().min(1, { message: '请输入手机号' }),
-  smsCode: z.string().length(6, { message: '请输入6位短信验证码' }),
+  channel: z.enum(['phone', 'email']).default('phone'),
+  phone: z.string().optional(),
+  email: z.string().optional(),
+  code: z.string().length(6, { message: '请输入6位验证码' }),
   password: z.string().min(6, { message: '密码长度不能少于6位' }),
   // 管理员与客服由平台侧配置，不允许通过公开注册提权。
   role: z.enum(['advertiser', 'designer']).default('designer'),
@@ -125,10 +108,15 @@ const registerSchema = z.object({
 });
 
 const resetPasswordSchema = z.object({
-  phone: z.string().min(1, { message: '请输入手机号' }),
-  smsCode: z.string().length(6, { message: '请输入6位短信验证码' }),
+  channel: z.enum(['phone', 'email']).default('phone'),
+  phone: z.string().optional(),
+  email: z.string().optional(),
+  code: z.string().length(6, { message: '请输入6位验证码' }),
   password: z.string().min(6, { message: '密码长度不能少于6位' })
 });
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
 // 1. 用户登录 API
 authRouter.post('/login', async (req, res, next) => {
@@ -159,6 +147,7 @@ authRouter.post('/login', async (req, res, next) => {
             email: rows[0].email,
             phone: rows[0].phone,
             passwordHash: rows[0].password_hash,
+            isActive: Boolean(rows[0].is_active),
             role: normalizeRole(rows[0].role),
             department: rows[0].department,
             avatarUrl: rows[0].avatar_url,
@@ -182,6 +171,7 @@ authRouter.post('/login', async (req, res, next) => {
         message: '用户不存在或账号错误'
       });
     }
+    if (user.isActive === false) return res.status(403).json({ code: 403, success: false, message: '该账号已被管理员停用' });
 
     // 校验密码
     const isMatch = user.passwordHash
@@ -200,6 +190,9 @@ authRouter.post('/login', async (req, res, next) => {
     const activeRole = roles.includes(normalizeRole(user.role) as AppRole) ? normalizeRole(user.role) as AppRole : roles[0];
     // 签发 JWT Token
     const token = tokenForUser(user, activeRole, roles);
+    if (PLATFORM_ROLES.includes(activeRole)) {
+      void recordAdminAudit({ operatorId: user.id, operatorName: user.name, module: 'auth', action: 'login', targetType: 'user', targetId: user.id, summary: `${user.name}登录后台`, detail: { method: 'password', role: activeRole }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 登录日志写入失败:', error));
+    }
 
     return res.json({
       code: 200,
@@ -219,7 +212,11 @@ authRouter.post('/login', async (req, res, next) => {
 // 2. 用户注册 API
 authRouter.post('/register', async (req, res, next) => {
   try {
-    const parseResult = registerSchema.safeParse(req.body);
+    const parseResult = registerSchema.safeParse({
+      ...req.body,
+      channel: req.body?.channel || (req.body?.email ? 'email' : 'phone'),
+      code: req.body?.code || req.body?.smsCode || req.body?.emailCode
+    });
     if (!parseResult.success) {
       return res.status(400).json({
         code: 400,
@@ -228,40 +225,40 @@ authRouter.post('/register', async (req, res, next) => {
       });
     }
 
-    const { name, phone: phoneInput, smsCode, password, role, department } = parseResult.data;
-    const phone = normalizePhone(phoneInput);
-    if (!isValidPhone(phone)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
-    if (memoryUsers.some((item) => item.phone === phone)) return res.status(400).json({ code: 400, success: false, message: '该手机号已注册' });
+    const { name, channel, password, role, department } = parseResult.data;
+    const phone = channel === 'phone' ? normalizePhone(parseResult.data.phone || '') : null;
+    const email = channel === 'email' ? normalizeEmail(parseResult.data.email || '') : `${phone}@phone.local`;
+    if (channel === 'phone' && !isValidPhone(phone || '')) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
+    if (channel === 'email' && !EMAIL_PATTERN.test(email)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的邮箱地址' });
+    if (memoryUsers.some((item) => item.phone === phone || item.email === email)) return res.status(400).json({ code: 400, success: false, message: channel === 'email' ? '该邮箱已注册' : '该手机号已注册' });
     try {
-      if (phone) consumeSmsCode(phone, smsCode!, 'register');
+      if (channel === 'phone') consumeSmsCode(phone!, parseResult.data.code, 'register');
+      else consumeEmailCode(email, parseResult.data.code, 'register');
     } catch (error: any) {
-      return res.status(400).json({ code: 400, success: false, message: error.message || '短信验证码无效' });
+      return res.status(400).json({ code: 400, success: false, message: error.message || '验证码无效' });
     }
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = `u_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
-    const email = `${phone}@phone.local`;
     const organizationId = role === 'advertiser' ? 'org_demo_1' : undefined;
     const isOrganizationAdmin = role === 'advertiser';
     const roles: AppRole[] = [...BUSINESS_ROLES];
 
     if (dbPool) {
       try {
-        const [existing]: any = await dbPool.query('SELECT id FROM users WHERE email = ? OR phone = ?', [email, phone || null]);
+        const [existing]: any = await dbPool.query('SELECT id FROM users WHERE email = ? OR phone = ?', [email, phone]);
         if (existing && existing.length > 0) {
-          return res.status(400).json({ code: 400, success: false, message: '该手机号已注册' });
+          return res.status(400).json({ code: 400, success: false, message: channel === 'email' ? '该邮箱已注册' : '该手机号已注册' });
         }
 
         await dbPool.query(
           `INSERT INTO users (id, name, email, phone, password_hash, role, department, organization_id, is_organization_admin)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [userId, name, email, phone || null, passwordHash, role, department || '视觉设计部', organizationId || null, isOrganizationAdmin]
+          [userId, name, email, phone, passwordHash, role, department || '视觉设计部', organizationId || null, isOrganizationAdmin]
         );
         for (const availableRole of roles) {
           await dbPool.query('INSERT IGNORE INTO user_roles (user_id, role, created_at) VALUES (?, ?, ?)', [userId, availableRole, new Date().toISOString()]);
         }
-      } catch (err: any) {
-        console.error('MySQL 注册插入失败:', err);
-      }
+      } catch (error) { return next(error); }
     }
 
     // 同步内存
@@ -297,29 +294,38 @@ authRouter.post('/register', async (req, res, next) => {
   }
 });
 
-// 3. 使用已绑定手机号和短信验证码重置密码。
+// 3. 使用已绑定手机号或邮箱验证码重置密码。
 authRouter.post('/password/reset', async (req, res, next) => {
   try {
-    const parseResult = resetPasswordSchema.safeParse(req.body);
+    const parseResult = resetPasswordSchema.safeParse({
+      ...req.body,
+      channel: req.body?.channel || (req.body?.email ? 'email' : 'phone'),
+      code: req.body?.code || req.body?.smsCode || req.body?.emailCode
+    });
     if (!parseResult.success) return res.status(400).json({ code: 400, success: false, message: parseResult.error.errors[0].message });
-    const { phone: phoneInput, smsCode, password } = parseResult.data;
-    const phone = normalizePhone(phoneInput);
-    if (!isValidPhone(phone)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
-    try { consumeSmsCode(phone, smsCode, 'reset'); }
-    catch (error: any) { return res.status(400).json({ code: 400, success: false, message: error.message || '短信验证码无效' }); }
+    const { channel, password } = parseResult.data;
+    const phone = channel === 'phone' ? normalizePhone(parseResult.data.phone || '') : null;
+    const email = channel === 'email' ? normalizeEmail(parseResult.data.email || '') : null;
+    if (channel === 'phone' && !isValidPhone(phone || '')) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
+    if (channel === 'email' && !EMAIL_PATTERN.test(email || '')) return res.status(400).json({ code: 400, success: false, message: '请输入有效的邮箱地址' });
+    try {
+      if (channel === 'phone') consumeSmsCode(phone!, parseResult.data.code, 'reset');
+      else consumeEmailCode(email!, parseResult.data.code, 'reset');
+    }
+    catch (error: any) { return res.status(400).json({ code: 400, success: false, message: error.message || '验证码无效' }); }
 
     const passwordHash = await bcrypt.hash(password, 10);
     let updated = false;
     if (dbPool) {
-      const [result]: any = await dbPool.query('UPDATE users SET password_hash = ? WHERE phone = ?', [passwordHash, phone]);
+      const [result]: any = await dbPool.query(`UPDATE users SET password_hash = ? WHERE ${channel === 'phone' ? 'phone' : 'email'} = ?`, [passwordHash, channel === 'phone' ? phone : email]);
       updated = Boolean(result?.affectedRows);
     }
-    const memoryUser = memoryUsers.find((item) => item.phone === phone);
+    const memoryUser = memoryUsers.find((item) => channel === 'phone' ? item.phone === phone : item.email === email);
     if (memoryUser) {
       memoryUser.passwordHash = passwordHash;
       updated = true;
     }
-    if (!updated) return res.status(404).json({ code: 404, success: false, message: '该手机号尚未绑定账号' });
+    if (!updated) return res.status(404).json({ code: 404, success: false, message: channel === 'phone' ? '该手机号尚未绑定账号' : '该邮箱尚未绑定账号' });
     return res.json({ code: 200, success: true, message: '密码重置成功，请使用新密码登录', timestamp: Date.now() });
   } catch (error) { next(error); }
 });
@@ -363,6 +369,27 @@ authRouter.post('/sms/send', async (req, res) => {
   }
 });
 
+// 7. 邮箱验证码，仅允许在通过滑块后发送。
+authRouter.post('/email/send', async (req, res) => {
+  try {
+    const email = normalizeEmail(String(req.body?.email || ''));
+    const purpose = req.body?.purpose === 'register' || req.body?.purpose === 'reset' ? req.body.purpose : null;
+    if (!EMAIL_PATTERN.test(email)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的邮箱地址' });
+    if (!purpose) return res.status(400).json({ code: 400, success: false, message: '邮箱验证码用途无效' });
+    let exists = memoryUsers.some((item) => item.email === email);
+    if (dbPool) {
+      const [rows]: any = await dbPool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
+      exists = Boolean(rows?.length);
+    }
+    if (purpose === 'register' && exists) return res.status(400).json({ code: 400, success: false, message: '该邮箱已注册' });
+    if (purpose === 'reset' && !exists) return res.status(404).json({ code: 404, success: false, message: '该邮箱尚未绑定账号' });
+    const result = await sendEmailCode(email, String(req.body?.captchaToken || ''), purpose);
+    res.json({ code: 200, success: true, message: '邮箱验证码已发送', data: result, timestamp: Date.now() });
+  } catch (error: any) {
+    res.status(400).json({ code: 400, success: false, message: error.message || '邮箱验证码发送失败' });
+  }
+});
+
 // 7. 手机号短信登录。
 authRouter.post('/sms/login', async (req, res, next) => {
   try {
@@ -371,16 +398,49 @@ authRouter.post('/sms/login', async (req, res, next) => {
     try { consumeSmsCode(phone, String(req.body?.code || ''), 'login'); }
     catch (error: any) { return res.status(400).json({ code: 400, success: false, message: error.message || '验证码无效' }); }
     let user: any = null;
+    let registered = false;
     if (dbPool) {
       const [rows]: any = await dbPool.query('SELECT * FROM users WHERE phone = ? LIMIT 1', [phone]);
-      if (rows?.length) user = { id: rows[0].id, name: rows[0].name, email: rows[0].email, phone: rows[0].phone, passwordHash: rows[0].password_hash, role: normalizeRole(rows[0].role), department: rows[0].department, avatarUrl: rows[0].avatar_url, organizationId: rows[0].organization_id, isOrganizationAdmin: rows[0].is_organization_admin };
+      if (rows?.length) user = { id: rows[0].id, name: rows[0].name, email: rows[0].email, phone: rows[0].phone, passwordHash: rows[0].password_hash, isActive: Boolean(rows[0].is_active), role: normalizeRole(rows[0].role), department: rows[0].department, avatarUrl: rows[0].avatar_url, organizationId: rows[0].organization_id, isOrganizationAdmin: rows[0].is_organization_admin };
     }
     if (!user) user = memoryUsers.find((item) => item.phone === phone);
-    if (!user) return res.status(404).json({ code: 404, success: false, message: '该手机号尚未注册，请先注册' });
+    if (user?.isActive === false) return res.status(403).json({ code: 403, success: false, message: '该账号已被管理员停用' });
+    if (!user) {
+      const userId = `u_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+      const roles: AppRole[] = [...BUSINESS_ROLES];
+      user = {
+        id: userId,
+        name: `用户${phone.slice(-4)}`,
+        email: `${phone}@phone.local`,
+        phone,
+        passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+        role: 'advertiser',
+        roles,
+        department: '品牌与设计协作部',
+        organizationId: `org_${userId}`,
+        isOrganizationAdmin: true,
+        avatarUrl: ''
+      };
+      if (dbPool) {
+        await dbPool.query(
+          `INSERT INTO users (id, name, email, phone, password_hash, role, department, organization_id, is_organization_admin)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [user.id, user.name, user.email, user.phone, user.passwordHash, user.role, user.department, user.organizationId, user.isOrganizationAdmin]
+        );
+        for (const availableRole of roles) {
+          await dbPool.query('INSERT IGNORE INTO user_roles (user_id, role, created_at) VALUES (?, ?, ?)', [user.id, availableRole, new Date().toISOString()]);
+        }
+      }
+      memoryUsers.push(user);
+      registered = true;
+    }
     const roles = await loadUserRoles(user.id, user.role);
     const activeRole = roles.includes(normalizeRole(user.role) as AppRole) ? normalizeRole(user.role) as AppRole : roles[0];
     const token = tokenForUser(user, activeRole, roles);
-    res.json({ code: 200, success: true, message: '登录成功', data: { token, user: userView({ ...user, role: activeRole }, roles) }, timestamp: Date.now() });
+    if (PLATFORM_ROLES.includes(activeRole)) {
+      void recordAdminAudit({ operatorId: user.id, operatorName: user.name, module: 'auth', action: 'login', targetType: 'user', targetId: user.id, summary: `${user.name}登录后台`, detail: { method: 'sms', role: activeRole }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 登录日志写入失败:', error));
+    }
+    res.json({ code: 200, success: true, message: registered ? '注册并登录成功' : '登录成功', data: { token, user: userView({ ...user, role: activeRole }, roles) }, timestamp: Date.now() });
   } catch (error) { next(error); }
 });
 

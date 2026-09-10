@@ -13,8 +13,8 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
-import { CreateOrderDialog } from '@/components/create-order-dialog';
 import { DesignerInviteDrawer } from '@/components/designer-invite-drawer';
+import { ConfirmAction } from '@/components/ui/confirm-action';
 import { toast } from 'sonner';
 
 const statusMap: Record<string, { label: string; className: string }> = {
@@ -60,8 +60,6 @@ export default function AdvertiserOrdersPage() {
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [totalOrders, setTotalOrders] = useState(0);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [editingOrder, setEditingOrder] = useState<DesignOrder | null>(null);
   const [inviteOrder, setInviteOrder] = useState<DesignOrder | null>(null);
   const [detailOrder, setDetailOrder] = useState<DesignOrder | null>(null);
   const [operatingId, setOperatingId] = useState<string | null>(null);
@@ -110,7 +108,6 @@ export default function AdvertiserOrdersPage() {
     observer.observe(target);
     return () => observer.disconnect();
   }, [loading, loadingMore, hasMore, page, statusFilter, keyword]);
-  useEffect(() => { if (new URLSearchParams(window.location.search).get('create') === '1') setCreateOpen(true); }, []);
 
   const operate = async (order: DesignOrder, action: 'resubmit' | 'cancel') => {
     setOperatingId(order.id);
@@ -122,6 +119,22 @@ export default function AdvertiserOrdersPage() {
       void loadOrders({ reset: true, nextPage: 1 });
     } catch (error: any) {
       toast.error(error.message || '操作失败');
+    } finally {
+      setOperatingId(null);
+    }
+  };
+
+  const republish = async (order: DesignOrder) => {
+    setOperatingId(order.id);
+    try {
+      const response = await fetchWithAuth(`/design-orders/${order.id}/republish`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || '重新发布失败');
+      toast.success(result.message);
+      void loadOrders({ reset: true, nextPage: 1 });
+      await startPayment(result.data, 'deposit');
+    } catch (error: any) {
+      toast.error(error.message || '重新发布失败');
     } finally {
       setOperatingId(null);
     }
@@ -212,32 +225,25 @@ export default function AdvertiserOrdersPage() {
           <h1 className="mt-1 text-2xl font-bold text-slate-900">订单管理</h1>
         </div>
         <div className="flex gap-2">
-          <Button onClick={() => setCreateOpen(true)} className="h-9 rounded-xl bg-blue-600 text-xs text-white hover:bg-blue-700">新增设计订单</Button>
+          <Link href="/advertiser/orders/new"><Button className="h-9 rounded-xl bg-blue-600 text-xs text-white hover:bg-blue-700">新增设计订单</Button></Link>
         </div>
       </div>
 
-      <CreateOrderDialog
-        open={createOpen}
-        editingOrder={editingOrder}
-        onOpenChange={(open) => { setCreateOpen(open); if (!open) setEditingOrder(null); }}
-        onCreated={(order) => { void loadOrders({ reset: true, nextPage: 1 }); void startPayment(order, 'deposit'); }}
-        onUpdated={() => { setCreateOpen(false); setEditingOrder(null); void loadOrders({ reset: true, nextPage: 1 }); }}
-      />
       <DesignerInviteDrawer open={Boolean(inviteOrder)} onOpenChange={(open) => !open && setInviteOrder(null)} order={inviteOrder} onUpdated={loadOrders} />
 
       <Dialog open={Boolean(payment)} onOpenChange={(open) => { if (!open) closePayment(); }}>
-        <DialogContent className="w-[calc(100%-2rem)] max-w-md rounded-3xl p-6">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base"><QrCode className="h-5 w-5 text-blue-600" />{payment?.stage === 'deposit' ? '支付订单定金' : '支付订单尾款'}</DialogTitle>
-            <DialogDescription className="text-xs">订单：{payment?.order.title}</DialogDescription>
+        <DialogContent className="w-[calc(100%-2rem)] max-w-lg overflow-hidden rounded-3xl border-0 bg-white p-0 shadow-2xl">
+          <DialogHeader className="border-b border-slate-100 bg-gradient-to-br from-blue-50 via-white to-indigo-50 px-6 py-5">
+            <DialogTitle className="flex items-center gap-2 text-base text-slate-900"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><QrCode className="h-5 w-5" /></span>{payment?.stage === 'deposit' ? '支付订单定金' : '支付订单尾款'}</DialogTitle>
+            <DialogDescription className="pl-11 text-xs text-slate-500">订单：{payment?.order.title}</DialogDescription>
           </DialogHeader>
-          {payment && <div className="space-y-4">
-            <div className="flex rounded-xl bg-slate-100 p-1">
-              {([['wxpay', '微信支付'], ['alipay', '支付宝']] as const).map(([type, label]) => <button key={type} type="button" disabled={payment.loading} onClick={() => { if (type !== payment.type) void startPayment(payment.order, payment.stage, type); }} className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${payment.type === type ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>)}
+          {payment && <div className="space-y-4 px-6 py-5">
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+              {([['wxpay', '微信支付'], ['alipay', '支付宝']] as const).map(([type, label]) => <button key={type} type="button" disabled={payment.loading} onClick={() => { if (type !== payment.type) void startPayment(payment.order, payment.stage, type); }} className={`rounded-lg px-3 py-2.5 text-xs font-semibold transition ${payment.type === type ? 'bg-white text-blue-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:bg-white/60 hover:text-slate-700'}`}>{label}</button>)}
             </div>
-            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-center">
-              <p className="text-xs text-slate-500">应付金额</p>
-              <p className="mt-1 text-2xl font-bold text-slate-900">¥{payment.amount.toFixed(2)}</p>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5 text-center">
+              <p className="text-xs font-medium text-slate-500">本次应付</p>
+              <p className="mt-1 text-3xl font-bold tracking-tight text-slate-900">¥{payment.amount.toFixed(2)}</p>
               {payment.loading ? <div className="flex h-52 flex-col items-center justify-center gap-2 text-xs text-slate-400"><Loader2 className="h-7 w-7 animate-spin text-blue-600" />正在生成支付二维码…</div> : payment.paid ? <div className="flex h-52 flex-col items-center justify-center gap-2 text-sm font-semibold text-emerald-600"><CheckCircle2 className="h-12 w-12" />支付成功</div> : payment.qrcode ? <div className="mt-3 flex flex-col items-center gap-2"><div className="rounded-xl bg-white p-3 shadow-sm"><QRCodeSVG value={payment.qrcode} size={180} includeMargin /></div><p className="text-[11px] text-slate-500">请使用{payment.type === 'wxpay' ? '微信' : '支付宝'}扫码支付</p></div> : <div className="flex h-52 items-center justify-center text-xs text-rose-500">未获取到支付二维码，请重试</div>}
             </div>
             <p className="text-center text-[11px] text-slate-400">支付完成后页面会自动确认订单状态</p>
@@ -263,8 +269,14 @@ export default function AdvertiserOrdersPage() {
         {!loading && orders.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-400">还没有订单，先发布一个设计需求吧</div>}
         {orders.map((order) => {
           const status = statusMap[orderStatus(order)] || { label: order.status, className: 'bg-slate-100 text-slate-600' };
-          const canEdit = order.status === 'open';
-          const canCancel = ['open', 'pending_service_review'].includes(order.status) && order.publicationStatus !== 'rejected';
+          const canEdit = order.status === 'open' || order.publicationStatus === 'rejected';
+          const canCancel = ['open', 'pending_service_review'].includes(order.status)
+            && order.publicationStatus !== 'rejected'
+            && !(order.paymentStatus === 'deposit_pending' && Boolean(order.depositOutTradeNo))
+            && !['deposit_paid', 'balance_pending', 'paid'].includes(order.paymentStatus || '');
+          const canPayDeposit = order.status === 'open'
+            && order.publicationStatus === 'pending_deposit'
+            && order.paymentStatus === 'deposit_pending';
           const hasProgress = ['claimed', 'in_progress', 'submitted', 'completed'].includes(order.status);
           return (
             <article key={order.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -284,13 +296,14 @@ export default function AdvertiserOrdersPage() {
               </div>
               <div className="mt-2 flex flex-wrap justify-end gap-1.5 border-t border-slate-100 pt-2">
                 <Button variant="outline" onClick={() => setDetailOrder(order)} className="h-8 rounded-xl text-xs">查看详情</Button>
-                {canEdit && <Button variant="outline" onClick={() => { setEditingOrder(order); setCreateOpen(true); }} className="h-8 rounded-xl text-xs">编辑订单</Button>}
-                {order.paymentStatus === 'deposit_pending' && <Button onClick={() => startPayment(order, 'deposit')} disabled={operatingId === order.id} className="h-8 rounded-xl bg-orange-500 text-xs text-white hover:bg-orange-600">支付定金 ¥{order.depositAmount?.toFixed(2)}</Button>}
-                {order.publicationStatus === 'rejected' && <Button onClick={() => operate(order, 'resubmit')} disabled={operatingId === order.id} className="h-8 rounded-xl bg-amber-500 text-xs text-white hover:bg-amber-600">重新提交</Button>}
-                {!['claimed', 'in_progress', 'submitted', 'completed', 'cancelled'].includes(order.status) && order.publicationStatus !== 'rejected' && <Button variant="outline" onClick={() => setInviteOrder(order)} className="h-8 rounded-xl border-blue-200 text-xs text-blue-600 hover:bg-blue-50">邀请接单</Button>}
+                {canEdit && <Link href={`/advertiser/orders/new?edit=${encodeURIComponent(order.id)}`}><Button variant="outline" className="h-8 rounded-xl text-xs">编辑订单</Button></Link>}
+                {canPayDeposit && <Button onClick={() => startPayment(order, 'deposit')} disabled={operatingId === order.id} className="h-8 rounded-xl bg-orange-500 text-xs text-white hover:bg-orange-600">支付定金 ¥{order.depositAmount?.toFixed(2)}</Button>}
+                {order.publicationStatus === 'rejected' && <ConfirmAction title="确认重新提交订单？" description="重新提交后订单会再次进入客服审核，当前修改内容将正式生效。" confirmText="确认重新提交" onConfirm={() => operate(order, 'resubmit')} disabled={operatingId === order.id} tone="warning"><Button disabled={operatingId === order.id} className="h-8 rounded-xl bg-amber-500 text-xs text-white hover:bg-amber-600">重新提交</Button></ConfirmAction>}
+                {order.status === 'cancelled' && order.publicationStatus !== 'rejected' && <ConfirmAction title="确认重新发布订单？" description="系统会保留原关闭订单，并复制生成一笔新的待支付订单。" confirmText="确认重新发布" onConfirm={() => republish(order)} disabled={operatingId === order.id} tone="warning"><Button disabled={operatingId === order.id} className="h-8 rounded-xl bg-blue-600 text-xs text-white hover:bg-blue-700">重新发布</Button></ConfirmAction>}
+                {order.status === 'open' && order.publicationStatus === 'published' && <Button variant="outline" onClick={() => setInviteOrder(order)} className="h-8 rounded-xl border-blue-200 text-xs text-blue-600 hover:bg-blue-50">邀请接单</Button>}
                 {hasProgress && <Button variant="outline" onClick={() => openProgress(order)} className="h-8 rounded-xl border-blue-200 text-xs text-blue-600">查看进度</Button>}
                 {order.status === 'completed' && <Link href="/advertiser/billing"><Button variant="outline" className="h-8 rounded-xl border-emerald-200 text-xs text-emerald-600">查看账单</Button></Link>}
-                {canCancel && <Button variant="ghost" onClick={() => operate(order, 'cancel')} disabled={operatingId === order.id} className="h-8 rounded-xl text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700">关闭订单</Button>}
+                {canCancel && <ConfirmAction title="确认关闭订单？" description="关闭后订单将停止接单和后续处理，未完成的邀请也会失效。此操作不可直接恢复。" confirmText="确认关闭订单" onConfirm={() => operate(order, 'cancel')} disabled={operatingId === order.id}><Button variant="ghost" disabled={operatingId === order.id} className="h-8 rounded-xl text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700">关闭订单</Button></ConfirmAction>}
               </div>
             </article>
           );

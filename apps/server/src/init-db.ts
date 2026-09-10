@@ -167,9 +167,7 @@ const ddlStatements = [
 
 const seedUsers = [
   ['u_admin_1', '系统管理员', 'admin@cozi.com', 'admin', '运营管理部'],
-  ['u_rev_1', '王总监', 'reviewer@cozi.com', 'customer_service', '客服与争议处理部'],
-  ['u_adv_1', '陈品牌经理', 'advertiser@cozi.com', 'advertiser', '品牌营销部'],
-  ['u_des_1', '李设计师', 'designer@cozi.com', 'designer', '视觉设计部']
+  ['u_rev_1', '王总监', 'reviewer@cozi.com', 'customer_service', '客服与争议处理部']
 ];
 
 async function main() {
@@ -208,7 +206,7 @@ async function main() {
         );
       }
     }
-    console.log('✅ 种子用户初始化完成 (4个初始账号: admin, customer_service, advertiser, designer)');
+    console.log('✅ 平台账号初始化完成 (admin, customer_service)');
 
     const [tables] = await connection.query('SHOW TABLES;');
     console.log('\n📊 数据库现有表清单:');

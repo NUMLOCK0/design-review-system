@@ -19,7 +19,7 @@ $excludedDirectories = @(
 )
 $excludedFiles = @(
   '.env', '.env.local', '.env.development.local', '.env.test.local',
-  '.env.production.local', 'package-lock.json', 'tsconfig.tsbuildinfo'
+  '.env.production.local', 'package-lock.json', 'tsconfig.tsbuildinfo', 'ssh-config'
 )
 
 function Copy-ProjectTree {

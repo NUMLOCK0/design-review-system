@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { AdminPagination } from '@/components/admin/admin-pagination';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { fetchWithAuth } from '@/lib/auth';
@@ -43,6 +44,9 @@ export default function ReviewRulesPage() {
   const [loading, setLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   // 表单状态：支持动态增加审核层级与指定人员
   const [formData, setFormData] = useState<AdminRuleFormData>({
@@ -60,13 +64,14 @@ export default function ReviewRulesPage() {
     ]
   });
 
-  const fetchRules = async () => {
+  const fetchRules = async (nextPage = page) => {
     try {
       setLoading(true);
-      const res = await fetchWithAuth('/review-rules');
+      const res = await fetchWithAuth(`/review-rules?page=${nextPage}&pageSize=${pageSize}`);
       const data = await res.json();
       if (data.success) {
         setRules(data.data);
+        setTotal(data.total || 0);
         if (data.reviewers) {
           setReviewers(data.reviewers);
         }
@@ -79,8 +84,10 @@ export default function ReviewRulesPage() {
   };
 
   useEffect(() => {
-    fetchRules();
+    fetchRules(1);
   }, []);
+
+  const changePage = (nextPage: number) => { setPage(nextPage); void fetchRules(nextPage); };
 
   const handleAddLevel = () => {
     if (formData.levels.length >= 3) {
@@ -159,7 +166,8 @@ export default function ReviewRulesPage() {
           }
         ]
       });
-      fetchRules();
+      setPage(1);
+      fetchRules(1);
     } catch (err: any) {
       toast.error(err.message || '发布规则失败');
     } finally {
@@ -333,7 +341,7 @@ export default function ReviewRulesPage() {
       {loading ? (
         <div className="py-20 text-center text-xs text-slate-400">正在载入审核规则...</div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <><div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {rules.map((rule) => {
             const platform = PLATFORM_MAP[rule.platform] || PLATFORM_MAP.universal;
             return (
@@ -389,7 +397,7 @@ export default function ReviewRulesPage() {
               </Card>
             );
           })}
-        </div>
+        </div><AdminPagination page={page} pageSize={pageSize} total={total} onPageChange={changePage} /></>
       )}
     </div>
   );

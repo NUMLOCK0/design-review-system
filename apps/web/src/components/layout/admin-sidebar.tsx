@@ -9,7 +9,10 @@ import {
   LogOut, 
   ShieldCheck, 
   ArrowLeft,
-  ShoppingBag
+  ShoppingBag,
+  Users,
+  FileClock,
+  WalletCards
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -27,8 +30,15 @@ import { getCurrentUser, clearAuthSession, getRoleHome, UserInfo } from '@/lib/a
 import { toast } from 'sonner';
 
 const ALL_ADMIN_NAV_ITEMS: Array<{ href: string; label: string; icon: LucideIcon; badge?: string; roles: string[] }> = [
-  { href: '/admin/review-rules', label: '平台审核规则（迁移中）', icon: Sliders, roles: ['admin'] },
-  { href: '/admin/admin-config', label: '商业抽成与运营配置', icon: Percent, roles: ['admin'] },
+  { href: '/admin/review-rules', label: '平台审核规则', icon: Sliders, roles: ['admin'] },
+  { href: '/admin/designer-moderation', label: '设计师主页与作品审核', icon: ShieldCheck, roles: ['admin'] },
+  { href: '/admin/users', label: '用户管理', icon: Users, roles: ['admin'] },
+  { href: '/admin/audit-logs', label: '操作日志', icon: FileClock, roles: ['admin'] },
+  { href: '/admin/finance', label: '财务管理', icon: WalletCards, roles: ['admin'] },
+];
+
+const OPERATIONS_NAV_ITEMS = [
+  { href: '/admin/settings/commission', label: '商业抽成' }, { href: '/admin/settings/operations', label: '运营规则' }, { href: '/admin/settings/publication', label: '发布与质检' }, { href: '/admin/settings/announcement', label: '前台公告' }, { href: '/admin/settings/templates', label: '图片模板' }, { href: '/admin/settings/agreements', label: '协议配置' },
 ];
 
 export function AdminSidebar() {
@@ -62,16 +72,16 @@ export function AdminSidebar() {
   const dept = user?.department || '运营管理部';
 
   return (
-    <aside className="w-64 glass-card m-4 mr-0 p-4 flex flex-col h-[calc(100vh-2rem)] sticky top-4 select-none shrink-0 bg-white/80 border border-slate-200/80">
+    <aside className="fixed inset-y-4 left-4 z-30 flex h-[calc(100vh-2rem)] w-64 shrink-0 select-none flex-col glass-card border border-slate-200/80 bg-white/80 p-4">
       {/* 后台品牌 Logo */}
       <div className="flex items-center gap-3 px-2 py-3 mb-4 border-b border-slate-200/60">
-        <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
+        <div className="role-primary-gradient flex h-10 w-10 items-center justify-center rounded-2xl text-white shadow-lg shadow-blue-500/20">
           <ShieldCheck className="w-5 h-5" />
         </div>
         <div>
           <h1 className="font-bold text-slate-800 text-sm tracking-tight flex items-center gap-1.5">
             Admin Console
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-indigo-50 text-indigo-600 border-indigo-200">管理后台</Badge>
+            <Badge variant="outline" className="role-primary-soft role-primary-text role-primary-border border px-1.5 py-0 text-[10px]">管理后台</Badge>
           </h1>
           <p className="text-[11px] text-slate-500 font-medium">设计质检与商业抽成控制</p>
         </div>
@@ -93,9 +103,12 @@ export function AdminSidebar() {
 
       {/* 导航菜单 */}
       <nav className="flex-1 space-y-1.5 overflow-y-auto pr-1">
-        <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-          后台质检与运营
+        <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">平台运营</div>
+        <Link href="/admin/settings" className={`flex items-center gap-3 px-3.5 py-2.5 rounded-2xl text-xs font-semibold transition-all duration-200 ${pathname === '/admin/settings' ? 'role-primary-gradient text-white shadow-md shadow-blue-500/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'}`}><Percent className={`w-4 h-4 ${pathname === '/admin/settings' ? 'text-white' : 'text-slate-400'}`} /><span>商业化与运营配置</span></Link>
+        <div className="ml-4 mt-1 space-y-0.5 border-l border-slate-200 pl-2">
+          {OPERATIONS_NAV_ITEMS.map((item) => <Link key={item.href} href={item.href} className={`block rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition ${pathname === item.href ? 'role-primary-soft role-primary-text' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>{item.label}</Link>)}
         </div>
+        <div className="mt-5 px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">内容与账户治理</div>
         {filteredNavItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname.startsWith(item.href);
@@ -106,8 +119,8 @@ export function AdminSidebar() {
               href={item.href}
               className={`flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs font-semibold transition-all duration-200 ${
                 isActive
-                  ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-500/25'
-                  : 'text-slate-600 hover:text-indigo-600 hover:bg-slate-100/60'
+                  ? 'role-primary-gradient text-white shadow-md shadow-blue-500/20'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
               }`}
             >
               <div className="flex items-center gap-3">

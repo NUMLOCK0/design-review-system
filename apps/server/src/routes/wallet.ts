@@ -2,61 +2,13 @@ import { Router } from 'express';
 import type { DesignerWallet, WalletTransaction, WithdrawalRequest } from '@design-review/shared';
 import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { notifyUser } from './messages.js';
+import { persistDesignerWallet, persistWithdrawalRequest } from '../config/persistence.js';
+import { recordAdminAudit } from '../services/admin-audit.js';
 
 export const walletRouter = Router();
 
-// 内存 Mock 钱包与交易流水数据
-let designerWallets: Record<string, DesignerWallet> = {
-  'u_des_1': {
-    designerId: 'u_des_1',
-    designerName: '李设计师',
-    availableBalance: 4250.00,
-    pendingSettlement: 1584.00,
-    totalEarned: 18600.00,
-    withdrawnAmount: 14350.00,
-    bankAccount: {
-      bankName: '招商银行 (杭州西湖支行)',
-      accountNo: '6225 **** **** 8890',
-      holderName: '李**'
-    },
-    withdrawalRequests: [],
-    transactions: [
-      {
-        id: 'tx_001',
-        orderNo: 'ORD-20260901-01',
-        taskNo: 'REV-20260901-002',
-        type: 'order_income',
-        amount: 1584.00,
-        title: '智能降噪耳机详情页长图设计 (结算款)',
-        description: '审核已通过，平台服务费 12% (扣除 ¥216)，净到手收益入账',
-        status: 'pending',
-        createdAt: new Date(Date.now() - 3600000 * 3).toISOString()
-      },
-      {
-        id: 'tx_002',
-        orderNo: 'ORD-20260828-09',
-        taskNo: 'REV-20260828-001',
-        type: 'order_income',
-        amount: 680.00,
-        title: '秋冬羽绒服天猫首屏主图 (5张套系)',
-        description: '三级审核全票通过，款项已释放至可提现余额',
-        status: 'settled',
-        createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-        settledAt: new Date(Date.now() - 86400000).toISOString()
-      },
-      {
-        id: 'tx_003',
-        type: 'withdrawal',
-        amount: -3000.00,
-        title: '申请提现至银行卡 (尾号8890)',
-        description: '银行系统转账已完成 (T+1)',
-        status: 'settled',
-        createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-        settledAt: new Date(Date.now() - 86400000 * 4).toISOString()
-      }
-    ]
-  }
-};
+// 钱包余额与流水只来自真实业务，不再预置演示数据。
+export let designerWallets: Record<string, DesignerWallet> = {};
 
 export const withdrawalRequests: WithdrawalRequest[] = [];
 
@@ -89,7 +41,7 @@ walletRouter.get('/my-wallet', authenticate, requireRoles('designer', 'admin'), 
 });
 
 // 2. 申请提现
-walletRouter.post('/withdraw', authenticate, requireRoles('designer'), (req, res) => {
+walletRouter.post('/withdraw', authenticate, requireRoles('designer'), async (req, res) => {
   const { amount, bankName, accountNo, holderName } = req.body;
   const numAmount = Number(Number(amount).toFixed(2));
   const cleanAccountNo = String(accountNo || '').replace(/\s/g, '');
@@ -128,6 +80,8 @@ walletRouter.post('/withdraw', authenticate, requireRoles('designer'), (req, res
   const request: WithdrawalRequest = { id: withdrawalId, designerId: req.user!.id, designerName: req.user!.name, amount: numAmount, bankAccount, status: 'pending_review', createdAt };
   wallet.withdrawalRequests!.unshift(request);
   withdrawalRequests.unshift(request);
+  await persistDesignerWallet(wallet);
+  await persistWithdrawalRequest(request);
   notifyUser('u_rev_1', { type: 'system', title: '新的提现申请待审核', content: `${req.user!.name}提交了 ¥${numAmount.toFixed(2)} 的银行卡提现申请，请审核。`, link: '/service/dashboard?tab=withdrawal_review' });
 
   res.json({
@@ -139,7 +93,7 @@ walletRouter.post('/withdraw', authenticate, requireRoles('designer'), (req, res
   });
 });
 
-walletRouter.post('/withdrawals/:id/review', authenticate, requireRoles('customer_service', 'admin'), (req, res) => {
+walletRouter.post('/withdrawals/:id/review', authenticate, requireRoles('customer_service', 'admin'), async (req, res) => {
   const request = withdrawalRequests.find((item) => item.id === req.params.id);
   if (!request || request.status !== 'pending_review') return res.status(404).json({ code: 404, success: false, message: '提现申请不存在或已处理' });
   const action = req.body?.action === 'approve' ? 'approve' : req.body?.action === 'reject' ? 'reject' : '';
@@ -160,6 +114,9 @@ walletRouter.post('/withdrawals/:id/review', authenticate, requireRoles('custome
     wallet.availableBalance += request.amount;
     if (transaction) { transaction.status = 'failed'; transaction.settledAt = now; transaction.description = `客服审核未通过，提现金额已原路退回收益钱包${request.reviewComment ? `：${request.reviewComment}` : ''}`; }
   }
+  await persistDesignerWallet(wallet);
+  await persistWithdrawalRequest(request);
   notifyUser(request.designerId, { type: 'system', title: action === 'approve' ? '提现审核通过' : '提现审核未通过', content: action === 'approve' ? `提现 ¥${request.amount.toFixed(2)} 已审核通过。` : `提现 ¥${request.amount.toFixed(2)} 未通过审核，金额已原路退回收益钱包。`, link: '/wallet' });
+  void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'withdrawals', action: action === 'approve' ? 'approve' : 'reject', targetType: 'withdrawal', targetId: request.id, summary: `${req.user!.name}${action === 'approve' ? '通过' : '驳回'}提现申请 ¥${request.amount.toFixed(2)}`, detail: { designerId: request.designerId, comment: request.reviewComment }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 提现审核日志写入失败:', error));
   res.json({ code: 200, success: true, message: action === 'approve' ? '提现审核已通过' : '提现已驳回，金额已原路退回收益钱包', data: request, timestamp: Date.now() });
 });

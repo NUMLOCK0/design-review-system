@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { DesignOrder, SystemConfig, ApiResponse, ReviewTask, ImageGroupType, PlatformType } from '@design-review/shared';
+import type { DesignOrder, SystemConfig, ApiResponse, ReviewTask } from '@design-review/shared';
 import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { tasks } from './review-tasks.js';
 import { rules } from './review-rules.js';
@@ -8,86 +8,29 @@ import { notifyUser } from './messages.js';
 import { dbPool } from '../config/database.js';
 import { getSystemConfig } from './system-config.js';
 import { calculateOrderSettlement } from '../utils/order-finance.js';
+import { recordAdminAudit } from '../services/admin-audit.js';
 
 export const designOrdersRouter = Router();
 
-const seedCategories = ['主图设计', '详情页设计', '活动海报', '3D建模与渲染', '精修合成'];
-const seedPlatforms: PlatformType[] = ['tmall', 'taobao', 'douyin', 'pinduoduo', 'universal'];
-const seedProducts = ['轻户外服饰', '智能数码', '国风美妆', '生活家居', '健康食品'];
-const seedImageSources = [
-  'https://images.unsplash.com/photo-1556228578-0d85b1a4d571?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&auto=format&fit=crop&q=80'
-];
-const seedGroupTemplates: { name: string; groupType: ImageGroupType; dimensions: string }[] = [
-  { name: '方形主图', groupType: 'main_1_1', dimensions: '800x800' },
-  { name: '竖版场景图', groupType: 'main_3_4', dimensions: '750x1000' },
-  { name: '详情页长图', groupType: 'detail', dimensions: '750x1500' }
-];
+// 业务订单只来自真实发布，不再预置演示订单。
+export let designOrders: DesignOrder[] = [];
 
-// 100 条按照当前订单与图片分组结构生成的演示订单，使用稳定 ID 便于幂等刷新。
-export let designOrders: DesignOrder[] = Array.from({ length: 100 }, (_, index) => {
-  const number = index + 1;
-  const category = seedCategories[index % seedCategories.length];
-  const platform = seedPlatforms[index % seedPlatforms.length];
-  const product = seedProducts[index % seedProducts.length];
-  const rate = category === '详情页设计' ? 0.12 : category === '3D建模与渲染' ? 0.10 : 0.15;
-  const budget = 500 + (index % 8) * 250;
-  const settlement = calculateOrderSettlement(budget, rate, 0.3);
-  const createdAt = new Date(Date.now() - (index + 1) * 3600000).toISOString();
-  const pendingReview = index % 10 === 0;
-  const imageRequirementGroups = seedGroupTemplates.slice(0, 2 + (index % 2)).map((template, groupIndex) => {
-    const imageUrl = seedImageSources[(index + groupIndex) % seedImageSources.length];
-    return {
-      id: `seed_order_${String(number).padStart(3, '0')}_group_${groupIndex + 1}`,
-      name: `${template.name} ${groupIndex + 1}`,
-      groupType: template.groupType,
-      quantity: 1,
-      dimensions: template.dimensions,
-      description: `围绕${product}的${category}需求，突出产品卖点、品牌调性与平台展示效果。`,
-      referenceImages: [imageUrl],
-      referenceImageItems: [{ id: `seed_order_${String(number).padStart(3, '0')}_reference_${groupIndex + 1}`, url: imageUrl, description: `参考${template.name}的构图与视觉层次。` }],
-      referenceLinks: index % 4 === 0 ? [`https://www.behance.net/gallery/${2026000 + number}`] : []
-    };
-  });
-  return {
-    id: `seed_order_${String(number).padStart(3, '0')}`,
-    orderNo: `ORD-DEMO-202609-${String(number).padStart(3, '0')}`,
-    title: `${product}${['春季新品', '爆款单品', '品牌升级', '大促活动'][index % 4]}视觉设计需求 ${number}`,
-    category,
-    platform,
-    budget,
-    platformCommissionRate: rate,
-    designerPayout: settlement.designerPayout,
-    deadline: new Date(Date.now() + (2 + index % 6) * 86400000).toISOString(),
-    urgency: index % 7 === 0 ? 'super_urgent' : index % 3 === 0 ? 'urgent' : 'normal',
-    requirements: `请完成${imageRequirementGroups.length}组图片物料，适配${platform}投放规范，保持${product}品牌视觉统一。`,
-    imageRequirementGroups,
-    referenceImages: imageRequirementGroups.flatMap((group) => group.referenceImages),
-    status: 'open',
-    publicationStatus: pendingReview ? 'pending_service_review' : 'published',
-    paymentStatus: 'deposit_paid',
-    depositRate: 0.3,
-    depositAmount: settlement.depositAmount,
-    balanceAmount: settlement.balanceAmount,
-    publicationReviewedAt: pendingReview ? undefined : createdAt,
-    publicationReviewerId: pendingReview ? undefined : 'u_rev_1',
-    publicationReviewerName: pendingReview ? undefined : '王总监',
-    servicePriority: index % 7 === 0 ? 'urgent' : index % 3 === 0 ? 'high' : 'normal',
-    creatorId: 'u_adv_1',
-    creatorName: '陈品牌经理',
-    organizationId: 'org_demo_1',
-    reviewRuleId: 'rule_self_u_adv_1',
-    reviewRuleName: '自己审核',
-    createdAt,
-    updatedAt: createdAt
-  } satisfies DesignOrder;
-});
+export async function activatePublishedOrder(order: DesignOrder) {
+  order.publicationStatus = 'published';
+  order.status = 'open';
+  order.updatedAt = new Date().toISOString();
+  await persistDesignOrder(order);
+  if (!dbPool) return;
+  const now = new Date().toISOString();
+  const [rows]: any = await dbPool.query(`SELECT id, designer_id FROM order_invitations WHERE order_id=? AND status='queued' AND expires_at >= ?`, [order.id, now]);
+  if (!rows.length) return;
+  await dbPool.query(`UPDATE order_invitations SET status='sent', sent_at=? WHERE order_id=? AND status='queued' AND expires_at >= ?`, [now, order.id, now]);
+  rows.forEach((row: any) => notifyUser(row.designer_id, { type: 'order', title: '收到设计订单邀请', content: `${order.creatorName}邀请你参与「${order.title}」。`, link: '/invitations' }));
+}
 
 // 客服订单发布审核队列：客服只审核订单是否允许进入接单大厅，不审核设计师作品。
 designOrdersRouter.get('/service/pending', authenticate, requireRoles('customer_service', 'admin'), (req, res) => {
-  const list = designOrders.filter((order) => order.publicationStatus === 'pending_service_review');
+  const list = designOrders.filter((order) => order.status !== 'cancelled' && order.publicationStatus === 'pending_service_review');
   res.json({ code: 200, success: true, data: list, timestamp: Date.now() });
 });
 
@@ -156,7 +99,7 @@ designOrdersRouter.get('/', (req, res) => {
   let filtered = [...designOrders];
 
   // 接单大厅只展示客服已审核通过的订单。
-  filtered = filtered.filter((order) => (order.publicationStatus === 'published' || !order.publicationStatus) && order.paymentStatus !== 'deposit_pending');
+  filtered = filtered.filter((order) => order.status === 'open' && order.publicationStatus === 'published' && order.paymentStatus !== 'deposit_pending');
 
   // 默认过滤掉已被接单的订单，仅展示 open 待接单需求
   if (status && status !== 'all') {
@@ -201,7 +144,7 @@ designOrdersRouter.get('/', (req, res) => {
 });
 
 // 2. 前台发布新需求 / 派单
-designOrdersRouter.post('/', authenticate, requireRoles('advertiser'), (req, res) => {
+designOrdersRouter.post('/', authenticate, requireRoles('advertiser'), async (req, res) => {
   const {
     title,
     category,
@@ -225,7 +168,7 @@ designOrdersRouter.post('/', authenticate, requireRoles('advertiser'), (req, res
   if (!reviewRuleId) {
     return res.status(400).json({ code: 400, success: false, message: '请先为订单绑定品牌方作品审核流' });
   }
-  const reviewRule = rules.find((rule) => rule.id === reviewRuleId && (!req.user!.organizationId || !rule.organizationId || rule.organizationId === req.user!.organizationId));
+  const reviewRule = rules.find((rule) => rule.id === reviewRuleId && rule.ownerId === req.user!.id);
   if (!reviewRule) {
     return res.status(400).json({ code: 400, success: false, message: '审核流不存在或不属于当前品牌方组织' });
   }
@@ -274,6 +217,7 @@ designOrdersRouter.post('/', authenticate, requireRoles('advertiser'), (req, res
   };
 
   designOrders.unshift(newOrder);
+  await persistDesignOrder(newOrder);
   res.status(201).json({
     code: 200,
     success: true,
@@ -289,7 +233,9 @@ designOrdersRouter.patch('/:id', authenticate, requireRoles('advertiser'), (req,
   const isOwner = order && (order.creatorId === req.user!.id || (Boolean(req.user!.organizationId) && order.organizationId === req.user!.organizationId));
   if (!order || !isOwner) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
   const wasPublished = order.publicationStatus === 'published' && order.status === 'open';
-  if (order.status !== 'open') {
+  // 客服驳回的订单仍允许回填修改，修改完成后再点击“重新提交”；
+  // 普通已关闭订单保持不可编辑，通过“重新发布”生成新订单。
+  if (order.status !== 'open' && order.publicationStatus !== 'rejected') {
     return res.status(400).json({ code: 400, success: false, message: '当前订单不可编辑' });
   }
 
@@ -334,11 +280,72 @@ designOrdersRouter.post('/:id/resubmit', authenticate, requireRoles('advertiser'
   res.json({ code: 200, success: true, message: '订单已重新提交审核', data: order, timestamp: Date.now() });
 });
 
+// 已关闭订单重新发布：保留原订单的财务与审计记录，复制一笔新的待支付订单。
+designOrdersRouter.post('/:id/republish', authenticate, requireRoles('advertiser'), (req, res) => {
+  const source = designOrders.find((item) => item.id === req.params.id);
+  const isOwner = source && (source.creatorId === req.user!.id || (Boolean(req.user!.organizationId) && source.organizationId === req.user!.organizationId));
+  if (!source || !isOwner) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
+  if (source.status !== 'cancelled' || source.publicationStatus === 'rejected') {
+    return res.status(400).json({ code: 400, success: false, message: '当前订单不可重新发布，请使用重新提交或等待当前流程完成' });
+  }
+
+  const now = new Date().toISOString();
+  const id = `ord_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`;
+  const orderNo = `ORD-${now.slice(0, 10).replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
+  const settlement = calculateOrderSettlement(source.budget, source.platformCommissionRate, source.depositRate || getSystemConfig().depositRate);
+  const republishedOrder: DesignOrder = {
+    ...source,
+    id,
+    orderNo,
+    status: 'open',
+    publicationStatus: 'pending_deposit',
+    paymentStatus: 'deposit_pending',
+    depositRate: source.depositRate || getSystemConfig().depositRate,
+    depositAmount: settlement.depositAmount,
+    balanceAmount: settlement.balanceAmount,
+    designerPayout: settlement.designerPayout,
+    depositOutTradeNo: undefined,
+    depositTradeNo: undefined,
+    depositPaidAt: undefined,
+    balanceOutTradeNo: undefined,
+    balanceTradeNo: undefined,
+    balancePaidAt: undefined,
+    publicationReviewComment: undefined,
+    publicationReviewedAt: undefined,
+    publicationReviewerId: undefined,
+    publicationReviewerName: undefined,
+    claimedById: undefined,
+    claimedByName: undefined,
+    claimedAt: undefined,
+    completedAt: undefined,
+    taskId: undefined,
+    isDisputed: false,
+    disputeId: undefined,
+    createdAt: now,
+    updatedAt: now,
+    imageRequirementGroups: source.imageRequirementGroups?.map((group) => ({
+      ...group,
+      referenceImages: [...(group.referenceImages || [])],
+      referenceLinks: [...(group.referenceLinks || [])],
+      referenceImageItems: group.referenceImageItems?.map((item) => ({ ...item })),
+    })),
+    referenceImages: source.referenceImages ? [...source.referenceImages] : undefined,
+  };
+
+  designOrders.unshift(republishedOrder);
+  void persistDesignOrder(republishedOrder);
+  res.status(201).json({ code: 200, success: true, message: '已生成新的发布订单，请支付定金后提交', data: republishedOrder, timestamp: Date.now() });
+});
+
 designOrdersRouter.post('/:id/cancel', authenticate, requireRoles('advertiser'), (req, res) => {
   const order = designOrders.find((item) => item.id === req.params.id && item.creatorId === req.user!.id);
   if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
   if (!['open', 'pending_service_review'].includes(order.status) || order.publicationStatus === 'rejected') {
     return res.status(400).json({ code: 400, success: false, message: '当前订单不可关闭' });
+  }
+  const paymentInProgress = order.paymentStatus === 'deposit_pending' && Boolean(order.depositOutTradeNo);
+  if (paymentInProgress || ['deposit_paid', 'balance_pending', 'paid'].includes(order.paymentStatus || '')) {
+    return res.status(400).json({ code: 400, success: false, message: paymentInProgress ? '订单正在支付中，请稍后再关闭' : '定金已支付的订单不可直接关闭，请联系客服处理' });
   }
   order.status = 'cancelled';
   order.updatedAt = new Date().toISOString();
@@ -350,6 +357,9 @@ designOrdersRouter.post('/:id/cancel', authenticate, requireRoles('advertiser'),
 designOrdersRouter.post('/:id/publication-review', authenticate, requireRoles('customer_service', 'admin'), (req, res) => {
   const order = designOrders.find((item) => item.id === req.params.id);
   if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
+  if (order.status === 'cancelled') {
+    return res.status(400).json({ code: 400, success: false, message: '已关闭订单不能继续发布审核，请等待品牌方重新发布' });
+  }
   if (order.publicationStatus !== 'pending_service_review') {
     return res.status(400).json({ code: 400, success: false, message: '当前订单不在待发布审核状态' });
   }
@@ -367,16 +377,12 @@ designOrdersRouter.post('/:id/publication-review', authenticate, requireRoles('c
   order.publicationReviewerName = req.user!.name;
   order.status = approved ? 'open' : 'cancelled';
   order.updatedAt = new Date().toISOString();
-  void persistDesignOrder(order);
-  if (approved && dbPool) {
-    void (async () => {
-      const now = new Date().toISOString();
-      const [rows]: any = await dbPool.query(`SELECT id, designer_id FROM order_invitations WHERE order_id=? AND status='queued' AND expires_at >= ?`, [order.id, now]);
-      if (!rows.length) return;
-      await dbPool.query(`UPDATE order_invitations SET status='sent', sent_at=? WHERE order_id=? AND status='queued' AND expires_at >= ?`, [now, order.id, now]);
-      rows.forEach((row: any) => notifyUser(row.designer_id, { type: 'order', title: '收到设计订单邀请', content: `${order.creatorName}邀请你参与「${order.title}」。`, link: '/invitations' }));
-    })().catch((error) => console.error('[MySQL] 激活订单邀请失败:', error));
-  } else if (!approved && dbPool) {
+  if (approved) {
+    void activatePublishedOrder(order).catch((error) => console.error('[MySQL] 激活订单邀请失败:', error));
+  } else {
+    void persistDesignOrder(order);
+  }
+  if (!approved && dbPool) {
     void dbPool.query(`UPDATE order_invitations SET status='cancelled', responded_at=? WHERE order_id=? AND status='queued'`, [new Date().toISOString(), order.id])
       .catch((error) => console.error('[MySQL] 取消待发送邀请失败:', error));
   }
@@ -386,6 +392,7 @@ designOrdersRouter.post('/:id/publication-review', authenticate, requireRoles('c
     content: approved ? `订单「${order.title}」已进入接单大厅。` : `订单「${order.title}」需要补充后重新提交。`,
     link: '/advertiser/orders',
   });
+  void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'order_audit', action: approved ? 'approve_publication' : 'reject_publication', targetType: 'design_order', targetId: order.id, summary: `${req.user!.name}${approved ? '通过' : '驳回'}订单「${order.title}」发布审核`, detail: { orderNo: order.orderNo, comment: order.publicationReviewComment }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 订单审核日志写入失败:', error));
 
   return res.json({
     code: 200,
@@ -432,7 +439,7 @@ export function claimDesignOrder(order: DesignOrder, designerId: string, designe
     status: 'draft',
     currentLevel: 1,
     totalImages: (order.imageRequirementGroups && order.imageRequirementGroups.length > 0)
-      ? order.imageRequirementGroups.reduce((acc, g) => acc + (g.quantity || 1), 0)
+      ? order.imageRequirementGroups.reduce((acc, g) => acc + (g.imageItems?.length || g.quantity || 1), 0)
       : (order.referenceImages?.length || 1),
     approvedCount: 0,
     rejectedCount: 0,
@@ -447,7 +454,7 @@ export function claimDesignOrder(order: DesignOrder, designerId: string, designe
           id: `grp_${Date.now()}_${idx}`,
           taskId,
           groupType: grp.groupType,
-          requiredCount: grp.quantity || 1,
+          requiredCount: grp.imageItems?.length || grp.quantity || 1,
           images: (grp.referenceImages && grp.referenceImages.length > 0)
             ? grp.referenceImages.map((url, i) => ({
                 id: `img_${Date.now()}_${idx}_${i}`,

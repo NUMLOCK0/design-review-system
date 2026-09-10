@@ -1,5 +1,3 @@
 import { redirect } from 'next/navigation';
 
-export default function AdminRootPage() {
-  redirect('/admin/admin-config');
-}
+export default function AdminRootPage() { redirect('/admin/settings'); }

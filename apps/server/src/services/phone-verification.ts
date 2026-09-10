@@ -3,6 +3,7 @@ import https from 'https';
 import jwt from 'jsonwebtoken';
 import sharp from 'sharp';
 import * as tencentcloudModule from 'tencentcloud-sdk-nodejs';
+import nodemailer from 'nodemailer';
 
 const CAPTCHA_SECRET = process.env.JWT_SECRET || 'design-review-secret-key-2026';
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
@@ -15,10 +16,13 @@ type SliderPayload = { x?: unknown; y?: unknown; duration?: unknown; trail?: unk
 type CaptchaState = { targetX: number; expiresAt: number; used: boolean };
 type SmsPurpose = 'login' | 'register' | 'reset';
 type SmsState = { hash: string; purpose: SmsPurpose; expiresAt: number; sentAt: number };
+type EmailPurpose = 'register' | 'reset';
+type EmailState = { hash: string; purpose: EmailPurpose; expiresAt: number; sentAt: number };
 
 const challenges = new Map<string, CaptchaState>();
 const verifiedTokens = new Map<string, number>();
 const smsCodes = new Map<string, SmsState>();
+const emailCodes = new Map<string, EmailState>();
 
 export function normalizePhone(phone: string) {
   return phone.trim().replace(/^\+86/, '');
@@ -33,6 +37,7 @@ function cleanup() {
   for (const [id, item] of challenges) if (item.expiresAt <= now || item.used) challenges.delete(id);
   for (const [token, expiresAt] of verifiedTokens) if (expiresAt <= now) verifiedTokens.delete(token);
   for (const [phone, item] of smsCodes) if (item.expiresAt <= now) smsCodes.delete(phone);
+  for (const [email, item] of emailCodes) if (item.expiresAt <= now) emailCodes.delete(email);
 }
 
 function dataUrl(buffer: Buffer) {
@@ -85,6 +90,12 @@ export function verifySliderChallenge(challengeId: string, payload: SliderPayloa
   return token;
 }
 
+export function consumeSliderToken(captchaToken: string) {
+  const tokenExpiresAt = verifiedTokens.get(captchaToken);
+  if (!tokenExpiresAt || tokenExpiresAt <= Date.now()) throw new Error('请先完成滑块验证');
+  verifiedTokens.delete(captchaToken);
+}
+
 function smsClient() {
   // The SDK is CommonJS while the server runs as ESM. Depending on the
   // loader, the SDK can be exposed either as the namespace or under default.
@@ -107,18 +118,16 @@ export async function sendSmsCode(phoneInput: string, captchaToken: string, purp
   cleanup();
   const phone = normalizePhone(phoneInput);
   if (!isValidPhone(phone)) throw new Error('请输入有效的中国大陆手机号');
-  const tokenExpiresAt = verifiedTokens.get(captchaToken);
-  if (!tokenExpiresAt || tokenExpiresAt <= Date.now()) throw new Error('请先完成滑块验证');
-  verifiedTokens.delete(captchaToken);
+  consumeSliderToken(captchaToken);
   const previous = smsCodes.get(phone);
   if (previous && Date.now() - previous.sentAt < SMS_INTERVAL_MS) throw new Error('验证码发送过于频繁，请稍后再试');
 
   const code = String(100000 + Math.floor(Math.random() * 900000));
   const client = smsClient();
   const result = await client.SendSms({
-    SmsSdkAppId: process.env.TENCENTCLOUD_SMS_APP_ID,
-    SignName: process.env.TENCENTCLOUD_SMS_SIGN_NAME,
-    TemplateId: process.env.TENCENTCLOUD_SMS_TEMPLATE_ID,
+    SmsSdkAppid: process.env.TENCENTCLOUD_SMS_APP_ID,
+    Sign: process.env.TENCENTCLOUD_SMS_SIGN_NAME,
+    TemplateID: process.env.TENCENTCLOUD_SMS_TEMPLATE_ID,
     PhoneNumberSet: [`+86${phone}`],
     TemplateParamSet: [code, String(SMS_EXPIRE_MINUTES)]
   });
@@ -136,5 +145,56 @@ export function consumeSmsCode(phoneInput: string, code: string, purpose: SmsPur
   const actual = crypto.createHash('sha256').update(String(code)).digest('hex');
   if (actual !== item.hash) throw new Error('验证码错误');
   smsCodes.delete(phone);
+  return true;
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const EMAIL_INTERVAL_MS = 60 * 1000;
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function emailClient() {
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  if (!host || !user || !pass) throw new Error('邮箱服务未配置，请先填写 SMTP_HOST、SMTP_USER、SMTP_PASS');
+  return nodemailer.createTransport({
+    host,
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: String(process.env.SMTP_SECURE || 'true') !== 'false',
+    auth: { user, pass }
+  });
+}
+
+export async function sendEmailCode(emailInput: string, captchaToken: string, purpose: EmailPurpose) {
+  cleanup();
+  const email = normalizeEmail(emailInput);
+  if (!EMAIL_PATTERN.test(email)) throw new Error('请输入有效的邮箱地址');
+  consumeSliderToken(captchaToken);
+  const previous = emailCodes.get(email);
+  if (previous && Date.now() - previous.sentAt < EMAIL_INTERVAL_MS) throw new Error('验证码发送过于频繁，请稍后再试');
+
+  const code = String(100000 + Math.floor(Math.random() * 900000));
+  await emailClient().sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: email,
+    subject: purpose === 'register' ? '创赢注册验证码' : '创赢密码重置验证码',
+    text: `您的验证码是：${code}\n验证码将在${SMS_EXPIRE_MINUTES}分钟后失效，请及时完成操作。`,
+    html: `<p>您的验证码是：<strong style="font-size:22px;letter-spacing:4px">${code}</strong></p><p>验证码将在 ${SMS_EXPIRE_MINUTES} 分钟后失效，请及时完成操作。</p>`
+  });
+  emailCodes.set(email, { hash: crypto.createHash('sha256').update(code).digest('hex'), purpose, expiresAt: Date.now() + SMS_TTL_MS, sentAt: Date.now() });
+  return { expiresIn: SMS_TTL_MS / 1000 };
+}
+
+export function consumeEmailCode(emailInput: string, code: string, purpose: EmailPurpose) {
+  cleanup();
+  const email = normalizeEmail(emailInput);
+  const item = emailCodes.get(email);
+  if (!item || item.purpose !== purpose || item.expiresAt <= Date.now()) throw new Error('验证码不存在或已过期');
+  const actual = crypto.createHash('sha256').update(String(code)).digest('hex');
+  if (actual !== item.hash) throw new Error('验证码错误');
+  emailCodes.delete(email);
   return true;
 }

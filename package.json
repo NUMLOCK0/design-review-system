@@ -6,6 +6,7 @@
   "scripts": {
     "dev:server": "pnpm --filter @design-review/server dev",
     "dev:web": "pnpm --filter @design-review/web dev",
+    "restart:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-dev.ps1",
     "dev:mp": "pnpm --filter @design-review/uni-app dev:mp-weixin",
     "build:server": "pnpm --filter @design-review/server build",
     "build:web": "pnpm --filter @design-review/web build",

@@ -5,8 +5,6 @@ import { persistSiteMessage } from '../config/persistence.js';
 
 export const messagesRouter = Router();
 export const messages: SiteMessage[] = [
-  { id: 'msg_welcome_adv', recipientId: 'u_adv_1', senderName: '系统通知', type: 'system', title: '欢迎使用品牌方工作台', content: '你可以在这里发布设计订单、配置作品审核流并跟进订单纠纷。', link: '/advertiser/dashboard', isRead: false, createdAt: new Date().toISOString() },
-  { id: 'msg_welcome_des', recipientId: 'u_des_1', senderName: '系统通知', type: 'system', title: '欢迎使用设计师工作台', content: '接单后可在任务中心提交作品并查看审核结果。', link: '/order-market', isRead: false, createdAt: new Date().toISOString() },
   { id: 'msg_welcome_cs', recipientId: 'u_rev_1', senderName: '系统通知', type: 'system', title: '客服工作台已启用', content: '你可以处理订单发布审核和订单纠纷。', link: '/service/dashboard', isRead: false, createdAt: new Date().toISOString() },
   { id: 'msg_welcome_admin', recipientId: 'u_admin_1', senderName: '系统通知', type: 'system', title: '系统管理员工作台已启用', content: '请在管理后台维护平台配置和审核规则。', link: '/admin', isRead: false, createdAt: new Date().toISOString() },
 ];

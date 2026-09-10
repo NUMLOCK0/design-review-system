@@ -1,3 +1,3 @@
-export default function UserAgreementPage() {
-  return <main className="min-h-screen bg-slate-50 px-4 py-12 text-slate-900"><article className="mx-auto max-w-3xl rounded-2xl bg-white p-6 shadow-sm sm:p-10"><a href="/login" className="text-sm text-blue-600 hover:underline">返回登录</a><h1 className="mt-8 text-3xl font-bold">创赢用户协议</h1><p className="mt-3 text-sm text-slate-500">生效日期：2026年1月1日</p><div className="mt-8 space-y-6 text-sm leading-7 text-slate-600"><section><h2 className="font-semibold text-slate-900">一、服务说明</h2><p>创赢为品牌方与设计师提供设计订单发布、协作、交付及审核服务。</p></section><section><h2 className="font-semibold text-slate-900">二、账号使用</h2><p>请使用真实、准确的信息注册并妥善保管账号。账号下的操作由账号持有人负责。</p></section><section><h2 className="font-semibold text-slate-900">三、内容与交付</h2><p>请确保上传的素材、文字和链接拥有合法使用权，并按照订单约定完成协作。</p></section><section><h2 className="font-semibold text-slate-900">四、协议更新</h2><p>产品功能或法律法规发生变化时，我们可能更新本协议，并在页面展示最新版本。</p></section><p className="text-xs text-slate-400">本页面为产品协议草案，正式上线前请由运营及法务确认。</p></div></article></main>;
-}
+import { AgreementDocument } from '@/components/agreement-document';
+
+export default function UserAgreementPage() { return <AgreementDocument title="用户协议" contentKey="userAgreementContent" />; }

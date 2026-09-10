@@ -29,11 +29,14 @@ export const PLATFORM_MAP: Record<PlatformType, { label: string; color: string }
   universal: { label: '通用全网', color: '#2D8C87' },
 };
 
-export type ImageGroupType = 'main_1_1' | 'main_3_4' | 'detail';
+export type ImageGroupType = 'main_1_1' | 'main_3_4' | 'main_4_3' | 'main_16_9' | 'main_9_16' | 'detail';
 
 export const GROUP_MAP: Record<ImageGroupType, { label: string; ratio: string; desc: string }> = {
   main_1_1: { label: '主图 (1:1)', ratio: '1:1', desc: '800x800 或以上方形主图' },
   main_3_4: { label: '长图 (3:4)', ratio: '3:4', desc: '750x1000 或 800x1066 长主图' },
+  main_4_3: { label: '横版主图 (4:3)', ratio: '4:3', desc: '1200x900 或以上横版主图' },
+  main_16_9: { label: '横幅图 (16:9)', ratio: '16:9', desc: '1600x900 或以上横幅图' },
+  main_9_16: { label: '竖版图 (9:16)', ratio: '9:16', desc: '900x1600 或以上竖版图' },
   detail: { label: '详情页 (长图)', ratio: '自适应', desc: '商详分段或整张详情图' },
 };
 
@@ -202,12 +205,23 @@ export interface OrderReferenceImageItem {
   description: string; // 针对该参考图的具体要求/亮点说明 (如: "借鉴此图的金属反光排版", "参考该模特的穿搭站姿")
 }
 
+export interface OrderImageRequirementImageItem {
+  id: string;
+  materialImage?: string;
+  description?: string;
+  referenceImages?: string[];
+  referenceImageItems?: OrderReferenceImageItem[];
+  referenceLinks?: string[];
+}
+
 export interface OrderImageRequirementItem {
   id: string;
   name: string; // 如：主图白底透气图、模特场景图、卖点拆解图、尺码长图
   groupType: ImageGroupType; // 'main_1_1' | 'main_3_4' | 'detail'
   quantity: number; // 张数
   dimensions?: string; // 800x800, 750x1000 等
+  imageItems?: OrderImageRequirementImageItem[]; // 本组每张图片的独立需求
+  materialImages?: string[]; // 本组需要处理的素材原图
   description?: string; // 本组整体要求
   referenceImages: string[]; // 兼容纯字符串数组
   referenceImageItems?: OrderReferenceImageItem[]; // 包含每张图片独立描述的参考图列表
@@ -273,6 +287,12 @@ export interface DesignerProfile {
   userId: string;
   name: string;
   avatarUrl?: string;
+  headline?: string;
+  bio?: string;
+  industries?: string[];
+  yearsExperience?: number;
+  publicStatus?: 'draft' | 'published' | 'hidden';
+  profileCompleted?: boolean;
   categories: string[];
   platforms: PlatformType[];
   styles: string[];
@@ -280,11 +300,32 @@ export interface DesignerProfile {
   maxActiveOrders: number;
   availabilityStatus: 'available' | 'busy' | 'unavailable';
   portfolioUrls: string[];
+  portfolios?: DesignerPortfolio[];
   activeOrderCount: number;
   qualityScore: number;
   onTimeRate: number;
   recommendationScore?: number;
   recommendationReasons?: string[];
+}
+
+export interface DesignerPortfolio {
+  id: string;
+  designerId: string;
+  title: string;
+  coverUrl: string;
+  imageUrls: string[];
+  category?: string;
+  industry?: string;
+  platform?: PlatformType;
+  description?: string;
+  designerRole?: string;
+  tags: string[];
+  sortOrder: number;
+  status: 'draft' | 'published' | 'hidden';
+  isFeatured: boolean;
+  createdAt: string;
+  updatedAt?: string;
+  publishedAt?: string;
 }
 
 export interface OrderInvitation {
@@ -343,6 +384,21 @@ export interface ServiceActionLog {
   comment?: string;
   operatorId: string;
   operatorName: string;
+  createdAt: string;
+}
+
+// ================= 后台操作审计日志 =================
+export interface AdminAuditLog {
+  id: string;
+  operatorId: string;
+  operatorName: string;
+  module: string;
+  action: string;
+  targetType?: string;
+  targetId?: string;
+  summary: string;
+  detail?: Record<string, unknown>;
+  ipAddress?: string;
   createdAt: string;
 }
 
@@ -421,6 +477,19 @@ export interface CommissionTier {
   description?: string;
 }
 
+export interface ImageTemplateGroup {
+  id: string;
+  name: string;
+  groupType: ImageGroupType;
+  quantity: number;
+}
+
+export interface ImageTemplate {
+  id: string;
+  name: string;
+  groups: ImageTemplateGroup[];
+}
+
 export interface SystemConfig {
   id: string;
   platformName: string;
@@ -434,6 +503,10 @@ export interface SystemConfig {
   commissionTiers: CommissionTier[]; // 各分类分级抽成
   announcement?: string; // 全局前台公告
   depositRate: number; // 发布订单时支付的定金比例（0.00 - 1.00）
+  requireOrderPublicationReview: boolean; // 发布订单是否需要客服审核后上架
+  userAgreementContent: string; // 用户协议正文
+  privacyPolicyContent: string; // 隐私协议正文
+  imageTemplates: ImageTemplate[]; // 创建订单时可一键添加的图片分组模板
   updatedAt: string;
 }
 

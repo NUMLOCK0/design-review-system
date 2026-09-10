@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
 const statusMap: Record<string, { label: string; className: string }> = {
+  pending_deposit: { label: '待支付定金', className: 'bg-orange-50 text-orange-700' },
   pending_service_review: { label: '待审核', className: 'bg-amber-50 text-amber-700' },
   published: { label: '接单中', className: 'bg-emerald-50 text-emerald-700' },
   claimed: { label: '已接单', className: 'bg-blue-50 text-blue-700' },
@@ -17,9 +18,13 @@ const statusMap: Record<string, { label: string; className: string }> = {
   submitted: { label: '待作品审核', className: 'bg-indigo-50 text-indigo-700' },
   completed: { label: '已完成', className: 'bg-slate-100 text-slate-600' },
   rejected: { label: '已驳回', className: 'bg-rose-50 text-rose-700' },
+  cancelled: { label: '已关闭', className: 'bg-slate-100 text-slate-600' },
 };
 
 const money = (value: number) => '¥' + value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const orderStatus = (order: DesignOrder) => order.status === 'cancelled' && order.publicationStatus !== 'rejected'
+  ? 'cancelled'
+  : order.publicationStatus || order.status;
 
 export default function AdvertiserBillingPage() {
   const user = useCurrentUser();
@@ -45,8 +50,8 @@ export default function AdvertiserBillingPage() {
 
   const summary = useMemo(() => {
     const total = orders.reduce((sum, order) => sum + order.budget, 0);
-    const settled = orders.filter((order) => (order.publicationStatus || order.status) === 'completed').reduce((sum, order) => sum + order.budget, 0);
-    const pending = orders.filter((order) => ['pending_service_review', 'published', 'claimed', 'in_progress', 'submitted'].includes(order.publicationStatus || order.status)).reduce((sum, order) => sum + order.budget, 0);
+    const settled = orders.filter((order) => orderStatus(order) === 'completed').reduce((sum, order) => sum + order.budget, 0);
+    const pending = orders.filter((order) => ['pending_deposit', 'pending_service_review', 'published', 'claimed', 'in_progress', 'submitted'].includes(orderStatus(order))).reduce((sum, order) => sum + order.budget, 0);
     const frozen = orders.filter((order) => order.isDisputed).reduce((sum, order) => sum + order.budget, 0);
     return { total, settled, pending, frozen };
   }, [orders]);
@@ -101,7 +106,7 @@ export default function AdvertiserBillingPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {orders.map((order) => {
-                  const status = statusMap[order.publicationStatus || order.status] || { label: order.status, className: 'bg-slate-100 text-slate-600' };
+                  const status = statusMap[orderStatus(order)] || { label: order.status, className: 'bg-slate-100 text-slate-600' };
                   const balanceAmount = order.balanceAmount ?? (order.budget - (order.depositAmount || 0));
                   const fee = balanceAmount * order.platformCommissionRate;
                   return (

@@ -27,7 +27,7 @@ import {
   ChevronDown,
   Download
 } from "lucide-react";
-import { TASK_STATUS_MAP, PLATFORM_MAP, type ReviewTask, type PlatformType } from "@design-review/shared";
+import { GROUP_MAP, TASK_STATUS_MAP, PLATFORM_MAP, type ReviewTask, type PlatformType } from "@design-review/shared";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -63,6 +63,7 @@ import { toast } from "sonner";
 import { fetchWithAuth } from "@/lib/auth";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import ReviewWorkspaceContent from "@/components/review-workspace";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 
 export default function ReviewTasksPage() {
   const user = useCurrentUser();
@@ -438,15 +439,7 @@ export default function ReviewTasksPage() {
                                 </Button>
                               </Link>
 
-                              <Button
-                                size="sm"
-                                onClick={() => handleSubmitTask(task.id)}
-                                disabled={operatingTaskId === task.id}
-                                className="h-7 text-[11px] rounded-xl px-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-1 shadow-sm"
-                              >
-                                <Send className="w-3 h-3" />
-                                提交审核
-                              </Button>
+                              <ConfirmAction title="确认提交审核？" description="提交后任务将进入审核流程，提交的素材会通知审核人员处理。" confirmText="确认提交" tone="warning" onConfirm={() => handleSubmitTask(task.id)} disabled={operatingTaskId === task.id}><Button size="sm" disabled={operatingTaskId === task.id} className="h-7 text-[11px] rounded-xl px-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-1 shadow-sm"><Send className="w-3 h-3" />提交审核</Button></ConfirmAction>
 
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
@@ -485,15 +478,7 @@ export default function ReviewTasksPage() {
                               <Button size="sm" variant="outline" onClick={() => handleOpenWorkspace(task.id)} className="h-7 text-[11px] rounded-xl px-2.5 border-rose-200 text-rose-600 bg-rose-50/50">
                                 查看批注
                               </Button>
-                              <Button
-                                size="sm"
-                                onClick={() => handleSubmitTask(task.id)}
-                                disabled={operatingTaskId === task.id}
-                                className="h-7 text-[11px] rounded-xl px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold gap-1 shadow-sm"
-                              >
-                                <Send className="w-3 h-3" />
-                                重新提审
-                              </Button>
+                              <ConfirmAction title="确认重新提交审核？" description="重新提交后会再次进入审核流程，审核人员将按最新素材进行处理。" confirmText="确认重新提审" tone="warning" onConfirm={() => handleSubmitTask(task.id)} disabled={operatingTaskId === task.id}><Button size="sm" disabled={operatingTaskId === task.id} className="h-7 text-[11px] rounded-xl px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold gap-1 shadow-sm"><Send className="w-3 h-3" />重新提审</Button></ConfirmAction>
                             </>
                           )}
 
@@ -591,7 +576,7 @@ export default function ReviewTasksPage() {
                       {detailTask.groups.map((grp, gIdx) => (
                         <div key={grp.id || gIdx} className="p-3 rounded-2xl border border-slate-200 bg-white space-y-2">
                           <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
-                            <span>分组 #{gIdx + 1} ({grp.groupType === 'main_1_1' ? '1:1 方形主图' : '3:4 竖版长图'})</span>
+                            <span>分组 #{gIdx + 1} ({GROUP_MAP[grp.groupType]?.label || grp.groupType})</span>
                             <span className="text-[10px] text-slate-400 font-mono">{grp.images?.length || 0} / {grp.requiredCount} 张</span>
                           </div>
 
@@ -646,13 +631,7 @@ export default function ReviewTasksPage() {
                   关闭
                 </Button>
                 {detailTask.status === 'draft' && (
-                  <Button
-                    onClick={() => handleSubmitTask(detailTask.id)}
-                    className="rounded-xl text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-1"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    立即提交审核
-                  </Button>
+                  <ConfirmAction title="确认提交审核？" description="提交后任务将进入审核流程，提交的素材会通知审核人员处理。" confirmText="确认提交" tone="warning" onConfirm={() => handleSubmitTask(detailTask.id)} disabled={operatingTaskId === detailTask.id}><Button disabled={operatingTaskId === detailTask.id} className="rounded-xl text-xs bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-1"><Send className="w-3.5 h-3.5" />立即提交审核</Button></ConfirmAction>
                 )}
                 {(detailTask.status === 'pending' || detailTask.status === 'in_review' || detailTask.status === 'needs_revision' || detailTask.status === 'approved') && (
                   <Button onClick={() => handleOpenWorkspace(detailTask.id)} className="rounded-xl text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold gap-1">
@@ -661,7 +640,7 @@ export default function ReviewTasksPage() {
                   </Button>
                 )}
                 {user?.role === 'advertiser' && detailTask.status === 'approved' && !detailTask.acceptedAt && (
-                  <Button onClick={() => handleAcceptTask(detailTask.id)} disabled={operatingTaskId === detailTask.id} className="rounded-xl bg-emerald-600 text-xs text-white hover:bg-emerald-700"><CheckCircle2 className="mr-1 h-3.5 w-3.5" />支付尾款并确认验收</Button>
+                  <ConfirmAction title="确认支付尾款并验收？" description="确认后将发起尾款支付，验收完成后会开放无水印原图和源文件下载。" confirmText="确认支付并验收" tone="warning" onConfirm={() => handleAcceptTask(detailTask.id)} disabled={operatingTaskId === detailTask.id}><Button disabled={operatingTaskId === detailTask.id} className="rounded-xl bg-emerald-600 text-xs text-white hover:bg-emerald-700"><CheckCircle2 className="mr-1 h-3.5 w-3.5" />支付尾款并确认验收</Button></ConfirmAction>
                 )}
               </DialogFooter>
             </>

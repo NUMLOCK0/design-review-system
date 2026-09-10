@@ -10,6 +10,7 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, D
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/components/ui/app-toast';
 import { toast } from 'sonner';
 
 type WorkItem = {
@@ -54,6 +55,7 @@ function isWithdrawal(item: WorkItem): item is WorkItem & { payload: WithdrawalR
 function assigneeLabel(item: Pick<WorkItem, 'type' | 'assigneeName'>) { return item.assigneeName || (item.type !== 'dispute' ? '无需领取' : '待领取'); }
 
 export default function ServiceDashboardPage() {
+  const { confirm } = useToast();
   const [tab, setTab] = useState('all');
   const [keyword, setKeyword] = useState('');
   const [search, setSearch] = useState('');
@@ -111,6 +113,8 @@ export default function ServiceDashboardPage() {
   const operate = async (action: 'approve' | 'reject' | 'mediation' | 'resolve' | 'escalate') => {
     if (!selected) return;
     if (['reject', 'resolve', 'escalate'].includes(action) && !comment.trim()) { toast.error('请先填写处理意见'); return; }
+    const actionLabels = { approve: '通过审核', reject: '驳回处理', mediation: '进入调解', resolve: '结案', escalate: '升级处理' } as const;
+    if (!await confirm({ title: `确认${actionLabels[action]}？`, message: action === 'approve' ? '确认后将改变订单或提现申请状态，请核对信息后继续。' : '该操作会改变当前任务状态，确认后将通知相关人员。', confirmText: `确认${actionLabels[action]}`, type: ['reject', 'resolve', 'escalate'].includes(action) ? 'danger' : 'warning' })) return;
     setOperating(true);
     try {
       const endpoint = isOrder(selected) ? `/design-orders/${selected.id}/publication-review` : isWithdrawal(selected) ? `/wallet/withdrawals/${selected.id}/review` : `/disputes/${selected.id}/action`;

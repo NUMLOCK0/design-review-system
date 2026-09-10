@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "sonner";
+import { ToastProvider } from "@/components/ui/app-toast";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Cozi Design Review | 电商设计稿审核管理系统",
@@ -15,7 +18,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className="antialiased min-h-screen">
-        {children}
+        <ToastProvider>{children}</ToastProvider>
         <Toaster position="top-right" richColors />
       </body>
     </html>

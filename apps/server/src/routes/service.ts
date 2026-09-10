@@ -5,6 +5,7 @@ import { designOrders } from './design-orders.js';
 import { disputes } from './disputes.js';
 import { persistDesignOrder, persistDispute, persistServiceActionLog } from '../config/persistence.js';
 import { withdrawalRequests } from './wallet.js';
+import { recordAdminAudit } from '../services/admin-audit.js';
 
 export const serviceRouter = Router();
 export const serviceLogs: ServiceActionLog[] = [];
@@ -27,7 +28,7 @@ function normalizeDispute(dispute: OrderDispute) {
 }
 
 function taskExists(type: ServiceTaskType, id: string) {
-  if (type === 'order_audit') return designOrders.find((order) => order.id === id && order.publicationStatus === 'pending_service_review');
+  if (type === 'order_audit') return designOrders.find((order) => order.id === id && order.status !== 'cancelled' && order.publicationStatus === 'pending_service_review');
   if (type === 'withdrawal_review') return withdrawalRequests.find((request) => request.id === id && request.status === 'pending_review');
   return disputes.find((dispute) => dispute.id === id && dispute.status !== 'resolved');
 }
@@ -44,7 +45,7 @@ function buildWorkItems() {
   designOrders.forEach(normalizeOrder);
   disputes.forEach(normalizeDispute);
 
-  const orderItems = designOrders.map((order) => ({
+  const orderItems = designOrders.filter((order) => order.status !== 'cancelled').map((order) => ({
     id: order.id,
     type: 'order_audit' as const,
     title: order.title,
@@ -144,6 +145,7 @@ function addLog(taskType: ServiceTaskType, taskId: string, action: string, comme
   };
   serviceLogs.unshift(log);
   void persistServiceActionLog(log);
+  void recordAdminAudit({ operatorId: user.id, operatorName: user.name, module: 'service_tasks', action, targetType: taskType, targetId: taskId, summary: `${user.name}${action === 'claim' ? '领取' : '处理'}${taskType === 'order_audit' ? '订单审核' : taskType === 'dispute' ? '订单争议' : '提现审核'}任务`, detail: { comment }, ipAddress: undefined, createdAt: log.createdAt }).catch((error) => console.error('[Audit] 客服任务日志写入失败:', error));
   return log;
 }
 

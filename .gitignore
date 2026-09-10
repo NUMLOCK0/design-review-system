@@ -23,6 +23,8 @@ apps/server/uploads/
 .env.test.local
 .env.production.local
 *.env
+!apps/web/.env.example
+/deploy/ssh-config
 
 # Logs
 *.log

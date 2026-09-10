@@ -141,7 +141,7 @@ export default function OrderMarketPage() {
         urgency: activeUrgency,
         keyword: searchKeyword
       });
-      const res = await fetch(`http://localhost:8080/api/design-orders?${params}`);
+      const res = await fetch(`/api/design-orders?${params}`);
       const data = await res.json();
       if (data.success) {
         setOrders((current) => append ? [...current, ...data.data] : data.data);
@@ -342,8 +342,8 @@ export default function OrderMarketPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          designerId: user?.id || 'u_des_1',
-          designerName: user?.name || '李设计师',
+          designerId: user?.id || '',
+          designerName: user?.name || '当前设计师',
         }),
       });
       const data = await res.json();

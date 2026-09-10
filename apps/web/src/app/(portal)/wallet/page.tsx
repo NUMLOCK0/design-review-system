@@ -23,11 +23,13 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { useCurrentUser } from '@/hooks/use-current-user';
+import { useToast } from '@/components/ui/app-toast';
 import type { DesignerWallet } from '@design-review/shared';
 import { fetchWithAuth } from '@/lib/auth';
 
 export default function DesignerWalletPage() {
   const user = useCurrentUser();
+  const { confirm } = useToast();
   const [wallet, setWallet] = useState<DesignerWallet | null>(null);
   const [loading, setLoading] = useState(true);
   const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -74,6 +76,8 @@ export default function DesignerWalletPage() {
       toast.error('请填写银行名称、完整银行卡号和持卡人姓名');
       return;
     }
+
+    if (!await confirm({ title: '确认提交提现申请？', message: `将申请提现 ¥${amount.toFixed(2)} 至尾号 ${accountNo.replace(/\s/g, '').slice(-4)} 的银行卡，提交后由客服审核。`, confirmText: '确认提交提现', type: 'warning' })) return;
 
     setWithdrawing(true);
     try {

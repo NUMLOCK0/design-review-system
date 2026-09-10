@@ -45,9 +45,15 @@ export default function MessagesPage() {
 
   const markRead = async (message: SiteMessage) => {
     if (!message.isRead) {
-      await fetchWithAuth('/messages/' + message.id + '/read', { method: 'POST' });
+      const response = await fetchWithAuth('/messages/' + message.id + '/read', { method: 'POST' });
+      if (!response.ok) {
+        toast.error('消息标记已读失败');
+        return;
+      }
       setMessages((current) => current.map((item) => item.id === message.id ? { ...item, isRead: true, readAt: new Date().toISOString() } : item));
-      setUnreadCount((count) => Math.max(0, count - 1));
+      const nextUnreadCount = Math.max(0, unreadCount - 1);
+      setUnreadCount(nextUnreadCount);
+      window.dispatchEvent(new CustomEvent<number>('messages-unread-change', { detail: nextUnreadCount }));
     }
     if (message.link) router.push(message.link);
   };
@@ -57,6 +63,7 @@ export default function MessagesPage() {
     if (!response.ok) return toast.error('操作失败');
     setMessages((current) => current.map((message) => ({ ...message, isRead: true })));
     setUnreadCount(0);
+    window.dispatchEvent(new CustomEvent<number>('messages-unread-change', { detail: 0 }));
   };
 
   return (
