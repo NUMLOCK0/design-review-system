@@ -29,8 +29,25 @@ disputesRouter.post('/', authenticate, requireRoles('advertiser', 'designer'), (
   if (order.disputeId && disputes.some((item) => item.id === order.disputeId && item.status !== 'resolved')) {
     return res.status(400).json({ code: 400, success: false, message: '该订单已有处理中纠纷' });
   }
-  if ((order.creatorId === req.user!.id && order.claimedById === req.user!.id) || !order.claimedById) {
-    return res.status(400).json({ code: 400, success: false, message: !order.claimedById ? '订单尚未接单，暂不能发起订单纠纷' : '同一账号不能作为纠纷双方' });
+  if (!order.claimedById) {
+    return res.status(400).json({ code: 400, success: false, message: '订单尚未接单，暂不能发起订单纠纷' });
+  }
+  const isAdvertiserParticipant = req.user!.role === 'advertiser' && (
+    order.creatorId === req.user!.id ||
+    (Boolean(req.user!.isOrganizationAdmin) && Boolean(req.user!.organizationId) && order.organizationId === req.user!.organizationId)
+  );
+  const isDesignerParticipant = req.user!.role === 'designer' && order.claimedById === req.user!.id;
+  if (!isAdvertiserParticipant && !isDesignerParticipant) {
+    return res.status(403).json({ code: 403, success: false, message: '只有订单所属品牌方或已接单设计师可以发起纠纷' });
+  }
+
+  const reason = String(req.body.reason).trim();
+  const description = String(req.body.description).trim();
+  const evidenceUrls = Array.isArray(req.body.evidenceUrls)
+    ? req.body.evidenceUrls.filter((item: unknown) => typeof item === 'string').map((item: string) => item.slice(0, 2048)).slice(0, 10)
+    : [];
+  if (reason.length > 120 || description.length > 5000) {
+    return res.status(400).json({ code: 400, success: false, message: '纠纷原因或说明超出长度限制' });
   }
 
   const dispute: OrderDispute = {
@@ -42,9 +59,9 @@ disputesRouter.post('/', authenticate, requireRoles('advertiser', 'designer'), (
     initiatorRole: req.user!.role as 'advertiser' | 'designer',
     respondentId: req.user!.role === 'advertiser' ? order.claimedById : order.creatorId,
     respondentName: req.user!.role === 'advertiser' ? order.claimedByName : order.creatorName,
-    reason: String(req.body.reason),
-    description: String(req.body.description),
-    evidenceUrls: Array.isArray(req.body.evidenceUrls) ? req.body.evidenceUrls : [],
+    reason,
+    description,
+    evidenceUrls,
     status: 'open',
     createdAt: new Date().toISOString()
   };

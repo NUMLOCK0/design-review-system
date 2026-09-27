@@ -10,17 +10,19 @@ import { fetchWithAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { DesignerInviteDrawer } from '@/components/designer-invite-drawer';
+import { ReferenceLinkItemsDetail } from '@/components/reference-link-items-detail';
 import { ConfirmAction } from '@/components/ui/confirm-action';
+import { AuthenticatedImage } from '@/components/authenticated-image';
 import { toast } from 'sonner';
 
 const statusMap: Record<string, { label: string; className: string }> = {
   pending_deposit: { label: '待支付定金', className: 'bg-orange-50 text-orange-700' },
   pending_service_review: { label: '待客服审核', className: 'bg-amber-50 text-amber-700' },
-  published: { label: '已上架接单', className: 'bg-emerald-50 text-emerald-700' },
+  published: { label: '已上架待接单', className: 'bg-emerald-50 text-emerald-700' },
   rejected: { label: '客服已驳回', className: 'bg-rose-50 text-rose-700' },
   claimed: { label: '设计师已接单', className: 'bg-blue-50 text-blue-700' },
   in_progress: { label: '设计制作中', className: 'bg-blue-50 text-blue-700' },
@@ -53,6 +55,23 @@ function OrderProgressPanel({ progress }: { progress: OrderProgress }) {
   </div>;
 }
 
+function OrderRequirementsDetail({ order }: { order: DesignOrder }) {
+  return <div className="space-y-4 text-xs text-slate-600">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><p>平台：<b>{order.platform}</b></p><p>预算：<b>¥{order.budget}</b></p><p>截止：<b>{new Date(order.deadline).toLocaleDateString('zh-CN')}</b></p><p>设计师：<b>{order.claimedByName || '待接单'}</b></p><p>PSD 源文件：<b className={order.requiresPsd ? 'text-rose-600' : ''}>{order.requiresPsd ? '需要交付' : '不需要'}</b></p></div>
+    <div className="rounded-2xl bg-slate-50 p-3 leading-6 whitespace-pre-wrap">{order.requirements || '暂无整体需求说明'}</div>
+    <p>审核流：<b>{order.reviewRuleName || '未绑定'}</b></p>
+    {order.imageRequirementGroups?.length ? <div className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-semibold text-slate-800">图片需求详情</h3><span className="text-[11px] text-slate-400">共 {order.imageRequirementGroups.length} 组</span></div><Tabs key={order.id} defaultValue="brand-order-group-0" className="min-w-0">
+      <TabsList className="flex h-9 w-full justify-start gap-1 overflow-x-auto rounded-xl bg-slate-50 p-1">
+        {order.imageRequirementGroups.map((group, groupIndex) => <TabsTrigger key={group.id || groupIndex} value={`brand-order-group-${groupIndex}`} className="h-7 max-w-56 flex-none rounded-lg px-3 text-xs text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm">{group.name || `第 ${groupIndex + 1} 组`}<span className="ml-1 text-[10px] text-slate-400">{group.imageItems?.length || group.quantity || 0} 张</span></TabsTrigger>)}
+      </TabsList>
+      {order.imageRequirementGroups.map((group, groupIndex) => {
+        const imageItems = group.imageItems?.length ? group.imageItems : (group.materialImages?.length ? group.materialImages : ['']).map((materialImage, imageIndex) => ({ id: `${group.id}-${imageIndex}`, materialImage, description: imageIndex === 0 ? group.description : '', referenceImages: imageIndex === 0 ? group.referenceImages : [], referenceLinks: imageIndex === 0 ? group.referenceLinks : [], referenceLinkItems: undefined, referenceLinkDescription: undefined }));
+        return <TabsContent key={group.id || groupIndex} value={`brand-order-group-${groupIndex}`} className="mt-2"><div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><div className="flex items-center justify-between gap-3"><h4 className="font-semibold text-slate-800">{groupIndex + 1}. {group.name}</h4><span className="shrink-0 text-[11px] text-slate-400">{imageItems.length} 张 · {group.dimensions || group.groupType}</span></div><div className="mt-3 space-y-3">{imageItems.map((item, imageIndex) => <div key={item.id || imageIndex} className="rounded-xl bg-slate-50/70 p-3"><div className="mb-2 flex items-center justify-between"><span className="font-semibold text-slate-700">第 {imageIndex + 1} 张</span><span className="text-[10px] text-slate-400">{group.dimensions || '标准尺寸'}</span></div><div className="grid gap-3 sm:grid-cols-2">{item.materialImage && <div><p className="mb-1 font-medium text-slate-500">素材原图</p><a href={item.materialImage} target="_blank" rel="noreferrer"><AuthenticatedImage src={item.materialImage} alt={`${group.name}素材原图${imageIndex + 1}`} className="aspect-square w-full rounded-lg border border-slate-200 bg-white object-cover transition hover:opacity-85" /></a></div>}{item.description && <div className="sm:col-span-2"><p className="mb-1 font-medium text-slate-500">设计要点</p><p className="whitespace-pre-wrap break-words rounded-lg bg-white p-2 leading-5">{item.description}</p></div>}<ReferenceLinkItemsDetail item={item} /></div></div>)}</div></div></TabsContent>;
+      })}
+    </Tabs></div> : <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-slate-400">暂无图片需求详情</div>}
+  </div>;
+}
+
 export default function AdvertiserOrdersPage() {
   const [orders, setOrders] = useState<DesignOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +79,7 @@ export default function AdvertiserOrdersPage() {
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [totalOrders, setTotalOrders] = useState(0);
+  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({ all: 0 });
   const [inviteOrder, setInviteOrder] = useState<DesignOrder | null>(null);
   const [detailOrder, setDetailOrder] = useState<DesignOrder | null>(null);
   const [operatingId, setOperatingId] = useState<string | null>(null);
@@ -88,6 +108,7 @@ export default function AdvertiserOrdersPage() {
       if (!response.ok || !result.success) throw new Error(result.message || '加载订单失败');
       setOrders((current) => reset ? result.data || [] : [...current, ...(result.data || [])]);
       setTotalOrders(Number(result.total) || 0);
+      if (reset) setStatusCounts(result.counts || { all: 0 });
       setPage(targetPage);
       setHasMore(Boolean(result.hasMore));
     } catch (error: any) {
@@ -259,7 +280,7 @@ export default function AdvertiserOrdersPage() {
         </div>
         <Tabs value={statusFilter} onValueChange={setStatusFilter}>
           <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-xl bg-slate-50 p-1">
-            {statusFilters.map((status) => <TabsTrigger key={status.value} value={status.value} className="h-8 flex-none rounded-lg px-3 text-xs text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm">{status.label}</TabsTrigger>)}
+            {statusFilters.map((status) => <TabsTrigger key={status.value} value={status.value} className="h-8 flex-none rounded-lg px-3 text-xs text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm">{status.label} <span className="ml-1 rounded-full bg-slate-200/80 px-1.5 py-0.5 text-[10px] leading-none text-slate-500 data-[state=active]:bg-blue-100 data-[state=active]:text-blue-700">{statusCounts[status.value] || 0}</span></TabsTrigger>)}
           </TabsList>
         </Tabs>
       </div>
@@ -268,12 +289,17 @@ export default function AdvertiserOrdersPage() {
         {loading && <div className="rounded-2xl bg-white p-10 text-center text-sm text-slate-400">正在加载订单…</div>}
         {!loading && orders.length === 0 && <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-400">还没有订单，先发布一个设计需求吧</div>}
         {orders.map((order) => {
-          const status = statusMap[orderStatus(order)] || { label: order.status, className: 'bg-slate-100 text-slate-600' };
+          const status = order.depositRefundStatus === 'pending'
+            ? { label: '已取消 · 定金退款中', className: 'bg-amber-50 text-amber-700' }
+            : order.depositRefundStatus === 'refunded'
+              ? { label: '已取消 · 定金已退', className: 'bg-slate-100 text-slate-600' }
+              : statusMap[orderStatus(order)] || { label: order.status, className: 'bg-slate-100 text-slate-600' };
           const canEdit = order.status === 'open' || order.publicationStatus === 'rejected';
           const canCancel = ['open', 'pending_service_review'].includes(order.status)
             && order.publicationStatus !== 'rejected'
             && !(order.paymentStatus === 'deposit_pending' && Boolean(order.depositOutTradeNo))
-            && !['deposit_paid', 'balance_pending', 'paid'].includes(order.paymentStatus || '');
+            && (!['deposit_paid', 'balance_pending', 'paid'].includes(order.paymentStatus || '')
+              || (['published', 'pending_service_review'].includes(order.publicationStatus || '') && !order.claimedById));
           const canPayDeposit = order.status === 'open'
             && order.publicationStatus === 'pending_deposit'
             && order.paymentStatus === 'deposit_pending';
@@ -291,6 +317,7 @@ export default function AdvertiserOrdersPage() {
                 </div>
                 <div className="shrink-0 text-right text-xs text-slate-400">
                   <p>审核流：{order.reviewRuleName || '未绑定'}</p>
+                  <p className="mt-0.5">创建：{new Date(order.createdAt).toLocaleString('zh-CN')}</p>
                   <p className="mt-0.5">截止：{new Date(order.deadline).toLocaleDateString('zh-CN')}</p>
                 </div>
               </div>
@@ -303,7 +330,7 @@ export default function AdvertiserOrdersPage() {
                 {order.status === 'open' && order.publicationStatus === 'published' && <Button variant="outline" onClick={() => setInviteOrder(order)} className="h-8 rounded-xl border-blue-200 text-xs text-blue-600 hover:bg-blue-50">邀请接单</Button>}
                 {hasProgress && <Button variant="outline" onClick={() => openProgress(order)} className="h-8 rounded-xl border-blue-200 text-xs text-blue-600">查看进度</Button>}
                 {order.status === 'completed' && <Link href="/advertiser/billing"><Button variant="outline" className="h-8 rounded-xl border-emerald-200 text-xs text-emerald-600">查看账单</Button></Link>}
-                {canCancel && <ConfirmAction title="确认关闭订单？" description="关闭后订单将停止接单和后续处理，未完成的邀请也会失效。此操作不可直接恢复。" confirmText="确认关闭订单" onConfirm={() => operate(order, 'cancel')} disabled={operatingId === order.id}><Button variant="ghost" disabled={operatingId === order.id} className="h-8 rounded-xl text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700">关闭订单</Button></ConfirmAction>}
+                {canCancel && <ConfirmAction title="确认取消订单？" description={['deposit_paid', 'balance_pending', 'paid'].includes(order.paymentStatus || '') ? `订单取消后将停止接单，客服会按原支付渠道退还定金 ¥${Number(order.depositAmount || 0).toFixed(2)}。已接单订单不能直接取消。` : '取消后订单将停止后续处理，已发出的未完成邀请也无法继续接单。此操作不可直接恢复。'} confirmText="确认取消订单" onConfirm={() => operate(order, 'cancel')} disabled={operatingId === order.id}><Button variant="ghost" disabled={operatingId === order.id} className="h-8 rounded-xl text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700">取消订单</Button></ConfirmAction>}
               </div>
             </article>
           );
@@ -314,9 +341,9 @@ export default function AdvertiserOrdersPage() {
       </div>
 
       <Dialog open={Boolean(detailOrder)} onOpenChange={(open) => !open && setDetailOrder(null)}>
-        <DialogContent className="max-w-2xl rounded-3xl bg-white">
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto rounded-3xl bg-white">
           <DialogHeader><DialogTitle>{detailOrder?.title}</DialogTitle><DialogDescription>{detailOrder?.orderNo} · {detailOrder?.category}</DialogDescription></DialogHeader>
-          {detailOrder && <div className="grid gap-3 text-xs text-slate-600 sm:grid-cols-2"><p>平台：{detailOrder.platform}</p><p>预算：¥{detailOrder.budget}</p><p>截止：{new Date(detailOrder.deadline).toLocaleDateString('zh-CN')}</p><p>设计师：{detailOrder.claimedByName || '待接单'}</p><p className="sm:col-span-2">需求说明：{detailOrder.requirements || '暂无'}</p><p className="sm:col-span-2">审核流：{detailOrder.reviewRuleName || '未绑定'}</p></div>}
+          {detailOrder && <OrderRequirementsDetail order={detailOrder} />}
         </DialogContent>
       </Dialog>
 

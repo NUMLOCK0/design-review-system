@@ -46,7 +46,7 @@ export default function NewAdvertiserOrderPage() {
     fullscreen
     editingOrder={editingOrder}
     onOpenChange={(open) => { if (!open) router.push('/advertiser/orders'); }}
-    onCreated={(order) => { window.location.href = `/advertiser/orders?payOrderId=${encodeURIComponent(order.id)}`; }}
+    onCreated={() => { router.push('/advertiser/orders'); }}
     onUpdated={() => { router.push('/advertiser/orders'); }}
   /></>;
 }

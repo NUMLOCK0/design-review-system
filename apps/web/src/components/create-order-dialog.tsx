@@ -2,20 +2,25 @@
 
 import { useEffect, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
-import { ArrowLeft, CheckCircle2, ChevronDown, CircleHelp, Layers, LayoutGrid, Plus, Sparkles, Trash2 } from 'lucide-react';
-import type { DesignOrder, ImageGroupType, ImageTemplate, OrderImageRequirementImageItem, OrderImageRequirementItem, PlatformType, ReviewRule } from '@design-review/shared';
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Layers, LayoutGrid, MessageCircle, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { calculateImageRequirementsMinimumPrice, calculateOrderMinimumBudget } from '@design-review/shared';
+import type { DesignOrder, ImageGroupType, ImageTemplate, OrderImageRequirementImageItem, OrderImageRequirementItem, OrderReferenceLinkItem, PlatformType, ReviewRule } from '@design-review/shared';
 import { fetchWithAuth } from '@/lib/auth';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ImageUpload } from '@/components/image-upload';
+import { AuthenticatedImage } from '@/components/authenticated-image';
 import { Textarea } from '@/components/ui/textarea';
 import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 
 const categories = ['主图设计', '详情页设计', '活动海报', '3D建模与渲染', '精修合成'];
@@ -46,7 +51,25 @@ function newImageItem(index: number): OrderImageRequirementImageItem {
     description: '',
     referenceImages: [],
     referenceLinks: [''],
+    referenceLinkItems: [newReferenceLinkItem(0)],
   };
+}
+
+function newReferenceLinkItem(index: number): OrderReferenceLinkItem {
+  return { id: `create_reference_${Date.now()}_${index}`, image: '', link: '', description: '' };
+}
+
+function referenceLinkItemsFromLegacy(item: Pick<OrderImageRequirementImageItem, 'referenceLinkItems' | 'referenceImages' | 'referenceLinks' | 'referenceLinkDescription'>, prefix: string) {
+  if (item.referenceLinkItems?.some((reference) => reference.image || reference.link || reference.description)) return item.referenceLinkItems.map((reference, index) => ({ ...reference, id: reference.id || `${prefix}_reference_${index}` }));
+  const images = item.referenceImages || [];
+  const links = item.referenceLinks || [];
+  const count = Math.max(images.length, links.length, 1);
+  return Array.from({ length: count }, (_, index) => ({
+    id: `${prefix}_reference_${index}`,
+    image: images[index] || '',
+    link: links[index] || '',
+    description: index === 0 ? item.referenceLinkDescription || '' : '',
+  }));
 }
 
 function newGroup(index: number, groupType: ImageGroupType = 'main_1_1', name = groupMeta[groupType].name, quantity = 1): OrderImageRequirementItem {
@@ -69,7 +92,7 @@ function newGroup(index: number, groupType: ImageGroupType = 'main_1_1', name = 
 function defaultGroups() {
   return [newGroup(0), newGroup(1, 'main_3_4')];
 }
-type FormField = 'name' | 'materialImage' | 'description';
+type FormField = 'name' | 'description';
 
 type OrderForm = {
   title: string;
@@ -80,6 +103,7 @@ type OrderForm = {
   urgency: 'normal' | 'urgent' | 'super_urgent';
   reviewRuleId: string;
   requirements: string;
+  requiresPsd: boolean;
   groups: OrderImageRequirementItem[];
 };
 
@@ -95,15 +119,20 @@ function formFromOrder(order?: DesignOrder | null, reviewRuleId = ''): OrderForm
               id: item.id || `${group.id || `edit_group_${index}`}_image_${imageIndex}`,
               materialImage: item.materialImage || '',
               description: item.description || '',
-              referenceImages: [],
+              referenceImages: item.referenceImages?.length ? [...item.referenceImages] : (imageIndex === 0 ? [...(group.referenceImages || [])] : []),
               referenceLinks: item.referenceLinks?.length ? [...item.referenceLinks] : [''],
+              referenceLinkItems: referenceLinkItemsFromLegacy(item, `${group.id || `edit_group_${index}`}_image_${imageIndex}`),
             }))
           : legacyImages.map((materialImage, imageIndex) => ({
               id: `${group.id || `edit_group_${index}`}_image_${imageIndex}`,
               materialImage,
               description: imageIndex === 0 ? group.description || '' : '',
-              referenceImages: [],
+              referenceImages: imageIndex === 0 ? [...(group.referenceImages || [])] : [],
               referenceLinks: imageIndex === 0 && group.referenceLinks?.length ? [...group.referenceLinks] : [''],
+              referenceLinkItems: referenceLinkItemsFromLegacy({
+                referenceImages: imageIndex === 0 ? group.referenceImages : [],
+                referenceLinks: imageIndex === 0 ? group.referenceLinks : [],
+              }, `${group.id || `edit_group_${index}`}_image_${imageIndex}`),
             }));
         return {
           ...group,
@@ -115,7 +144,7 @@ function formFromOrder(order?: DesignOrder | null, reviewRuleId = ''): OrderForm
           materialImages: imageItems.map((item) => item.materialImage).filter((url): url is string => Boolean(url)),
           description: group.description || '',
           imageItems,
-          referenceImages: [],
+          referenceImages: imageItems.flatMap((item) => item.referenceImages || []),
           referenceLinks: group.referenceLinks?.length ? [...group.referenceLinks] : [''],
         };
       })
@@ -130,6 +159,7 @@ function formFromOrder(order?: DesignOrder | null, reviewRuleId = ''): OrderForm
     urgency: order?.urgency || 'normal',
     reviewRuleId: order?.reviewRuleId || reviewRuleId,
     requirements: order?.requirements || '',
+    requiresPsd: Boolean(order?.requiresPsd),
     groups,
   };
 }
@@ -153,6 +183,9 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [groupDraft, setGroupDraft] = useState({ type: 'main_1_1' as ImageGroupType, name: groupMeta.main_1_1.name });
   const [groupErrors, setGroupErrors] = useState<Record<string, FormField[]>>({});
+  const [step, setStep] = useState(1);
+  const [pricing, setPricing] = useState({ imageUnitPrice: 100, imageUnitPrices: {} as Partial<Record<ImageGroupType, number>>, minOrderBudget: null as number | null, psdSurchargeRate: 0.2, customerService: null as { name: string; wechat: string; qrCodeUrl: string } | null });
+  const [qrPreviewOpen, setQrPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (!user || user.role !== 'advertiser') return;
@@ -176,13 +209,39 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
   }, [user?.id]);
 
   useEffect(() => {
+    if (!user || user.role !== 'advertiser') return;
+    fetchWithAuth('/system-config/order-pricing')
+      .then((response) => response.json())
+      .then((result) => {
+        if (result.success && result.data) {
+          setPricing({ imageUnitPrice: Number(result.data.imageUnitPrice) || 0, imageUnitPrices: result.data.imageUnitPrices || {}, minOrderBudget: Number.isFinite(Number(result.data.minOrderBudget)) ? Number(result.data.minOrderBudget) : null, psdSurchargeRate: Number.isFinite(Number(result.data.psdSurchargeRate)) ? Number(result.data.psdSurchargeRate) : 0.2, customerService: result.data.customerService || null });
+        }
+      })
+      .catch(() => undefined);
+  }, [user?.id]);
+
+  useEffect(() => {
     if (!open) return;
     const defaultRule = rules.find((rule) => rule.ownerId === user?.id && rule.name === '自己审核') || rules[0];
     const nextForm = formFromOrder(editingOrder, defaultRule?.id);
     setForm(nextForm);
     setActiveGroupId(nextForm.groups[0].id);
     setGroupErrors({});
+    setStep(1);
   }, [open, editingOrder?.id]);
+
+  const imageCount = form.groups.reduce((total, group) => total + (group.imageItems?.length || 0), 0);
+  const recommendedPrice = calculateImageRequirementsMinimumPrice(form.groups, pricing.imageUnitPrices, pricing.imageUnitPrice);
+  const minimumBudget = pricing.minOrderBudget;
+  const minimumBid = minimumBudget === null ? null : calculateOrderMinimumBudget(form.groups, pricing.imageUnitPrices, minimumBudget, form.requiresPsd, pricing.psdSurchargeRate, pricing.imageUnitPrice);
+
+  const updatePsdRequirement = (requiresPsd: boolean) => {
+    setForm((current) => {
+      const nextMinimum = minimumBudget === null ? null : calculateOrderMinimumBudget(current.groups, pricing.imageUnitPrices, minimumBudget, requiresPsd, pricing.psdSurchargeRate, pricing.imageUnitPrice);
+      const nextBudget = current.budget.trim() && nextMinimum !== null && Number(current.budget) < nextMinimum ? String(nextMinimum) : current.budget;
+      return { ...current, requiresPsd, budget: nextBudget };
+    });
+  };
 
   const updateGroup = (index: number, patch: Partial<OrderImageRequirementItem>) => {
     setForm((current) => ({ ...current, groups: current.groups.map((group, groupIndex) => groupIndex === index ? { ...group, ...patch } : group) }));
@@ -208,11 +267,28 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
     setGroupErrors((current) => {
       const next = { ...current };
       const errors = [...(next[imageId] || [])];
-      if (patch.materialImage !== undefined && String(patch.materialImage).trim()) next[imageId] = errors.filter((field) => field !== 'materialImage');
       if (patch.description !== undefined && String(patch.description).trim()) next[imageId] = (next[imageId] || errors).filter((field) => field !== 'description');
       if (next[imageId]?.length === 0) delete next[imageId];
       return next;
     });
+  };
+
+  const updateReferenceLinkItem = (groupIndex: number, imageIndex: number, referenceIndex: number, patch: Partial<OrderReferenceLinkItem>) => {
+    const image = form.groups[groupIndex]?.imageItems?.[imageIndex];
+    const referenceLinkItems = [...(image?.referenceLinkItems || [])];
+    referenceLinkItems[referenceIndex] = { ...referenceLinkItems[referenceIndex], ...patch };
+    updateImage(groupIndex, imageIndex, { referenceLinkItems });
+  };
+
+  const addReferenceLinkItem = (groupIndex: number, imageIndex: number) => {
+    const image = form.groups[groupIndex]?.imageItems?.[imageIndex];
+    updateImage(groupIndex, imageIndex, { referenceLinkItems: [...(image?.referenceLinkItems || []), newReferenceLinkItem(image?.referenceLinkItems?.length || 0)] });
+  };
+
+  const removeReferenceLinkItem = (groupIndex: number, imageIndex: number, referenceIndex: number) => {
+    const image = form.groups[groupIndex]?.imageItems?.[imageIndex];
+    const referenceLinkItems = (image?.referenceLinkItems || []).filter((_, index) => index !== referenceIndex);
+    updateImage(groupIndex, imageIndex, { referenceLinkItems: referenceLinkItems.length ? referenceLinkItems : [newReferenceLinkItem(0)] });
   };
 
   const addImage = (groupIndex: number) => {
@@ -267,19 +343,24 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
     setForm(nextForm);
     setActiveGroupId(nextForm.groups[0].id);
     setGroupErrors({});
+    setStep(1);
   };
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!form.title.trim() || !form.budget) return toast.error('请填写需求标题和预算金额');
-    if (!form.reviewRuleId) return toast.error('请先配置并选择作品审核流');
+  const validateRequirements = () => {
+    if (!form.title.trim()) {
+      toast.error('请填写需求标题');
+      return false;
+    }
+    if (!form.reviewRuleId) {
+      toast.error('请先配置并选择作品审核流');
+      return false;
+    }
     const errors = form.groups.reduce<Record<string, FormField[]>>((result, group) => {
       const missing: FormField[] = [];
       if (!group.name.trim()) missing.push('name');
       if (missing.length) result[group.id] = missing;
       (group.imageItems || []).forEach((image) => {
         const imageMissing: FormField[] = [];
-        if (!image.materialImage?.trim()) imageMissing.push('materialImage');
         if (!image.description?.trim()) imageMissing.push('description');
         if (imageMissing.length) result[image.id] = imageMissing;
       });
@@ -290,8 +371,29 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
     if (firstInvalidGroup) {
       setActiveGroupId(firstInvalidGroup.id);
       toast.error('请完善当前分组内每张图片的必填项');
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const goToBid = () => {
+    if (!validateRequirements()) return;
+    if (!form.budget && minimumBid !== null) setForm((current) => ({ ...current, budget: String(minimumBid) }));
+    setStep(2);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const goToContact = () => {
+    if (minimumBid === null) return toast.error('正在加载订单规则，请稍后再试');
+    if (!Number.isFinite(Number(form.budget)) || Number(form.budget) < minimumBid) return toast.error(`订单最低出价为 ${minimumBid} 元`);
+    setStep(3);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const submit = async () => {
+    if (!validateRequirements()) return;
+    if (minimumBid === null) return toast.error('正在加载订单规则，请稍后再试');
+    if (!Number.isFinite(Number(form.budget)) || Number(form.budget) < minimumBid) return toast.error(`订单最低出价为 ${minimumBid} 元`);
     setSubmitting(true);
     try {
       const payload = {
@@ -302,14 +404,22 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
         urgency: form.urgency,
         deadline: new Date(Date.now() + Number(form.deadlineDays) * 86400000).toISOString(),
         requirements: form.requirements,
+        requiresPsd: form.requiresPsd,
         reviewRuleId: form.reviewRuleId,
         reviewRuleName: rules.find((rule) => rule.id === form.reviewRuleId)?.name,
         imageRequirementGroups: form.groups.map((group) => {
           const imageItems = (group.imageItems || []).map((image, index) => ({
             ...image,
-            referenceImages: [],
+            referenceLinkItems: (image.referenceLinkItems || []).map((reference, referenceIndex) => ({
+              ...reference,
+              id: reference.id || `${image.id}-reference-${referenceIndex}`,
+              image: reference.image?.trim() || '',
+              link: reference.link?.trim() || '',
+              description: reference.description?.trim() || '',
+            })).filter((reference) => reference.image || reference.link || reference.description),
+            referenceImages: (image.referenceLinkItems || []).map((reference) => reference.image?.trim() || '').filter(Boolean),
             referenceImageItems: [],
-            referenceLinks: (image.referenceLinks || []).filter(Boolean),
+            referenceLinks: (image.referenceLinkItems || []).map((reference) => reference.link?.trim() || '').filter(Boolean),
           }));
           return {
             ...group,
@@ -317,7 +427,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
             quantity: imageItems.length,
             materialImages: imageItems.map((image) => image.materialImage).filter((url): url is string => Boolean(url)),
             description: imageItems.map((image, imageIndex) => image.description ? `第${imageIndex + 1}张：${image.description}` : '').filter(Boolean).join('\n'),
-            referenceImages: [],
+            referenceImages: imageItems.flatMap((image) => image.referenceImages || []),
             referenceImageItems: [],
             referenceLinks: imageItems.flatMap((image) => image.referenceLinks || []),
           };
@@ -334,7 +444,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
       });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || (editing ? '保存失败' : '创建失败'));
-      toast.success(editing ? '订单已更新，图片需求已同步' : '订单已创建，请继续支付定金');
+      toast.success(editing ? '订单已更新，图片需求已同步' : '订单已创建，可先联系客户服务确认需求');
       onOpenChange(false);
       reset();
       if (editing) onUpdated?.(result.data);
@@ -348,18 +458,26 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
 
   const title = editingOrder ? '编辑设计订单' : '新增设计订单';
   const formBody = (
-        <form onSubmit={submit} className="min-w-0 space-y-4">
+        <form onSubmit={(event) => { event.preventDefault(); if (step === 1) goToBid(); else if (step === 2) goToContact(); else void submit(); }} className="min-w-0 space-y-4">
+          {step === 1 && <>
           <div className="space-y-1.5">
-            <Label htmlFor="order-title" className="text-xs text-slate-600">订单标题</Label>
+            <Label required htmlFor="order-title" className="text-xs text-slate-600">订单标题</Label>
             <Input id="order-title" required placeholder="例如：春季新品主图设计" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} className="h-9 rounded-xl bg-slate-50/70 text-xs" />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <FieldLabel label="设计类型"><Select.Root value={form.category} onValueChange={(category) => setForm({ ...form, category })}><Select.Trigger className={formSelectTriggerClass}><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 role-primary-text" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className={selectContentClass}><Select.Viewport>{categories.map((category) => <Select.Item key={category} value={category} className={selectItemClass}><Select.ItemText>{category}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root></FieldLabel>
             <FieldLabel label="投放平台"><Select.Root value={form.platform} onValueChange={(platform) => setForm({ ...form, platform: platform as PlatformType })}><Select.Trigger className={formSelectTriggerClass}><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 role-primary-text" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className={selectContentClass}><Select.Viewport>{platforms.map((platform) => <Select.Item key={platform.id} value={platform.id} className={selectItemClass}><Select.ItemText>{platform.label}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root></FieldLabel>
-            <FieldLabel label="订单预算（元）"><Input required type="number" min="0.01" step="0.01" placeholder="请输入预算金额" value={form.budget} onChange={(event) => setForm({ ...form, budget: event.target.value })} className="h-9 rounded-xl bg-slate-50/70 text-xs" /></FieldLabel>
             <FieldLabel label="期望交付"><Select.Root value={form.deadlineDays} onValueChange={(deadlineDays) => setForm({ ...form, deadlineDays })}><Select.Trigger className={formSelectTriggerClass}><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 role-primary-text" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className={selectContentClass}><Select.Viewport><Select.Item value="1" className={selectItemClass}><Select.ItemText>24 小时交付</Select.ItemText></Select.Item><Select.Item value="2" className={selectItemClass}><Select.ItemText>2 天交付</Select.ItemText></Select.Item><Select.Item value="3" className={selectItemClass}><Select.ItemText>3 天交付</Select.ItemText></Select.Item><Select.Item value="5" className={selectItemClass}><Select.ItemText>5 天交付</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root></FieldLabel>
             <FieldLabel label="订单优先级"><Select.Root value={form.urgency} onValueChange={(urgency) => setForm({ ...form, urgency: urgency as typeof form.urgency })}><Select.Trigger className={formSelectTriggerClass}><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 role-primary-text" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className={selectContentClass}><Select.Viewport><Select.Item value="normal" className={selectItemClass}><Select.ItemText>标准单</Select.ItemText></Select.Item><Select.Item value="urgent" className={selectItemClass}><Select.ItemText>加急单</Select.ItemText></Select.Item><Select.Item value="super_urgent" className={selectItemClass}><Select.ItemText>特急单</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root></FieldLabel>
             <FieldLabel label="作品审核流"><Select.Root value={form.reviewRuleId || undefined} onValueChange={(reviewRuleId) => setForm({ ...form, reviewRuleId })}><Select.Trigger className={formSelectTriggerClass}><Select.Value placeholder="选择作品审核流" /><Select.Icon><ChevronDown className="h-4 w-4 role-primary-text" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className={selectContentClass}><Select.Viewport>{rules.map((rule) => <Select.Item key={rule.id} value={rule.id} className={selectItemClass}><Select.ItemText>{rule.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root></FieldLabel>
+          </div>
+
+          <div className={`flex items-center justify-between gap-4 rounded-2xl border p-4 transition-colors ${form.requiresPsd ? 'border-[var(--role-primary-border)] bg-[var(--role-primary-soft)]' : 'border-slate-200 bg-slate-50/70'}`}>
+            <div className="min-w-0"><Label htmlFor="order-requires-psd" className={`cursor-pointer text-xs font-semibold ${form.requiresPsd ? 'text-[var(--role-primary)]' : 'text-slate-700'}`}>需要 PSD 源文件</Label><p className="mt-1 text-[11px] leading-5 text-slate-500">开启后，设计师需随最终交付上传源文件；最低出价上浮 {Math.round(pricing.psdSurchargeRate * 100)}%。</p></div>
+            <div className="flex shrink-0 items-center gap-2.5">
+              <span className={`text-[11px] font-medium ${form.requiresPsd ? 'text-[var(--role-primary)]' : 'text-slate-400'}`}>{form.requiresPsd ? '已开启' : '未开启'}</span>
+              <Switch id="order-requires-psd" aria-label="需要 PSD 源文件" checked={form.requiresPsd} onCheckedChange={updatePsdRequirement} />
+            </div>
           </div>
 
           <Tabs value={activeGroupId} onValueChange={setActiveGroupId} className="min-w-0 rounded-2xl border border-slate-200 bg-slate-50/60 p-2">
@@ -368,7 +486,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
                 {form.groups.map((group, index) => {
                   const hasErrors = Boolean(groupErrors[group.id]?.length || group.imageItems?.some((image) => groupErrors[image.id]?.length));
                   return <div key={group.id} className="group/tab relative shrink-0">
-                    <TabsTrigger value={group.id} className={`min-w-[148px] rounded-none border-0 border-b-2 border-transparent bg-transparent px-3 py-1.5 pr-8 text-left text-xs text-slate-500 shadow-none data-[state=active]:bg-[var(--role-primary-soft)] data-[state=active]:text-[var(--role-primary)] ${hasErrors ? 'text-rose-600 data-[state=active]:border-rose-300' : 'data-[state=active]:border-[var(--role-primary)]'}`}>
+                    <TabsTrigger value={group.id} className={`order-group-tab min-w-[148px] rounded-none border-0 border-b-2 border-transparent bg-transparent px-3 py-1.5 pr-8 text-left text-xs text-slate-500 shadow-none data-[state=active]:bg-[var(--role-primary-soft)] ${hasErrors ? 'order-group-tab-error' : ''}`}>
                       <span className="flex items-center gap-2"><span className="order-form-accent flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-slate-100 data-[state=active]:bg-white">{group.groupType === 'main_1_1' ? <LayoutGrid className="h-3.5 w-3.5" /> : group.groupType === 'main_3_4' ? <Layers className="h-3.5 w-3.5" /> : group.groupType === 'detail' ? <Sparkles className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}</span><span className="min-w-0"><span className="block truncate font-semibold">{index + 1}. {group.name}</span><span className="mt-0.5 block truncate text-[10px] opacity-70">({group.imageItems?.length || 0}张 · {group.dimensions})</span></span></span>
                     </TabsTrigger>
                     {form.groups.length > 1 && <ConfirmAction title="确认移除图片分组？" description={`将删除「${group.name}」及其全部图片需求，此操作不可撤销。`} confirmText="确认移除" onConfirm={() => removeGroup(group.id)}>
@@ -404,28 +522,34 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
                       <Button type="button" variant="ghost" size="icon" disabled={(group.imageItems || []).length === 1} onClick={() => removeImage(groupIndex, image.id)} className="h-7 w-7 text-slate-400 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
                     <div className="space-y-4 p-4">
-                      <div className="grid gap-3 sm:grid-cols-[92px_minmax(0,1fr)]">
-                        <div className={`flex items-center gap-1 pt-2 text-xs font-medium ${imageErrors.includes('materialImage') ? 'text-rose-600' : 'text-slate-600'}`}><span>素材原图 <span className="text-rose-500">*</span></span><Tooltip><TooltipTrigger asChild><button type="button" aria-label="素材原图说明" className="text-slate-400 transition-colors hover:text-[var(--role-primary)]"><CircleHelp className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent side="top" sideOffset={6} className="max-w-64 bg-slate-800 text-xs leading-5 text-white"><p>背景干净整洁，尽量提供高分辨率白底/实拍。</p><p>建议尺寸：800×800，支持 JPG、PNG 格式。</p></TooltipContent></Tooltip></div>
-                        <div className={`min-w-0 ${imageErrors.includes('materialImage') ? 'rounded-xl ring-1 ring-rose-400 ring-offset-2' : ''}`}>
-                          <ImageUpload value={image.materialImage ? [image.materialImage] : []} onChange={(urls) => updateImage(groupIndex, imageIndex, { materialImage: urls[0] || '' })} folder="order-materials" multiple={false} variant="square" />
-                          {imageErrors.includes('materialImage') && <p className="mt-1 text-[10px] text-rose-600">请上传素材原图</p>}
-                        </div>
+                      <div className="grid min-w-0 grid-cols-[92px_minmax(0,1fr)] gap-3">
+                        <div className="flex items-start gap-1 pt-2 text-xs font-medium text-slate-600"><span>素材原图 <span className="font-normal text-slate-400">（选填）</span></span><Tooltip><TooltipTrigger asChild><button type="button" aria-label="素材原图说明" className="text-slate-400 transition-colors hover:text-[var(--role-primary)]"><CircleHelp className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent side="top" sideOffset={6} className="max-w-64 bg-slate-800 text-xs leading-5 text-white"><p>建议提供背景干净整洁的高分辨率白底/实拍图片。</p><p>建议尺寸：800×800，支持 JPG、PNG 格式。</p></TooltipContent></Tooltip></div>
+                        <div className="min-w-0"><ImageUpload value={image.materialImage ? [image.materialImage] : []} onChange={(urls) => updateImage(groupIndex, imageIndex, { materialImage: urls[0] || '' })} folder="order-materials" multiple={false} variant="square" /></div>
                       </div>
                       <div className="grid gap-3 sm:grid-cols-[92px_minmax(0,1fr)]">
-                        <Label className={`pt-2 text-xs ${imageErrors.includes('description') ? 'text-rose-600' : 'text-slate-600'}`}>设计要点 <span className="text-rose-500">*</span></Label>
+                        <Label className={`self-start text-xs leading-5 ${imageErrors.includes('description') ? 'text-rose-600' : 'text-slate-600'}`}>设计要点 <span className="text-rose-500">*</span></Label>
                         <div className="space-y-1.5">
                           <Textarea value={image.description || ''} onChange={(event) => updateImage(groupIndex, imageIndex, { description: event.target.value })} placeholder="请描述画面重点、文案层级、构图和风格要求" rows={4} aria-invalid={imageErrors.includes('description')} className={`min-h-24 rounded-xl bg-slate-50/70 text-xs leading-5 ${imageErrors.includes('description') ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/15' : ''}`} />
                           {imageErrors.includes('description') && <p className="text-[10px] text-rose-600">请填写设计要点</p>}
                         </div>
                       </div>
                     </div>
-                    <div className="grid gap-3 border-t border-slate-100 px-4 py-4 sm:grid-cols-[92px_minmax(0,1fr)]">
-                      <div className="pt-1"><div className="flex items-center gap-1"><span className="text-xs font-medium text-slate-600">竞品参考</span><Tooltip><TooltipTrigger asChild><button type="button" aria-label="竞品参考说明" className="text-slate-400 transition-colors hover:text-[var(--role-primary)]"><CircleHelp className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent side="top" sideOffset={6} className="max-w-56 bg-slate-800 text-xs leading-5 text-white">可添加外部链接作为设计参考。</TooltipContent></Tooltip></div></div>
-                      <div className="min-w-0"><div className="mb-2 flex justify-end"><Button type="button" variant="outline" onClick={() => updateImage(groupIndex, imageIndex, { referenceLinks: [...(image.referenceLinks || []), ''] })} className="h-8 rounded-lg border-[var(--role-primary-border)] text-[11px] text-[var(--role-primary)] hover:bg-[var(--role-primary-soft)]"><Plus className="mr-1 h-3.5 w-3.5" />添加参考链接</Button></div><div className="space-y-2">{(image.referenceLinks || []).map((link, linkIndex) => <div key={`${image.id}-link-${linkIndex}`} className="flex min-w-0 gap-2"><Input type="text" value={link} onChange={(event) => { const links = [...(image.referenceLinks || [])]; links[linkIndex] = event.target.value; updateImage(groupIndex, imageIndex, { referenceLinks: links }); }} placeholder="输入参考链接或商品地址" className="h-8 min-w-0 rounded-lg text-xs" /><Button type="button" variant="ghost" size="icon" onClick={() => updateImage(groupIndex, imageIndex, { referenceLinks: (image.referenceLinks || []).filter((_, currentIndex) => currentIndex !== linkIndex) })} className="h-8 w-8 shrink-0 text-slate-400 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></Button></div>)}</div></div>
+                    <div className="grid gap-2 border-t border-slate-100 px-4 py-3 sm:grid-cols-[92px_minmax(0,1fr)]">
+                      <div className="pt-1"><div className="flex items-center gap-1"><span className="text-xs font-medium text-slate-600">竞品参考</span><Tooltip><TooltipTrigger asChild><button type="button" aria-label="竞品参考说明" className="text-slate-400 transition-colors hover:text-[var(--role-primary)]"><CircleHelp className="h-3.5 w-3.5" /></button></TooltipTrigger><TooltipContent side="top" sideOffset={6} className="max-w-56 bg-slate-800 text-xs leading-5 text-white">每个参考项包含一张参考图、一个链接和对应说明。</TooltipContent></Tooltip></div></div>
+                      <div className="min-w-0 space-y-2">
+                        {(image.referenceLinkItems || []).map((reference, referenceIndex) => <div key={reference.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-2.5">
+                          <div className="mb-2 flex items-center justify-between"><span className="text-[11px] font-semibold text-slate-600">参考项 {referenceIndex + 1}</span><Button type="button" variant="ghost" size="icon" onClick={() => removeReferenceLinkItem(groupIndex, imageIndex, referenceIndex)} className="h-6 w-6 text-slate-400 hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></Button></div>
+                          <div className="grid min-w-0 gap-3 sm:grid-cols-[144px_minmax(0,1fr)]">
+                            <ImageUpload value={reference.image ? [reference.image] : []} onChange={(urls) => updateReferenceLinkItem(groupIndex, imageIndex, referenceIndex, { image: urls[0] || '' })} folder="order-reference-images" multiple={false} variant="square" compact />
+                            <div className="min-w-0 space-y-2"><Input type="text" value={reference.link || ''} onChange={(event) => updateReferenceLinkItem(groupIndex, imageIndex, referenceIndex, { link: event.target.value })} placeholder="输入参考链接或商品地址" className="h-8 min-w-0 rounded-lg text-xs" /><Textarea value={reference.description || ''} onChange={(event) => updateReferenceLinkItem(groupIndex, imageIndex, referenceIndex, { description: event.target.value })} placeholder="输入该参考链接的说明" rows={2} className="min-h-14 rounded-lg border border-slate-200 bg-white/70 px-3 py-2 !text-xs leading-4 text-slate-800 shadow-[inset_0_2px_4px_rgba(180,200,225,0.2)] placeholder:!text-xs placeholder:text-slate-400 placeholder:opacity-100 backdrop-blur-md transition-all duration-200 focus:bg-white focus:border-blue-300 focus:shadow-[0_0_0_3px_rgba(59,130,246,0.15),inset_0_1px_2px_rgba(255,255,255,0.9)] md:!text-xs" /></div>
+                          </div>
+                        </div>)}
+                        <Button type="button" onClick={() => addReferenceLinkItem(groupIndex, imageIndex)} className="order-form-primary h-8 w-fit rounded-lg px-3 text-[11px] text-white"><Plus className="mr-1 h-3.5 w-3.5" />添加参考项</Button>
+                      </div>
                     </div>
                   </div>;
                 })}
-                <Button type="button" variant="outline" onClick={() => addImage(groupIndex)} className="h-10 w-full rounded-xl border-dashed border-[var(--role-primary-border)] text-xs text-[var(--role-primary)] hover:bg-[var(--role-primary-soft)]"><Plus className="mr-1.5 h-4 w-4" />添加图片</Button>
+                <Button type="button" onClick={() => addImage(groupIndex)} className="order-form-primary h-9 w-fit rounded-xl px-4 text-xs text-white"><Plus className="mr-1.5 h-4 w-4" />添加图片</Button>
               </TabsContent>
             ))}
           </Tabs>
@@ -434,9 +558,24 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
             <Label htmlFor="order-requirements" className="text-xs text-slate-600">整体需求说明</Label>
             <Textarea id="order-requirements" rows={3} placeholder="补充整体设计要求、品牌调性和交付说明" value={form.requirements} onChange={(event) => setForm({ ...form, requirements: event.target.value })} className="rounded-xl bg-slate-50/70 text-xs" />
           </div>
-          <DrawerFooter className="flex-row justify-end p-0 pt-3">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl text-xs">取消</Button>
-            <Button type="submit" disabled={submitting} className="order-form-primary rounded-xl text-xs text-white">{submitting ? '保存中…' : editingOrder ? '保存修改' : '提交需求'}</Button>
+          </>}
+
+          {step === 2 && <div className="mx-auto max-w-2xl space-y-5 py-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-5">
+              <div className="flex items-start gap-3"><span className="order-form-primary flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white"><CircleDollarSign className="h-5 w-5" /></span><div><h2 className="text-base font-bold text-slate-800">填写本次出价</h2><p className="mt-1 text-xs leading-5 text-slate-500">已根据图片数量和管理员配置的推荐单价计算参考金额；此步骤仅填写出价，不会发起支付。</p></div></div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-white p-4"><p className="text-xs text-slate-500">需求图片数量</p><p className="mt-2 text-2xl font-bold text-slate-800">{imageCount}<span className="ml-1 text-sm font-medium text-slate-400">张</span></p></div><div className="rounded-xl bg-white p-4"><p className="text-xs text-slate-500">当前最低出价{form.requiresPsd ? '（含 PSD）' : ''}</p><p className="mt-2 text-2xl font-bold role-primary-text">¥{(minimumBid ?? Math.max(minimumBudget || 0, recommendedPrice)).toFixed(2)}</p><p className="mt-1 text-[11px] text-slate-400">基础最低价 ¥{Math.max(minimumBudget || 0, recommendedPrice).toFixed(2)}{form.requiresPsd ? ` × (1 + ${Math.round(pricing.psdSurchargeRate * 100)}%)` : '，按图片类型及全局最低价计算'}</p></div></div>
+            </div>
+            <div className="space-y-2"><Label required htmlFor="order-bid" className="text-sm font-semibold text-slate-700">我的出价（元）</Label><Input id="order-bid" required type="number" min={minimumBid ?? undefined} step="0.01" placeholder={minimumBid === null ? '正在加载最低出价' : `请输入不低于 ${minimumBid} 元的出价`} value={form.budget} onChange={(event) => setForm({ ...form, budget: event.target.value })} className="h-11 rounded-xl bg-slate-50/70 text-sm" /><p className="text-[11px] text-slate-400">最低价取图片类型最低价合计与平台全局底价中的较高值{form.requiresPsd ? `，需要 PSD 时再上浮 ${Math.round(pricing.psdSurchargeRate * 100)}%` : ''}。</p></div>
+          </div>}
+
+          {step === 3 && <div className="mx-auto max-w-2xl space-y-5 py-4">
+            <div className="rounded-2xl border border-[var(--role-primary-border)] bg-[var(--role-primary-soft)] p-6 text-center"><span className="order-form-primary mx-auto flex h-12 w-12 items-center justify-center rounded-2xl text-white"><MessageCircle className="h-6 w-6" /></span><h2 className="mt-4 text-lg font-bold text-slate-800">联系客户服务确认需求</h2><p className="mt-2 text-sm leading-6 text-slate-500">订单提交后不会自动付款。添加客服微信，确认需求细节后再进行后续操作。</p>{pricing.customerService ? <div className="mt-5 flex flex-col items-center gap-4 rounded-xl bg-white px-4 py-5 sm:flex-row sm:justify-center sm:text-left">{pricing.customerService.qrCodeUrl && <><button type="button" onClick={() => setQrPreviewOpen(true)} aria-label="全屏预览客服二维码" className="group relative shrink-0 rounded-2xl p-1 transition hover:bg-[var(--role-primary-soft)]"><AuthenticatedImage src={pricing.customerService.qrCodeUrl} alt={`${pricing.customerService.name}客服二维码`} className="h-48 w-48 rounded-xl object-contain shadow-sm transition group-hover:scale-[1.02]" /><span className="absolute inset-x-2 bottom-2 rounded-lg bg-slate-900/65 py-1 text-center text-[11px] text-white opacity-0 transition group-hover:opacity-100">点击全屏预览</span></button><Dialog open={qrPreviewOpen} onOpenChange={setQrPreviewOpen}><DialogContent className="w-[calc(100%-2rem)] max-w-2xl rounded-3xl bg-white p-5"><DialogTitle className="text-center text-base">{pricing.customerService.name}客服二维码</DialogTitle><div className="flex max-h-[78vh] items-center justify-center rounded-2xl bg-slate-50 p-4"><AuthenticatedImage src={pricing.customerService.qrCodeUrl} alt={`${pricing.customerService.name}客服二维码大图`} className="max-h-[70vh] max-w-full object-contain" /></div></DialogContent></Dialog></>}<div><p className="text-xs text-slate-500">客服：{pricing.customerService.name}</p><p className="mt-1 text-base font-bold role-primary-text">{pricing.customerService.wechat}</p><p className="mt-1 text-[11px] text-slate-400">可添加微信沟通订单需求</p></div></div> : <div className="mt-5 rounded-xl bg-white px-4 py-3 text-sm text-slate-500">暂未配置客服，请联系平台管理员</div>}</div>
+            <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-500"><div className="flex items-center justify-between"><span>需求图片</span><b className="text-slate-800">{imageCount} 张</b></div><div className="mt-3 flex items-center justify-between"><span>订单出价</span><b className="role-primary-text">¥{Number(form.budget || 0).toFixed(2)}</b></div></div>
+          </div>}
+
+          <DrawerFooter className="flex-row justify-between gap-2 border-t border-slate-100 p-0 pt-4">
+            <div>{step > 1 && <Button type="button" variant="outline" onClick={() => setStep(step - 1)} className="rounded-xl text-xs"><ChevronLeft className="mr-1 h-3.5 w-3.5" />上一步</Button>}</div>
+            <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl text-xs">取消</Button><Button type="submit" disabled={submitting} className="order-form-primary rounded-xl text-xs text-white">{submitting ? '保存中…' : step === 3 ? (editingOrder ? '保存修改' : '提交订单') : <>下一步<ChevronRight className="ml-1 h-3.5 w-3.5" /></>}</Button></div>
           </DrawerFooter>
         </form>
   );
@@ -449,6 +588,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
           <div className="h-5 w-px bg-slate-200" />
           <h1 className="flex items-center gap-2 text-lg font-bold text-slate-900"><Layers className="h-5 w-5 order-form-accent" />{title}</h1>
         </div>
+        <OrderCreationSteps step={step} />
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7 lg:p-9">{formBody}</div>
       </div>
     </main>;
@@ -464,4 +604,11 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
 
 function FieldLabel({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="space-y-1.5"><Label className="text-xs text-slate-600">{label}</Label>{children}</div>;
+}
+
+function OrderCreationSteps({ step }: { step: number }) {
+  const steps = ['填写需求', '填写出价', '联系客服'];
+  return <div className="mb-5 rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-6">
+    <div className="relative"><Progress value={(step - 1) * 50} className="absolute left-[16.67%] right-[16.67%] top-4 h-1 w-[66.66%] bg-[var(--role-primary-border)] [&_[data-slot=progress-indicator]]:bg-[var(--role-primary)]" /><ol className="relative flex">{steps.map((label, index) => { const current = index + 1 === step; const completed = index + 1 < step; return <li key={label} className="flex min-w-0 flex-1 flex-col items-center"><span className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-bold ${current || completed ? 'border-[var(--role-primary)] bg-[var(--role-primary)] text-white' : 'border-slate-200 bg-white text-slate-400'}`}>{completed ? <CheckCircle2 className="h-4 w-4" /> : index + 1}</span><span className={`mt-2 text-xs font-semibold ${current ? 'role-primary-text' : completed ? 'text-slate-600' : 'text-slate-400'}`}>{label}</span></li>; })}</ol></div>
+  </div>;
 }

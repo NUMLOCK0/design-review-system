@@ -73,7 +73,7 @@ export default function AdminUsersPage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5 p-8">
+    <div className="mx-auto max-w-7xl space-y-4 p-3 sm:space-y-5 sm:p-6 lg:p-8">
       <div className="flex flex-col justify-between gap-4 rounded-3xl border border-white/80 bg-white/70 p-6 shadow-sm backdrop-blur-md md:flex-row md:items-center">
         <div className="flex items-center gap-3"><div className="role-primary-gradient flex h-10 w-10 items-center justify-center rounded-2xl text-white shadow-md"><Users className="h-5 w-5" /></div><div><h1 className="text-xl font-bold tracking-tight text-slate-800">用户管理</h1><p className="mt-1 text-xs text-slate-500">查看并管理系统中已注册的账户，共 {total} 个用户</p></div></div>
         <Button variant="outline" onClick={() => void loadUsers()} disabled={loading} className="h-9 rounded-xl text-xs"><RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />刷新列表</Button>
@@ -83,7 +83,7 @@ export default function AdminUsersPage() {
         <CardHeader className="space-y-4 pb-3">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1">{roleFilters.map((item) => <button key={item.value} type="button" onClick={() => setRole(item.value)} className={`rounded-lg px-3 py-1.5 text-xs transition ${role === item.value ? 'bg-white font-semibold text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{item.label}</button>)}</div>
-            <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); changePage(1); }}><div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" /><Input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索姓名、邮箱、手机号" className="h-9 w-64 rounded-xl pl-9 text-xs" /></div><Button type="submit" className="h-9 rounded-xl px-3 text-xs">搜索</Button></form>
+            <form className="flex min-w-0 gap-2" onSubmit={(event) => { event.preventDefault(); changePage(1); }}><div className="relative min-w-0 flex-1 md:flex-none"><Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" /><Input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索姓名、邮箱、手机号" className="h-9 w-full rounded-xl pl-9 text-xs md:w-64" /></div><Button type="submit" className="h-9 shrink-0 rounded-xl px-3 text-xs">搜索</Button></form>
           </div>
           <div className="flex gap-1 border-b border-slate-100 pb-2"><button type="button" onClick={() => setStatus('all')} className={`px-2 py-1 text-xs ${status === 'all' ? 'font-semibold text-blue-600' : 'text-slate-400'}`}>全部状态</button><button type="button" onClick={() => setStatus('active')} className={`px-2 py-1 text-xs ${status === 'active' ? 'font-semibold text-emerald-600' : 'text-slate-400'}`}>已启用</button><button type="button" onClick={() => setStatus('inactive')} className={`px-2 py-1 text-xs ${status === 'inactive' ? 'font-semibold text-rose-600' : 'text-slate-400'}`}>已停用</button></div>
         </CardHeader>

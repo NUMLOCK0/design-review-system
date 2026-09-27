@@ -176,7 +176,7 @@ export default function ReviewRulesPage() {
   };
 
   return (
-    <div className="p-8 max-w-6xl mx-auto w-full space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-4 p-3 sm:space-y-6 sm:p-6 lg:p-8">
       {/* 顶部标题栏与新建操作 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-6 rounded-3xl bg-white/70 border border-white/80 shadow-sm backdrop-blur-md">
         <div>
@@ -216,7 +216,7 @@ export default function ReviewRulesPage() {
 
             <form onSubmit={handleCreateRule} className="space-y-4 mt-2">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700">规则名称 *</label>
+                <label className="text-xs font-semibold text-slate-700">规则名称 <span aria-hidden="true" className="text-rose-500">*</span></label>
                 <Input
                   required
                   placeholder="如：天猫大促核心商详 3级联合质检流"

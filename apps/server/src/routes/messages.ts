@@ -30,17 +30,19 @@ messagesRouter.get('/', authenticate, (req, res) => {
   const page = Math.max(Number(req.query.page) || 1, 1);
   const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 20, 1), 50);
   const mine = messages.filter((message) => message.recipientId === req.user!.id);
+  const type = String(req.query.type || 'all');
+  const filtered = type === 'all' ? mine : mine.filter((message) => message.type === type);
   const start = (page - 1) * pageSize;
   res.json({
     code: 200,
     success: true,
     data: {
-      list: mine.slice(start, start + pageSize),
-      total: mine.length,
+      list: filtered.slice(start, start + pageSize),
+      total: filtered.length,
       unreadCount: mine.filter((message) => !message.isRead).length,
       page,
       pageSize,
-      hasMore: start + pageSize < mine.length,
+      hasMore: start + pageSize < filtered.length,
     },
     timestamp: Date.now(),
   });

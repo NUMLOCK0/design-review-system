@@ -49,14 +49,24 @@ export function getCurrentUser(): UserInfo | null {
 
 export function setAuthSession(token: string, user: UserInfo) {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('auth_token', token);
+  // 新会话由服务端 HttpOnly Cookie 承载 Token，保留旧 Token 的读取逻辑仅用于兼容已登录用户。
+  localStorage.removeItem('auth_token');
   localStorage.setItem('auth_user', JSON.stringify(user));
   // 触发全局事件通知组件更新
   window.dispatchEvent(new Event('auth-state-change'));
 }
 
+export function updateCurrentUserName(name: string) {
+  if (typeof window === 'undefined') return;
+  const user = getCurrentUser();
+  if (!user) return;
+  localStorage.setItem('auth_user', JSON.stringify({ ...user, name }));
+  window.dispatchEvent(new Event('auth-state-change'));
+}
+
 export function clearAuthSession() {
   if (typeof window === 'undefined') return;
+  void fetch(`${API_BASE_URL}/auth/logout`, { method: 'POST', credentials: 'include', keepalive: true }).catch(() => undefined);
   localStorage.removeItem('auth_token');
   localStorage.removeItem('auth_user');
   window.dispatchEvent(new Event('auth-state-change'));
@@ -65,18 +75,28 @@ export function clearAuthSession() {
 export async function fetchWithAuth(url: string, options: RequestInit = {}) {
   const token = getAuthToken();
   const headers = new Headers(options.headers || {});
+  const method = (options.method || 'GET').toUpperCase();
   
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
+  // GET/HEAD 请求不自动添加 Content-Type。受保护图片会 302 到 OSS，
+  // OSS 会将该请求头纳入签名校验；额外携带 application/json 会导致
+  // SignatureDoesNotMatch。只有实际发送请求体的方法才需要默认 JSON 类型。
+  const hasRequestBody = !['GET', 'HEAD'].includes(method) && !(options.body instanceof FormData);
+  if (!headers.has('Content-Type') && hasRequestBody) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  const isAbsoluteUrl = /^https?:\/\//i.test(url);
+  const alreadyHasApiPrefix = url === API_BASE_URL || url.startsWith(`${API_BASE_URL}/`);
+  const fullUrl = isAbsoluteUrl || alreadyHasApiPrefix
+    ? url
+    : `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
   
   const response = await fetch(fullUrl, {
     ...options,
+    credentials: 'include',
     headers,
   });
 

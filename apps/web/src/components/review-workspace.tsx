@@ -33,6 +33,7 @@ import { TASK_STATUS_MAP, GROUP_MAP, type AnnotationItem, type ReviewTask, type 
 import { fetchWithAuth } from '@/lib/auth';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useToast } from '@/components/ui/app-toast';
+import { AuthenticatedImage } from '@/components/authenticated-image';
 
 const PRESET_REASONS = [
   '极限词/违反广告法',
@@ -306,7 +307,8 @@ export default function ReviewWorkspaceContent({
   const currentRejectCount = task?.rejectCount || 0;
   const canReview = (user?.role === 'advertiser' || user?.role === 'admin')
     && task?.status === 'in_review'
-    && currentImage.status === 'pending';
+    && currentImage.status === 'pending'
+    && !currentImage.reviewHistory?.some((review) => review.level === task.currentLevel && review.version === currentImage.version && review.reviewerId === user?.id);
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-slate-50 text-slate-800">
@@ -430,7 +432,7 @@ export default function ReviewWorkspaceContent({
                   }`}
                 >
                   <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 shrink-0">
-                    <img src={item.imageUrl} alt="切图" className="w-full h-full object-cover" />
+                    <AuthenticatedImage src={item.imageUrl} alt="切图" className="w-full h-full object-cover" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-xs font-bold text-slate-700 truncate">{GROUP_MAP[item.groupType].label} #{idx + 1}</div>
@@ -521,7 +523,7 @@ export default function ReviewWorkspaceContent({
                   selectedTool !== 'select' ? 'cursor-crosshair' : 'cursor-default'
                 }`}
               >
-                <img
+                <AuthenticatedImage
                   src={currentImage.imageUrl}
                   alt="审核主画布"
                   className="w-full h-auto block pointer-events-none"
@@ -608,7 +610,7 @@ export default function ReviewWorkspaceContent({
                       <Badge variant="outline" className="text-[10px] text-rose-400 border-rose-500/30">已驳回</Badge>
                     </div>
                     <div className="rounded-2xl overflow-hidden border border-slate-200 max-h-[65vh] shadow-xl">
-                      <img src={previousVersionUrl} alt="V1" className="w-full h-full object-contain" />
+                      <AuthenticatedImage src={previousVersionUrl} alt="V1" className="w-full h-full object-contain" />
                     </div>
                   </div>
 
@@ -619,7 +621,7 @@ export default function ReviewWorkspaceContent({
                       <Badge variant="outline" className="text-[10px] text-emerald-400 border-emerald-500/30">最新修正</Badge>
                     </div>
                     <div className="rounded-2xl overflow-hidden border-2 border-indigo-500/80 max-h-[65vh] shadow-xl">
-                      <img src={currentImage.imageUrl} alt="V2" className="w-full h-full object-contain" />
+                      <AuthenticatedImage src={currentImage.imageUrl} alt="V2" className="w-full h-full object-contain" />
                     </div>
                   </div>
                 </div>
@@ -627,14 +629,14 @@ export default function ReviewWorkspaceContent({
                 /* 卷帘模式 */
                 <div className="relative w-full max-w-xl aspect-[3/4] rounded-2xl overflow-hidden border border-slate-200 select-none shadow-2xl">
                   {/* 底图 V2 */}
-                  <img src={currentImage.imageUrl} alt="V2" className="absolute inset-0 w-full h-full object-cover" />
+                  <AuthenticatedImage src={currentImage.imageUrl} alt="V2" className="absolute inset-0 w-full h-full object-cover" />
                   
                   {/* 顶图 V1 (带裁剪宽度) */}
                   <div
                     style={{ width: `${diffSliderPos}%` }}
                     className="absolute inset-y-0 left-0 overflow-hidden border-r-2 border-white shadow-2xl"
                   >
-                    <img
+                    <AuthenticatedImage
                       src={previousVersionUrl}
                       alt="V1"
                       className="absolute inset-0 w-full h-full object-cover max-w-none"

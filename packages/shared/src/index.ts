@@ -125,6 +125,16 @@ export interface ReviewImage {
   rejectComment?: string;
   reviewedAt?: string;
   reviewLevel?: number;
+  reviewHistory?: Array<{
+    level: number;
+    version?: number;
+    reviewerId: string;
+    reviewerName: string;
+    status: 'approved' | 'rejected';
+    reviewedAt: string;
+    rejectReasons?: string[];
+    rejectComment?: string;
+  }>;
   annotations?: AnnotationItem[];
   createdAt: string;
   updatedAt?: string;
@@ -159,9 +169,11 @@ export interface ReviewTask {
   version: number;
   urgency: 'low' | 'medium' | 'high' | 'urgent';
   sourceFileUrl?: string; // 交付的源文件包 (PSD/AI/C4D/ZIP)
+  requiresPsd?: boolean; // 关联订单是否要求交付 PSD 源文件
   sourceFileName?: string;
   sourceFileSize?: string;
   orderId?: string; // 绑定的接单需求ID
+  orderStatus?: string; // 关联订单当前状态
   orderBudget?: number; // 订单总预算
   designerPayout?: number; // 预计到手收益
   rejectCount?: number; // 历史被驳回总次数 (用于返修熔断)
@@ -173,6 +185,7 @@ export interface ReviewTask {
   acceptedById?: string;
   acceptedByName?: string;
   groups?: ReviewImageGroup[];
+  orderImageRequirementGroups?: OrderImageRequirementItem[];
   createdAt: string;
   updatedAt?: string;
 }
@@ -205,6 +218,13 @@ export interface OrderReferenceImageItem {
   description: string; // 针对该参考图的具体要求/亮点说明 (如: "借鉴此图的金属反光排版", "参考该模特的穿搭站姿")
 }
 
+export interface OrderReferenceLinkItem {
+  id: string;
+  image?: string;
+  link?: string;
+  description?: string;
+}
+
 export interface OrderImageRequirementImageItem {
   id: string;
   materialImage?: string;
@@ -212,6 +232,8 @@ export interface OrderImageRequirementImageItem {
   referenceImages?: string[];
   referenceImageItems?: OrderReferenceImageItem[];
   referenceLinks?: string[];
+  referenceLinkItems?: OrderReferenceLinkItem[];
+  referenceLinkDescription?: string;
 }
 
 export interface OrderImageRequirementItem {
@@ -228,6 +250,41 @@ export interface OrderImageRequirementItem {
   referenceLinks: string[]; // 多个外部样例链接
 }
 
+export function calculateImageRequirementsMinimumPrice(
+  groups: OrderImageRequirementItem[] | undefined,
+  unitPrices: Partial<Record<ImageGroupType, number>>,
+  fallbackUnitPrice = 0,
+) {
+  const total = (Array.isArray(groups) ? groups : []).reduce((sum, group) => {
+    if (!group || typeof group !== 'object') return sum;
+    const rawCount = Array.isArray(group.imageItems) ? group.imageItems.length : Number(group.quantity);
+    const imageCount = Number.isFinite(rawCount) ? Math.max(0, rawCount) : 0;
+    const configuredPrice = Number(unitPrices?.[group.groupType]);
+    const fallbackPrice = Number(fallbackUnitPrice);
+    const unitPrice = Number.isFinite(configuredPrice) ? configuredPrice : fallbackPrice;
+    return sum + imageCount * (Number.isFinite(unitPrice) ? Math.max(0, unitPrice) : 0);
+  }, 0);
+  return Math.round((total + Number.EPSILON) * 100) / 100;
+}
+
+export function calculateOrderMinimumBudget(
+  groups: OrderImageRequirementItem[] | undefined,
+  unitPrices: Partial<Record<ImageGroupType, number>>,
+  globalMinimum = 0,
+  requiresPsd = false,
+  psdSurchargeRate = 0,
+  fallbackUnitPrice = 0,
+) {
+  const globalFloor = Number(globalMinimum);
+  const baseMinimum = Math.max(
+    Number.isFinite(globalFloor) ? Math.max(0, globalFloor) : 0,
+    calculateImageRequirementsMinimumPrice(groups, unitPrices, fallbackUnitPrice),
+  );
+  const rate = Number(psdSurchargeRate);
+  const multiplier = requiresPsd && Number.isFinite(rate) ? 1 + Math.max(0, rate) : 1;
+  return Math.round((baseMinimum * multiplier + Number.EPSILON) * 100) / 100;
+}
+
 export interface DesignOrder {
   id: string;
   orderNo: string;
@@ -240,6 +297,7 @@ export interface DesignOrder {
   deadline: string; // 交付截止时间
   urgency: 'normal' | 'urgent' | 'super_urgent';
   requirements: string; // 需求详细说明与文案
+  requiresPsd?: boolean; // 是否要求交付可编辑 PSD 源文件
   imageRequirementGroups?: OrderImageRequirementItem[]; // 多图片需求组与参考样例
   referenceImages?: string[]; // 兼容旧字段
   attachmentUrl?: string; // 附件包
@@ -249,8 +307,11 @@ export interface DesignOrder {
   depositRate?: number;
   depositAmount?: number;
   depositOutTradeNo?: string;
-  depositTradeNo?: string;
-  depositPaidAt?: string;
+    depositTradeNo?: string;
+    depositPaidAt?: string;
+    depositRefundStatus?: 'pending' | 'refunded';
+    depositRefundTradeNo?: string;
+    depositRefundedAt?: string;
   balanceAmount?: number;
   balanceOutTradeNo?: string;
   balanceTradeNo?: string;
@@ -490,6 +551,17 @@ export interface ImageTemplate {
   groups: ImageTemplateGroup[];
 }
 
+export interface CustomerServiceContact {
+  id: string;
+  name: string;
+  wechat: string;
+  qrCodeUrl: string;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface SystemConfig {
   id: string;
   platformName: string;
@@ -503,7 +575,13 @@ export interface SystemConfig {
   commissionTiers: CommissionTier[]; // 各分类分级抽成
   announcement?: string; // 全局前台公告
   depositRate: number; // 发布订单时支付的定金比例（0.00 - 1.00）
-  requireOrderPublicationReview: boolean; // 发布订单是否需要客服审核后上架
+    requireOrderPublicationReview: boolean; // 发布订单是否需要客服审核后上架
+  imageUnitPrice: number; // 创建订单时每张图片的推荐单价（元）
+  imageUnitPrices: Record<ImageGroupType, number>; // 按图片分组类型配置的最低单价（元/张）
+  psdSurchargeRate: number; // 需要 PSD 源文件时最低报价上浮比例（0.2 = 20%）
+  customerServiceWechat: string; // 创建订单后的客服沟通微信
+  customerServiceContacts: CustomerServiceContact[];
+  activeCustomerServiceId: string;
   userAgreementContent: string; // 用户协议正文
   privacyPolicyContent: string; // 隐私协议正文
   imageTemplates: ImageTemplate[]; // 创建订单时可一键添加的图片分组模板

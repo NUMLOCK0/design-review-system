@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1050" viewBox="0 0 1240 1050" fill="none">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#17345f" flood-opacity=".12"/></filter>
+    <style>
+      text { font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .ink { fill:#172033 } .muted { fill:#7b8798 } .tiny { font-size:11px } .small { font-size:13px } .body { font-size:14px } .bold { font-weight:700 } .heavy { font-weight:800 }
+    </style>
+  </defs>
+  <rect width="1240" height="1050" fill="#F2F5FA"/>
+  <text x="58" y="56" class="ink heavy" font-size="25">移动端 · 审核流设置</text>
+  <text x="58" y="82" class="muted" font-size="14">品牌方工作台 / 管理列表与编辑流程 · 设计提案</text>
+  <rect x="58" y="104" width="1124" height="1" fill="#DCE3EC"/>
+  <text x="179" y="143" class="muted bold" font-size="12" letter-spacing="1.4">01  审核流列表</text>
+  <text x="669" y="143" class="muted bold" font-size="12" letter-spacing="1.4">02  新建 / 编辑审核流</text>
+
+  <!-- list screen -->
+  <g filter="url(#shadow)"><rect x="92" y="166" width="410" height="820" rx="34" fill="#101827"/><rect x="101" y="175" width="392" height="802" rx="27" fill="#F5F7FB"/></g>
+  <rect x="101" y="175" width="392" height="802" rx="27" fill="#F5F7FB"/>
+  <rect x="243" y="184" width="110" height="18" rx="9" fill="#111827"/>
+  <text x="122" y="205" class="ink bold" font-size="12">9:41</text><text x="444" y="205" class="ink bold" font-size="11">●●●  ▰</text>
+  <rect x="101" y="218" width="392" height="65" fill="#FFFFFF"/>
+  <path d="M128 250l-8 0 8-8M120 250l8 8" stroke="#475569" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="148" y="249" class="ink heavy" font-size="17">审核流设置</text>
+  <text x="122" y="309" class="muted small">配置作品交付后的审核步骤</text>
+  <rect x="122" y="328" width="350" height="92" rx="18" fill="#EAF1FF"/>
+  <circle cx="151" cy="357" r="16" fill="#D6E4FF"/><path d="M151 348l8 3v6c0 5-4 8-8 10-4-2-8-5-8-10v-6l8-3z" stroke="#2563EB" stroke-width="1.7" fill="none"/>
+  <text x="178" y="355" class="ink bold body">默认审核方式</text>
+  <text x="178" y="377" class="muted small">未选择其他流程时，由自己审核</text>
+  <rect x="122" y="389" width="74" height="20" rx="10" fill="#FFFFFF"/><text x="138" y="403" fill="#2563EB" font-size="10" font-weight="700">默认启用</text>
+  <text x="122" y="454" class="ink heavy" font-size="16">我的审核流</text>
+  <text x="425" y="453" class="muted tiny">共 3 个</text>
+
+  <!-- flow card 1 -->
+  <rect x="122" y="470" width="350" height="147" rx="18" fill="#FFFFFF" stroke="#E6EBF2"/>
+  <circle cx="148" cy="497" r="14" fill="#EFF6FF"/><path d="M143 497h10M148 492v10" stroke="#2563EB" stroke-width="1.7" stroke-linecap="round"/>
+  <text x="171" y="494" class="ink bold body">主图设计审核</text>
+  <rect x="394" y="484" width="56" height="23" rx="11.5" fill="#E9F8F0"/><text x="407" y="500" fill="#16834A" font-size="10" font-weight="700">启用中</text>
+  <text x="140" y="526" class="muted tiny">天猫 · 主图设计</text><text x="414" y="526" class="muted tiny">时限 24h</text>
+  <rect x="140" y="540" width="314" height="1" fill="#EEF1F5"/>
+  <circle cx="151" cy="564" r="9" fill="#DBEAFE"/><text x="148" y="568" fill="#2563EB" font-size="9" font-weight="700">1</text>
+  <text x="169" y="568" class="ink small">我（默认审核人）</text>
+  <text x="169" y="589" class="muted tiny">任一审核人通过</text>
+  <rect x="381" y="552" width="36" height="28" rx="9" fill="#F4F6F9"/><text x="392" y="571" class="muted" font-size="11" font-weight="700">编辑</text>
+  <circle cx="439" cy="566" r="11" fill="#2563EB"/><circle cx="444" cy="566" r="8" fill="#FFFFFF"/><circle cx="447" cy="566" r="6" fill="#2563EB"/>
+
+  <!-- flow card 2 -->
+  <rect x="122" y="630" width="350" height="147" rx="18" fill="#FFFFFF" stroke="#E6EBF2"/>
+  <circle cx="148" cy="657" r="14" fill="#EFF6FF"/><path d="M143 657h10M148 652v10" stroke="#2563EB" stroke-width="1.7" stroke-linecap="round"/>
+  <text x="171" y="654" class="ink bold body">详情页交付复核</text>
+  <rect x="390" y="644" width="60" height="23" rx="11.5" fill="#F1F3F6"/><text x="403" y="660" fill="#778396" font-size="10" font-weight="700">已停用</text>
+  <text x="140" y="686" class="muted tiny">全网通用 · 详情页设计</text><text x="414" y="686" class="muted tiny">时限 48h</text>
+  <rect x="140" y="700" width="314" height="1" fill="#EEF1F5"/>
+  <circle cx="151" cy="724" r="9" fill="#DBEAFE"/><text x="148" y="728" fill="#2563EB" font-size="9" font-weight="700">1</text>
+  <text x="169" y="728" class="ink small">品牌负责人</text>
+  <text x="169" y="749" class="muted tiny">全部审核人通过</text>
+  <rect x="381" y="712" width="36" height="28" rx="9" fill="#F4F6F9"/><text x="392" y="731" class="muted" font-size="11" font-weight="700">编辑</text>
+  <rect x="428" y="715" width="22" height="22" rx="11" fill="#D7DDE6"/><circle cx="439" cy="726" r="8" fill="#FFFFFF"/>
+
+  <!-- add flow and nav -->
+  <rect x="122" y="800" width="350" height="48" rx="15" fill="#2563EB"/>
+  <circle cx="260" cy="824" r="8" stroke="#FFFFFF" stroke-width="1.7"/><path d="M260 820v8M256 824h8" stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round"/>
+  <text x="277" y="829" fill="#FFFFFF" font-size="14" font-weight="700">新建审核流</text>
+  <rect x="101" y="866" width="392" height="111" rx="0 0 27 27" fill="#FFFFFF"/>
+  <rect x="101" y="866" width="392" height="1" fill="#E9EDF3"/>
+  <circle cx="164" cy="897" r="8" fill="#DCE3ED"/><text x="145" y="921" class="muted" font-size="9">工作台</text>
+  <rect x="283" y="888" width="37" height="20" rx="10" fill="#EAF1FF"/><circle cx="301" cy="898" r="6" fill="#2563EB"/><text x="292" y="921" fill="#2563EB" font-size="9" font-weight="700">订单</text>
+  <circle cx="431" cy="897" r="8" fill="#DCE3ED"/><text x="412" y="921" class="muted" font-size="9">我的</text>
+  <rect x="234" y="957" width="124" height="4" rx="2" fill="#111827"/>
+
+  <!-- edit screen -->
+  <g filter="url(#shadow)"><rect x="585" y="166" width="410" height="820" rx="34" fill="#101827"/></g>
+  <rect x="594" y="175" width="392" height="802" rx="27" fill="#F5F7FB"/>
+  <rect x="736" y="184" width="110" height="18" rx="9" fill="#111827"/>
+  <text x="615" y="205" class="ink bold" font-size="12">9:41</text><text x="937" y="205" class="ink bold" font-size="11">●●●  ▰</text>
+  <rect x="594" y="218" width="392" height="65" fill="#FFFFFF"/>
+  <path d="M621 250h-8l8-8M613 250l8 8" stroke="#475569" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="641" y="249" class="ink heavy" font-size="17">新建审核流</text>
+  <text x="958" y="249" fill="#2563EB" font-size="13" font-weight="700">保存</text>
+  <text x="615" y="308" class="muted tiny">基本信息</text>
+  <rect x="615" y="321" width="350" height="235" rx="18" fill="#FFFFFF" stroke="#E6EBF2"/>
+  <text x="633" y="348" class="ink bold small">审核流名称 <tspan fill="#EF4565">*</tspan></text>
+  <rect x="633" y="360" width="314" height="43" rx="11" fill="#F7F9FC" stroke="#E7EBF1"/><text x="647" y="386" class="ink small">主图设计审核</text>
+  <text x="633" y="430" class="ink bold small">适用平台</text>
+  <rect x="633" y="442" width="151" height="43" rx="11" fill="#F7F9FC" stroke="#E7EBF1"/><text x="647" y="468" class="ink small">天猫</text><path d="M762 460l5 5 5-5" stroke="#7B8798" stroke-width="1.5"/>
+  <text x="796" y="430" class="ink bold small">适用类目</text>
+  <rect x="796" y="442" width="151" height="43" rx="11" fill="#F7F9FC" stroke="#E7EBF1"/><text x="810" y="468" class="ink small">主图设计</text><path d="M924 460l5 5 5-5" stroke="#7B8798" stroke-width="1.5"/>
+  <text x="633" y="512" class="ink bold small">审核时限</text>
+  <rect x="633" y="520" width="314" height="24" rx="8" fill="#F7F9FC"/><text x="647" y="537" class="ink tiny">24</text><text x="917" y="537" class="muted tiny">小时内完成</text>
+
+  <text x="615" y="590" class="muted tiny">审核节点</text>
+  <rect x="615" y="603" width="350" height="211" rx="18" fill="#FFFFFF" stroke="#E6EBF2"/>
+  <circle cx="643" cy="632" r="13" fill="#2563EB"/><text x="640" y="636" fill="#FFFFFF" font-size="10" font-weight="700">1</text>
+  <text x="666" y="636" class="ink bold body">第一级审核</text><text x="927" y="636" fill="#2563EB" font-size="12" font-weight="700">移除</text>
+  <text x="633" y="672" class="muted tiny">审核人</text>
+  <rect x="633" y="682" width="314" height="43" rx="11" fill="#F7F9FC" stroke="#E7EBF1"/>
+  <circle cx="652" cy="703" r="11" fill="#DCEAFE"/><text x="648" y="707" fill="#2563EB" font-size="9" font-weight="700">我</text>
+  <text x="670" y="707" class="ink small">当前账号（默认审核人）</text><path d="M923 699l5 5 5-5" stroke="#7B8798" stroke-width="1.5"/>
+  <text x="633" y="754" class="muted tiny">通过条件</text>
+  <rect x="633" y="765" width="151" height="34" rx="10" fill="#EAF1FF" stroke="#BBD2FF"/><text x="675" y="787" fill="#2563EB" font-size="11" font-weight="700">任一审核人通过</text>
+  <rect x="793" y="765" width="154" height="34" rx="10" fill="#FFFFFF" stroke="#E7EBF1"/><text x="831" y="787" class="muted" font-size="11">全部审核人通过</text>
+  <rect x="615" y="831" width="350" height="45" rx="14" fill="#FFFFFF" stroke="#BBD2FF" stroke-dasharray="5 4"/>
+  <circle cx="756" cy="853" r="8" stroke="#2563EB" stroke-width="1.5"/><path d="M756 849v8M752 853h8" stroke="#2563EB" stroke-width="1.5" stroke-linecap="round"/>
+  <text x="772" y="858" fill="#2563EB" font-size="12" font-weight="700">添加下一级审核</text>
+  <rect x="594" y="892" width="392" height="85" rx="0 0 27 27" fill="#FFFFFF"/>
+  <rect x="594" y="892" width="392" height="1" fill="#E9EDF3"/>
+  <rect x="615" y="907" width="350" height="48" rx="15" fill="#2563EB"/>
+  <text x="752" y="936" fill="#FFFFFF" font-size="14" font-weight="700">保存审核流</text>
+  <rect x="728" y="957" width="124" height="4" rx="2" fill="#111827"/>
+
+  <!-- annotations -->
+  <rect x="1030" y="206" width="153" height="135" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+  <text x="1048" y="235" class="ink bold small">设计重点</text>
+  <circle cx="1049" cy="259" r="3" fill="#2563EB"/><text x="1060" y="263" class="muted tiny">卡片快速扫读</text>
+  <circle cx="1049" cy="284" r="3" fill="#2563EB"/><text x="1060" y="288" class="muted tiny">状态可直接启停</text>
+  <circle cx="1049" cy="309" r="3" fill="#2563EB"/><text x="1060" y="313" class="muted tiny">长表单独立编辑</text>
+  <rect x="1030" y="359" width="153" height="178" rx="18" fill="#FFFFFF" stroke="#E2E8F0"/>
+  <text x="1048" y="388" class="ink bold small">关键状态</text>
+  <rect x="1048" y="403" width="53" height="20" rx="10" fill="#E9F8F0"/><text x="1058" y="417" fill="#16834A" font-size="9" font-weight="700">启用中</text>
+  <text x="1048" y="444" class="muted tiny">启用 / 停用</text>
+  <rect x="1048" y="457" width="54" height="20" rx="10" fill="#FFF4E5"/><text x="1058" y="471" fill="#B66A0B" font-size="9" font-weight="700">待补全</text>
+  <text x="1048" y="498" class="muted tiny">无审核人时提示</text>
+  <text x="1048" y="516" class="muted tiny">并阻止保存</text>
+  <text x="1032" y="583" class="muted tiny">主题色按品牌方蓝色；审核人、平台等选择使用弹出列表，保持移动端易点选。</text>
+</svg>

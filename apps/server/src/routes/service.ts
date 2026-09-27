@@ -45,20 +45,20 @@ function buildWorkItems() {
   designOrders.forEach(normalizeOrder);
   disputes.forEach(normalizeDispute);
 
-  const orderItems = designOrders.filter((order) => order.status !== 'cancelled').map((order) => ({
+  const orderItems = designOrders.filter((order) => order.status !== 'cancelled' || order.depositRefundStatus === 'pending').map((order) => ({
     id: order.id,
     type: 'order_audit' as const,
     title: order.title,
     subtitle: order.orderNo,
     status: order.publicationStatus || order.status,
-    statusLabel: order.publicationStatus === 'pending_service_review' ? '待发布审核' : order.publicationStatus === 'published' ? '已通过' : '已驳回',
+    statusLabel: order.depositRefundStatus === 'pending' ? '待原路退款' : order.publicationStatus === 'pending_service_review' ? '待发布审核' : order.publicationStatus === 'published' ? '已通过' : '已驳回',
     priority: order.servicePriority!,
     assigneeId: order.serviceAssigneeId,
     assigneeName: order.serviceAssigneeName,
     dueAt: order.serviceDueAt,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt || order.createdAt,
-    completed: order.publicationStatus !== 'pending_service_review',
+    completed: order.depositRefundStatus !== 'pending' && order.publicationStatus !== 'pending_service_review',
     payload: order,
   }));
   const disputeItems = disputes.map((dispute) => ({
@@ -85,6 +85,8 @@ function buildWorkItems() {
     status: request.status,
     statusLabel: request.status === 'pending_review' ? '待审核' : request.status === 'approved' ? '已通过' : '已驳回',
     priority: 'normal' as const,
+    assigneeId: undefined,
+    assigneeName: undefined,
     dueAt: dueAt(request.createdAt, 24),
     createdAt: request.createdAt,
     updatedAt: request.reviewedAt || request.createdAt,
@@ -113,8 +115,10 @@ function filterItems(items: ReturnType<typeof buildWorkItems>, req: any) {
         ? !item.completed && item.assigneeId === userId
         : tab === 'unassigned'
           ? !item.completed && item.type === 'dispute' && !item.assigneeId
-          : tab === 'order_audit'
-            ? !item.completed && item.type === 'order_audit'
+          : tab === 'deposit_refund'
+            ? !item.completed && item.type === 'order_audit' && (item.payload as DesignOrder).depositRefundStatus === 'pending'
+            : tab === 'order_audit'
+              ? !item.completed && item.type === 'order_audit' && (item.payload as DesignOrder).depositRefundStatus !== 'pending'
             : tab === 'dispute'
               ? !item.completed && item.type === 'dispute'
               : tab === 'withdrawal_review'
@@ -171,7 +175,8 @@ serviceRouter.get('/dashboard', authenticate, requireRoles('customer_service', '
       all: active.length,
       mine: active.filter((item) => item.assigneeId === req.user!.id).length,
       unassigned: active.filter((item) => item.type === 'dispute' && !item.assigneeId).length,
-      orderAudit: active.filter((item) => item.type === 'order_audit').length,
+      orderAudit: active.filter((item) => item.type === 'order_audit' && item.status === 'pending_service_review').length,
+      depositRefund: active.filter((item) => item.type === 'order_audit' && (item.payload as DesignOrder).depositRefundStatus === 'pending').length,
       dispute: active.filter((item) => item.type === 'dispute').length,
       withdrawalReview: active.filter((item) => item.type === 'withdrawal_review').length,
       overdue: active.filter(isOverdue).length,
@@ -181,11 +186,23 @@ serviceRouter.get('/dashboard', authenticate, requireRoles('customer_service', '
   });
 });
 
+serviceRouter.get('/tasks/:type/:id', authenticate, requireRoles('customer_service', 'admin'), (req, res) => {
+  const type = String(req.params.type);
+  if (!['order_audit', 'dispute', 'withdrawal_review'].includes(type)) return res.status(400).json({ code: 400, success: false, message: '任务类型无效' });
+  const item = buildWorkItems().find((work) => work.type === type && work.id === req.params.id);
+  if (!item) return res.status(404).json({ code: 404, success: false, message: '客服任务不存在' });
+  res.json({ code: 200, success: true, data: item, timestamp: Date.now() });
+});
+
 serviceRouter.get('/logs', authenticate, requireRoles('customer_service', 'admin'), (req, res) => {
   const taskType = String(req.query.taskType || '');
   const taskId = String(req.query.taskId || '');
-  const data = serviceLogs.filter((log) => (!taskType || log.taskType === taskType) && (!taskId || log.taskId === taskId));
-  res.json({ code: 200, success: true, data, timestamp: Date.now() });
+  const page = Math.max(Number(req.query.page) || 1, 1);
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 20, 1), 100);
+  const filtered = serviceLogs.filter((log) => (!taskType || log.taskType === taskType) && (!taskId || log.taskId === taskId));
+  const start = (page - 1) * pageSize;
+  const data = filtered.slice(start, start + pageSize);
+  res.json({ code: 200, success: true, data, total: filtered.length, page, pageSize, hasMore: start + data.length < filtered.length, timestamp: Date.now() });
 });
 
 serviceRouter.post('/logs', authenticate, requireRoles('customer_service', 'admin'), (req, res) => {
@@ -193,7 +210,8 @@ serviceRouter.post('/logs', authenticate, requireRoles('customer_service', 'admi
   const taskId = String(req.body?.taskId || '');
   const action = String(req.body?.action || '').trim();
   const comment = String(req.body?.comment || '').trim();
-  if (!['order_audit', 'dispute', 'withdrawal_review'].includes(taskType) || !getTask(taskType, taskId) || !action) {
+  const allowedActions = ['claim', 'approve', 'reject', 'mediation', 'resolve', 'escalate', 'refund_original_channel'];
+  if (!['order_audit', 'dispute', 'withdrawal_review'].includes(taskType) || !getTask(taskType, taskId) || !allowedActions.includes(action) || comment.length > 5000) {
     return res.status(400).json({ code: 400, success: false, message: '操作记录参数无效' });
   }
   const log = addLog(taskType, taskId, action, comment, req.user!);

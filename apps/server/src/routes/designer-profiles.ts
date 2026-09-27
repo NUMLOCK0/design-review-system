@@ -70,6 +70,7 @@ async function getProfile(userId: string) {
 }
 
 function profilePayload(body: any, current: DesignerProfile) {
+  const name = String(body.name ?? current.name ?? '').trim();
   const categories = stringArray(body.categories ?? current.categories);
   const platforms = stringArray(body.platforms ?? current.platforms);
   const styles = stringArray(body.styles ?? current.styles);
@@ -79,7 +80,7 @@ function profilePayload(body: any, current: DesignerProfile) {
   const publicStatus = ['draft', 'published', 'hidden'].includes(body.publicStatus) ? body.publicStatus : current.publicStatus || 'draft';
   const profileCompleted = Boolean(headline && bio && categories.length && platforms.length);
   return {
-    headline, bio, industries, yearsExperience: Math.min(Math.max(Number(body.yearsExperience ?? current.yearsExperience ?? 0) || 0, 0), 80),
+    name, headline, bio, industries, yearsExperience: Math.min(Math.max(Number(body.yearsExperience ?? current.yearsExperience ?? 0) || 0, 0), 80),
     categories, platforms, styles, minBudget: body.minBudget === '' || body.minBudget === null ? null : Math.max(0, Number(body.minBudget ?? current.minBudget ?? 0) || 0),
     maxActiveOrders: Math.min(Math.max(Number(body.maxActiveOrders ?? current.maxActiveOrders ?? 3) || 3, 1), 20),
     availabilityStatus: ['available', 'busy', 'unavailable'].includes(body.availabilityStatus) ? body.availabilityStatus : current.availabilityStatus,
@@ -99,7 +100,9 @@ designerProfilesRouter.put('/designer-profile/me', authenticate, requireRoles('d
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接，暂时无法保存设计师资料' });
     const current = await getProfile(req.user!.id);
     const data = profilePayload(req.body || {}, current);
+    if (!data.name || data.name.length > 64) return res.status(400).json({ code: 400, success: false, message: '展示名称不能为空且不能超过64个字符' });
     if (data.publicStatus === 'published' && !data.profileCompleted) return res.status(400).json({ code: 400, success: false, message: '请完善简介、擅长类型和平台后再公开主页' });
+    await dbPool.query('UPDATE users SET name=? WHERE id=?', [data.name, req.user!.id]);
     await dbPool.query(`INSERT INTO designer_profiles
       (user_id, categories, platforms, styles, min_budget, max_active_orders, availability_status, portfolio_urls, headline, bio, industries, years_experience, public_status, profile_completed, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE categories=VALUES(categories), platforms=VALUES(platforms), styles=VALUES(styles), min_budget=VALUES(min_budget), max_active_orders=VALUES(max_active_orders), availability_status=VALUES(availability_status), portfolio_urls=VALUES(portfolio_urls), headline=VALUES(headline), bio=VALUES(bio), industries=VALUES(industries), years_experience=VALUES(years_experience), public_status=VALUES(public_status), profile_completed=VALUES(profile_completed), updated_at=VALUES(updated_at)`, [
@@ -216,7 +219,7 @@ designerProfilesRouter.get('/designers/recommended', authenticate, requireRoles(
 designerProfilesRouter.get('/designers/:id', authenticate, requireRoles('advertiser', 'designer', 'customer_service', 'admin'), async (req, res, next) => {
   try {
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
-    const designer = await publicDesigner(req.params.id);
+    const designer = await publicDesigner(String(req.params.id));
     if (!designer) return res.status(404).json({ code: 404, success: false, message: '该设计师主页未公开' });
     res.json({ code: 200, success: true, data: designer, timestamp: Date.now() });
   } catch (error) { next(error); }
@@ -252,9 +255,9 @@ designerProfilesRouter.put('/admin/designer-portfolios/:id', authenticate, requi
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
     const status = String(req.body?.status || '');
     if (!['draft', 'published', 'hidden'].includes(status)) return res.status(400).json({ code: 400, success: false, message: '无效的作品状态' });
-    const [result]: any = await dbPool.query('UPDATE designer_portfolios SET status=?, published_at=CASE WHEN ?=\'published\' THEN COALESCE(published_at, ?) ELSE published_at END, updated_at=? WHERE id=?', [status, status, now(), now(), req.params.id]);
+    const [result]: any = await dbPool.query('UPDATE designer_portfolios SET status=?, published_at=CASE WHEN ?=\'published\' THEN COALESCE(published_at, ?) ELSE published_at END, updated_at=? WHERE id=?', [status, status, now(), now(), String(req.params.id)]);
     if (!result.affectedRows) return res.status(404).json({ code: 404, success: false, message: '作品不存在' });
-    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'designer_moderation', action: 'portfolio_status_change', targetType: 'designer_portfolio', targetId: req.params.id, summary: `${req.user!.name}修改设计师作品状态为${status}`, detail: { status }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 作品审核日志写入失败:', error));
+    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'designer_moderation', action: 'portfolio_status_change', targetType: 'designer_portfolio', targetId: String(req.params.id), summary: `${req.user!.name}修改设计师作品状态为${status}`, detail: { status }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 作品审核日志写入失败:', error));
     res.json({ code: 200, success: true, message: status === 'published' ? '作品已审核通过' : status === 'hidden' ? '作品已下架' : '作品已设为草稿', timestamp: Date.now() });
   } catch (error) { next(error); }
 });
@@ -264,9 +267,9 @@ designerProfilesRouter.put('/admin/designer-profiles/:id', authenticate, require
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
     const status = String(req.body?.publicStatus || '');
     if (!['draft', 'published', 'hidden'].includes(status)) return res.status(400).json({ code: 400, success: false, message: '无效的主页状态' });
-    const [result]: any = await dbPool.query('UPDATE designer_profiles SET public_status=?, updated_at=? WHERE user_id=?', [status, now(), req.params.id]);
+    const [result]: any = await dbPool.query('UPDATE designer_profiles SET public_status=?, updated_at=? WHERE user_id=?', [status, now(), String(req.params.id)]);
     if (!result.affectedRows) return res.status(404).json({ code: 404, success: false, message: '设计师资料不存在' });
-    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'designer_moderation', action: 'profile_status_change', targetType: 'designer_profile', targetId: req.params.id, summary: `${req.user!.name}修改设计师主页状态为${status}`, detail: { status }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 主页审核日志写入失败:', error));
+    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'designer_moderation', action: 'profile_status_change', targetType: 'designer_profile', targetId: String(req.params.id), summary: `${req.user!.name}修改设计师主页状态为${status}`, detail: { status }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 主页审核日志写入失败:', error));
     res.json({ code: 200, success: true, message: status === 'published' ? '主页已公开' : '主页已隐藏', timestamp: Date.now() });
   } catch (error) { next(error); }
 });

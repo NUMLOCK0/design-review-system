@@ -71,6 +71,26 @@
   background-image: linear-gradient(135deg, var(--role-primary), var(--role-primary-dark)) !important;
   color: #fff !important;
 }
+.order-form-theme .order-group-tab { position: relative; }
+.order-form-theme .order-group-tab::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 0;
+  background-color: transparent;
+  content: "";
+  transition: height 120ms ease, background-color 120ms ease;
+}
+.order-form-theme .order-group-tab[data-state="active"] {
+  color: color-mix(in srgb, var(--role-primary) 78%, #000) !important;
+}
+.order-form-theme .order-group-tab[data-state="active"]::after {
+  height: 3px;
+  background-color: color-mix(in srgb, var(--role-primary) 78%, #000);
+}
+.order-form-theme .order-group-tab-error[data-state="active"] { color: #be123c !important; }
+.order-form-theme .order-group-tab-error[data-state="active"]::after { background-color: #e11d48; }
 .order-form-theme .order-form-add {
   background-color: var(--role-primary-soft) !important;
   background-image: none !important;

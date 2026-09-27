@@ -4,7 +4,7 @@ import { activatePublishedOrder, designOrders } from './design-orders.js';
 import { tasks } from './review-tasks.js';
 import { notifyUser } from './messages.js';
 import { getSystemConfig } from './system-config.js';
-import { persistDesignOrder, persistReviewTask } from '../config/persistence.js';
+import { persistDesignOrder, persistPaymentEvent, persistReviewTask } from '../config/persistence.js';
 import { createEpayApiCheckout, expectedEpayGatewayAmount, money, verifyEpaySign } from '../services/epay.js';
 
 export const paymentsRouter = Router();
@@ -12,21 +12,44 @@ export const paymentsRouter = Router();
 const isOwner = (order: typeof designOrders[number], user: AuthUserPayload) =>
   user.role === 'admin' || order.creatorId === user.id || (Boolean(user.organizationId) && order.organizationId === user.organizationId);
 
-function finishPayment(fields: Record<string, unknown>) {
+async function finishPayment(fields: Record<string, unknown>) {
   const pid = String(process.env.EPAY_PID || '').trim();
   const key = String(process.env.EPAY_KEY || '').trim();
-  if (!pid || !key || String(fields.pid || '') !== pid || !verifyEpaySign(fields, String(fields.sign || ''), key)) return { ok: false as const, message: '支付签名校验失败' };
+  const epayFields = fields as Record<string, string | number | undefined>;
+  if (!pid || !key || String(fields.pid || '') !== pid || !verifyEpaySign(epayFields, String(fields.sign || ''), key)) return { ok: false as const, message: '支付签名校验失败' };
 
   const outTradeNo = String(fields.out_trade_no || '');
   const order = designOrders.find((item) => item.depositOutTradeNo === outTradeNo || item.balanceOutTradeNo === outTradeNo);
   if (!order) return { ok: false as const, message: '支付订单不存在' };
-  if (order.status === 'cancelled') return { ok: false as const, message: '已关闭订单不可完成支付，请重新发布订单' };
-  if (String(fields.trade_status || '') !== 'TRADE_SUCCESS') return { ok: false as const, message: '支付尚未成功' };
-
-  const amount = expectedEpayGatewayAmount(fields.money);
   const isDeposit = order.depositOutTradeNo === outTradeNo;
+  const amount = expectedEpayGatewayAmount(fields.money);
+  const eventBase = {
+    id: `pay_evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    orderId: order.id,
+    orderNo: order.orderNo,
+    stage: isDeposit ? 'deposit' as const : 'balance' as const,
+    paymentType: String(fields.type || ''),
+    outTradeNo,
+    tradeNo: String(fields.trade_no || ''),
+    amount,
+    rawPayload: fields,
+    createdAt: new Date().toISOString()
+  };
+  if (order.status === 'cancelled') {
+    await persistPaymentEvent({ ...eventBase, status: 'failed' });
+    return { ok: false as const, message: '已关闭订单不可完成支付，请重新发布订单' };
+  }
+  if (String(fields.trade_status || '') !== 'TRADE_SUCCESS') {
+    await persistPaymentEvent({ ...eventBase, status: 'failed' });
+    return { ok: false as const, message: '支付尚未成功' };
+  }
+
   const expected = money(isDeposit ? order.depositAmount || 0 : order.balanceAmount || 0);
-  if (amount !== expected) return { ok: false as const, message: '支付金额校验失败' };
+  const paymentEvent = { ...eventBase, amount };
+  if (amount !== expected) {
+    await persistPaymentEvent({ ...paymentEvent, status: 'failed' });
+    return { ok: false as const, message: '支付金额校验失败' };
+  }
   if (isDeposit && order.paymentStatus !== 'deposit_paid' && order.paymentStatus !== 'paid') {
     order.paymentStatus = 'deposit_paid';
     order.depositTradeNo = String(fields.trade_no || '');
@@ -35,12 +58,13 @@ function finishPayment(fields: Record<string, unknown>) {
     if (getSystemConfig().requireOrderPublicationReview) {
       order.publicationStatus = 'pending_service_review';
       order.updatedAt = new Date().toISOString();
-      void persistDesignOrder(order);
+      await persistDesignOrder(order);
       notifyUser('u_rev_1', { type: 'order', title: '新的订单待审核', content: `${order.creatorName}提交了订单「${order.title}」，请完成发布审核。`, link: '/service/dashboard?tab=order_audit' });
     } else {
-      void activatePublishedOrder(order).catch((error) => console.error('[Payment] 自动上架订单失败:', error));
+      await activatePublishedOrder(order);
       notifyUser(order.creatorId, { type: 'order', title: '订单已自动上架', content: `订单「${order.title}」已支付定金并进入接单大厅。`, link: '/advertiser/orders' });
     }
+    await persistPaymentEvent({ ...paymentEvent, status: 'success' });
   } else if (!isDeposit && order.paymentStatus !== 'paid') {
     order.paymentStatus = 'paid';
     order.balanceTradeNo = String(fields.trade_no || '');
@@ -52,10 +76,13 @@ function finishPayment(fields: Record<string, unknown>) {
       task.acceptedById = order.creatorId;
       task.acceptedByName = order.creatorName;
       task.updatedAt = order.balancePaidAt;
-      void persistReviewTask(task);
+      await persistReviewTask(task);
       notifyUser(task.designerId, { type: 'review', title: '订单已确认验收', content: `品牌方已支付尾款并确认验收「${task.productName}」，原图与源文件已开放下载。`, link: '/review-tasks' });
     }
-    void persistDesignOrder(order);
+    await persistDesignOrder(order);
+    await persistPaymentEvent({ ...paymentEvent, status: 'success' });
+  } else {
+    await persistPaymentEvent({ ...paymentEvent, status: 'duplicate' });
   }
   return { ok: true as const, order };
 }
@@ -86,16 +113,32 @@ paymentsRouter.post('/orders/:id/checkout', authenticate, requireRoles('advertis
 
   const tradePrefix = `${stage === 'deposit' ? 'DEP' : 'BAL'}_${paymentType === 'alipay' ? 'ALI' : 'WX'}_`;
   const currentOutTradeNo = stage === 'deposit' ? order.depositOutTradeNo : order.balanceOutTradeNo;
+  const pendingStatus = stage === 'deposit' ? 'deposit_pending' : 'balance_pending';
+  if (order.paymentStatus === pendingStatus && currentOutTradeNo && !currentOutTradeNo.startsWith(tradePrefix)) {
+    return res.status(409).json({ code: 409, success: false, message: '该订单已有其他支付渠道的支付请求，请等待结果或稍后重试' });
+  }
   const outTradeNo = currentOutTradeNo?.startsWith(tradePrefix)
     ? currentOutTradeNo
     : `${tradePrefix}${order.orderNo}_${Date.now()}`;
   if (stage === 'deposit') order.depositOutTradeNo = outTradeNo;
   else order.balanceOutTradeNo = outTradeNo;
   order.updatedAt = new Date().toISOString();
-  void persistDesignOrder(order);
+  await persistDesignOrder(order);
   try {
     const amount = stage === 'deposit' ? order.depositAmount! : order.balanceAmount!;
     const checkout = await createEpayApiCheckout({ outTradeNo, name: `${stage === 'deposit' ? '定金' : '尾款'}-${order.title}`, amount, param: `${order.id}|${stage}`, type: paymentType });
+    await persistPaymentEvent({
+      id: `pay_evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      orderId: order.id,
+      orderNo: order.orderNo,
+      stage,
+      paymentType,
+      outTradeNo,
+      amount,
+      status: 'checkout_created',
+      rawPayload: { gateway: checkout },
+      createdAt: new Date().toISOString()
+    });
     res.json({ code: 200, success: true, message: '支付二维码已生成', data: { ...checkout, outTradeNo, amount, stage, type: paymentType }, timestamp: Date.now() });
   } catch (error: any) {
     res.status(503).json({ code: 503, success: false, message: error.message || '支付服务暂不可用' });
@@ -162,9 +205,9 @@ paymentsRouter.get('/admin/orders', authenticate, requireRoles('admin'), (req, r
   });
 });
 
-const handleNotify = (req: any, res: any) => {
+const handleNotify = async (req: any, res: any) => {
   try {
-    const result = finishPayment({ ...(req.query || {}), ...(req.body || {}) });
+    const result = await finishPayment({ ...(req.query || {}), ...(req.body || {}) });
     return res.status(200).send(result.ok ? 'success' : 'fail');
   } catch (error) {
     console.error('[Epay] 回调处理失败:', error);

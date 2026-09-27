@@ -4,15 +4,15 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { dbPool } from '../config/database.js';
-import { authenticate } from '../middleware/auth.middleware.js';
+import { authenticate, clearAuthCookie, JWT_SECRET, setAuthCookie } from '../middleware/auth.middleware.js';
 import { consumeEmailCode, consumeSmsCode, createSliderChallenge, isValidPhone, normalizePhone, sendEmailCode, sendSmsCode, verifySliderChallenge } from '../services/phone-verification.js';
 import { recordAdminAudit } from '../services/admin-audit.js';
 
 export const authRouter = Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'design-review-secret-key-2026';
 type AppRole = 'advertiser' | 'designer' | 'customer_service' | 'admin';
 const BUSINESS_ROLES: AppRole[] = ['advertiser', 'designer'];
 const PLATFORM_ROLES: AppRole[] = ['customer_service', 'admin'];
+const useMemoryAuth = !dbPool && process.env.NODE_ENV !== 'production';
 
 // 兼容旧库中的 reviewer：历史审核员账号统一迁移为客服角色。
 function normalizeRole(role: string) {
@@ -65,7 +65,7 @@ function tokenForUser(user: any, role: AppRole, roles: AppRole[]) {
     department: user.department,
     organizationId: user.organizationId,
     isOrganizationAdmin: user.isOrganizationAdmin
-  }, JWT_SECRET, { expiresIn: '7d' });
+  }, JWT_SECRET, { expiresIn: '24h' });
 }
 
 // 内存 Mock 数据（数据库连接不可用时的安全回退）
@@ -156,11 +156,11 @@ authRouter.post('/login', async (req, res, next) => {
           };
         }
       } catch (e) {
-        console.error('查询数据库用户出错，切换到内存比对:', e);
+        return next(e);
       }
     }
 
-    if (!user) {
+    if (!user && useMemoryAuth) {
       user = memoryUsers.find(u => u.email === identifier || u.phone === phoneIdentifier);
     }
 
@@ -190,6 +190,7 @@ authRouter.post('/login', async (req, res, next) => {
     const activeRole = roles.includes(normalizeRole(user.role) as AppRole) ? normalizeRole(user.role) as AppRole : roles[0];
     // 签发 JWT Token
     const token = tokenForUser(user, activeRole, roles);
+    setAuthCookie(res, token);
     if (PLATFORM_ROLES.includes(activeRole)) {
       void recordAdminAudit({ operatorId: user.id, operatorName: user.name, module: 'auth', action: 'login', targetType: 'user', targetId: user.id, summary: `${user.name}登录后台`, detail: { method: 'password', role: activeRole }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 登录日志写入失败:', error));
     }
@@ -230,7 +231,7 @@ authRouter.post('/register', async (req, res, next) => {
     const email = channel === 'email' ? normalizeEmail(parseResult.data.email || '') : `${phone}@phone.local`;
     if (channel === 'phone' && !isValidPhone(phone || '')) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
     if (channel === 'email' && !EMAIL_PATTERN.test(email)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的邮箱地址' });
-    if (memoryUsers.some((item) => item.phone === phone || item.email === email)) return res.status(400).json({ code: 400, success: false, message: channel === 'email' ? '该邮箱已注册' : '该手机号已注册' });
+    if (useMemoryAuth && memoryUsers.some((item) => item.phone === phone || item.email === email)) return res.status(400).json({ code: 400, success: false, message: channel === 'email' ? '该邮箱已注册' : '该手机号已注册' });
     try {
       if (channel === 'phone') consumeSmsCode(phone!, parseResult.data.code, 'register');
       else consumeEmailCode(email, parseResult.data.code, 'register');
@@ -278,6 +279,7 @@ authRouter.post('/register', async (req, res, next) => {
     memoryUsers.push(newUser);
 
     const token = tokenForUser(newUser, role, roles);
+    setAuthCookie(res, token);
 
     return res.status(201).json({
       code: 201,
@@ -292,6 +294,11 @@ authRouter.post('/register', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+authRouter.post('/logout', (_req, res) => {
+  clearAuthCookie(res);
+  res.json({ code: 200, success: true, message: '已退出登录', timestamp: Date.now() });
 });
 
 // 3. 使用已绑定手机号或邮箱验证码重置密码。
@@ -320,7 +327,7 @@ authRouter.post('/password/reset', async (req, res, next) => {
       const [result]: any = await dbPool.query(`UPDATE users SET password_hash = ? WHERE ${channel === 'phone' ? 'phone' : 'email'} = ?`, [passwordHash, channel === 'phone' ? phone : email]);
       updated = Boolean(result?.affectedRows);
     }
-    const memoryUser = memoryUsers.find((item) => channel === 'phone' ? item.phone === phone : item.email === email);
+    const memoryUser = useMemoryAuth ? memoryUsers.find((item) => channel === 'phone' ? item.phone === phone : item.email === email) : undefined;
     if (memoryUser) {
       memoryUser.passwordHash = passwordHash;
       updated = true;
@@ -354,7 +361,7 @@ authRouter.post('/sms/send', async (req, res) => {
     const purpose = req.body?.purpose === 'register' || req.body?.purpose === 'reset' ? req.body.purpose : 'login';
     if (!isValidPhone(phone)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
     if (purpose === 'register' || purpose === 'reset') {
-      let exists = memoryUsers.some((item) => item.phone === phone);
+      let exists = useMemoryAuth && memoryUsers.some((item) => item.phone === phone);
       if (dbPool) {
         const [rows]: any = await dbPool.query('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
         exists = Boolean(rows?.length);
@@ -376,7 +383,7 @@ authRouter.post('/email/send', async (req, res) => {
     const purpose = req.body?.purpose === 'register' || req.body?.purpose === 'reset' ? req.body.purpose : null;
     if (!EMAIL_PATTERN.test(email)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的邮箱地址' });
     if (!purpose) return res.status(400).json({ code: 400, success: false, message: '邮箱验证码用途无效' });
-    let exists = memoryUsers.some((item) => item.email === email);
+    let exists = useMemoryAuth && memoryUsers.some((item) => item.email === email);
     if (dbPool) {
       const [rows]: any = await dbPool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
       exists = Boolean(rows?.length);
@@ -403,7 +410,7 @@ authRouter.post('/sms/login', async (req, res, next) => {
       const [rows]: any = await dbPool.query('SELECT * FROM users WHERE phone = ? LIMIT 1', [phone]);
       if (rows?.length) user = { id: rows[0].id, name: rows[0].name, email: rows[0].email, phone: rows[0].phone, passwordHash: rows[0].password_hash, isActive: Boolean(rows[0].is_active), role: normalizeRole(rows[0].role), department: rows[0].department, avatarUrl: rows[0].avatar_url, organizationId: rows[0].organization_id, isOrganizationAdmin: rows[0].is_organization_admin };
     }
-    if (!user) user = memoryUsers.find((item) => item.phone === phone);
+    if (!user && useMemoryAuth) user = memoryUsers.find((item) => item.phone === phone);
     if (user?.isActive === false) return res.status(403).json({ code: 403, success: false, message: '该账号已被管理员停用' });
     if (!user) {
       const userId = `u_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
@@ -440,6 +447,7 @@ authRouter.post('/sms/login', async (req, res, next) => {
     if (PLATFORM_ROLES.includes(activeRole)) {
       void recordAdminAudit({ operatorId: user.id, operatorName: user.name, module: 'auth', action: 'login', targetType: 'user', targetId: user.id, summary: `${user.name}登录后台`, detail: { method: 'sms', role: activeRole }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 登录日志写入失败:', error));
     }
+    setAuthCookie(res, token);
     res.json({ code: 200, success: true, message: registered ? '注册并登录成功' : '登录成功', data: { token, user: userView({ ...user, role: activeRole }, roles) }, timestamp: Date.now() });
   } catch (error) { next(error); }
 });
@@ -507,6 +515,7 @@ authRouter.post('/switch-role', authenticate, async (req, res, next) => {
       isOrganizationAdmin: currentUser.isOrganizationAdmin ?? req.user!.isOrganizationAdmin
     };
     const token = tokenForUser(user, targetRole, roles);
+    setAuthCookie(res, token);
     return res.json({ code: 200, success: true, message: `已切换为${targetRole === 'advertiser' ? '品牌方' : '设计师'}角色`, data: { token, user: userView(user, roles) }, timestamp: Date.now() });
   } catch (err) { next(err); }
 });

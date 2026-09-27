@@ -62,6 +62,9 @@ if (-not $KeepLogs) {
 }
 
 Write-Host '[3/3] Start frontend and backend development services'
+$env:NODE_ENV = 'development'
+$env:WEB_ORIGIN = 'http://localhost:3000'
+$env:PUBLIC_API_ORIGIN = 'http://localhost:8080'
 $serverOut = Join-Path $projectRoot 'server-dev.log'
 $serverErr = Join-Path $projectRoot 'server-dev.err.log'
 $webOut = Join-Path $projectRoot 'web-dev.log'

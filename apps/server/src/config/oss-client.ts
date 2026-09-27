@@ -128,7 +128,7 @@ export async function ensureOssCors() {
     allowedHeader: ['*'],
     exposeHeader: ['ETag', 'x-oss-request-id'],
     maxAgeSeconds: '600'
-  } as const;
+  };
 
   try {
     const current = await ossClient.getBucketCORS(bucket);

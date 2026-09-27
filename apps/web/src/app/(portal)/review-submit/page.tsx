@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { GROUP_MAP, PLATFORM_MAP, type PlatformType, type DesignOrder, type ReviewTask, type OrderImageRequirementItem } from '@design-review/shared';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -39,13 +39,31 @@ import {
 import { fetchWithAuth } from '@/lib/auth';
 import { uploadFile } from '@/lib/upload';
 import { useCurrentUser } from '@/hooks/use-current-user';
+import { AuthenticatedImage } from '@/components/authenticated-image';
+import { ReferenceLinkItemsDetail } from '@/components/reference-link-items-detail';
 
-const selectTriggerClass = 'flex h-9 w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15';
+const selectTriggerClass = 'flex h-9 w-full items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-800 outline-none focus:border-[var(--role-primary)] focus:ring-2 focus:ring-[var(--role-primary-border)]';
 const selectContentClass = 'z-50 max-h-72 min-w-[8rem] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md';
-const selectItemClass = 'flex cursor-pointer items-center rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100 data-[state=checked]:bg-blue-50 data-[state=checked]:text-blue-700';
+const selectItemClass = 'flex cursor-pointer items-center rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100 data-[state=checked]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]';
+
+function RequirementReferences({ group }: { group: OrderImageRequirementItem }) {
+  const imageItems = group.imageItems?.length ? group.imageItems : [{
+    id: `${group.id}-reference`,
+    materialImage: '',
+    description: '',
+    referenceImages: group.referenceImages || [],
+    referenceLinks: group.referenceLinks || [],
+    referenceLinkItems: undefined,
+    referenceLinkDescription: undefined,
+  }];
+  const hasReferences = imageItems.some((item) => item.referenceLinkItems?.some((reference) => reference.image || reference.link || reference.description) || item.referenceImages?.length || item.referenceLinks?.some(Boolean));
+  if (!hasReferences) return null;
+  return <div className="mt-2 rounded-xl bg-slate-50 p-2"><p className="mb-1 text-[10px] font-semibold text-slate-500">品牌方竞品参考</p><div className="space-y-1.5">{imageItems.map((item) => <ReferenceLinkItemsDetail key={item.id} item={item} compact />)}</div></div>;
+}
 
 function ReviewSubmitPageContent() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const user = useCurrentUser();
   const taskId = searchParams.get('taskId') || '';
@@ -133,6 +151,7 @@ function ReviewSubmitPageContent() {
   };
 
   const selectedOrder = claimedOrders.find(o => o.id === selectedOrderId);
+  const requiresPsd = Boolean(selectedOrder?.requiresPsd || task?.requiresPsd);
   const getGroupKey = (group: OrderImageRequirementItem) => group.id;
   const requirementGroups: OrderImageRequirementItem[] = selectedOrder?.imageRequirementGroups?.length
     ? selectedOrder.imageRequirementGroups
@@ -215,6 +234,10 @@ function ReviewSubmitPageContent() {
       toast.error('请至少上传一张待审核效果图');
       return false;
     }
+    if (requireImages && requiresPsd && !sourceFileUrl) {
+      toast.error('该订单要求交付 PSD 源文件，请先上传源文件');
+      return false;
+    }
     return true;
   };
 
@@ -272,7 +295,7 @@ function ReviewSubmitPageContent() {
       toast.success(isDraft ? '已保存为草稿' : '设计稿与源文件已成功提交审核！', {
         description: '任务状态已同步进入审核流水线。'
       });
-      router.push('/review-tasks');
+      router.push(pathname.startsWith('/mobile/') ? '/mobile/tasks' : '/review-tasks');
     } catch (err: any) {
       toast.error(err.message || '提交审核发生错误');
     }
@@ -292,12 +315,12 @@ function ReviewSubmitPageContent() {
       <Card className="glass-card border-white/80 p-6 space-y-6 rounded-3xl bg-white/80 shadow-sm">
         {/* 0. 当前任务 / 订单要求 */}
         {taskId ? (
-          <div className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
-            {loadingTask ? <p className="text-xs text-blue-600">正在载入任务与订单要求...</p> : task ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex items-center gap-2 text-xs font-bold text-blue-900"><Coins className="h-4 w-4 text-blue-600" />当前提审任务 · {task.taskNo}</div><p className="mt-1 text-sm font-semibold text-slate-800">{task.productName}</p><p className="mt-1 text-[11px] text-blue-700">订单表单已载入，以下上传项将按该订单的图片分组和数量要求提交。</p></div><Badge className="w-fit bg-white text-[10px] text-blue-700 shadow-sm">{selectedOrder?.orderNo || '关联订单'}</Badge></div> : <p className="text-xs text-rose-600">任务加载失败，请返回任务列表后重试。</p>}
+          <div className="rounded-2xl border role-primary-border role-primary-soft p-4">
+            {loadingTask ? <p className="text-xs role-primary-text">正在载入任务与订单要求...</p> : task ? <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex items-center gap-2 text-xs font-bold role-primary-text"><Coins className="h-4 w-4 role-primary-text" />当前提审任务 · {task.taskNo}</div><p className="mt-1 text-sm font-semibold text-slate-800">{task.productName}</p><p className="mt-1 text-[11px] role-primary-text">订单表单已载入，以下上传项将按该订单的图片分组和数量要求提交。</p></div><Badge className="w-fit bg-white text-[10px] role-primary-text shadow-sm">{selectedOrder?.orderNo || '关联订单'}</Badge></div> : <p className="text-xs text-rose-600">任务加载失败，请返回任务列表后重试。</p>}
           </div>
         ) : (
-          <div className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1"><div className="flex items-center gap-1.5 text-xs font-bold text-blue-900"><Coins className="h-4 w-4 text-blue-600" />关联前台接单任务</div><p className="text-[11px] text-blue-700">选择您在接单广场中承接的需求，上传内容将按订单要求组织。</p></div>
+          <div className="flex flex-col gap-3 rounded-2xl border role-primary-border role-primary-soft p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1"><div className="flex items-center gap-1.5 text-xs font-bold role-primary-text"><Coins className="h-4 w-4 role-primary-text" />关联前台接单任务</div><p className="text-[11px] role-primary-text">选择您在接单广场中承接的需求，上传内容将按订单要求组织。</p></div>
             <Select.Root value={selectedOrderId || 'unselected'} onValueChange={(value) => handleSelectOrder(value === 'unselected' ? '' : value)}><Select.Trigger className={`${selectTriggerClass} sm:w-80`}><Select.Value placeholder="选择绑定的接单需求" /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className={selectContentClass}><Select.Viewport><Select.Item value="unselected" className={selectItemClass}><Select.ItemText>-- 选择绑定的接单需求 --</Select.ItemText></Select.Item>{claimedOrders.map((o) => <Select.Item key={o.id} value={o.id} className={selectItemClass}><Select.ItemText>{o.orderNo} - {o.title} (¥{o.designerPayout || o.budget})</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
           </div>
         )}
@@ -318,7 +341,7 @@ function ReviewSubmitPageContent() {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">商品名称 (必填)</Label>
+              <Label required className="text-xs font-semibold text-slate-700">商品名称</Label>
               <Input
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
@@ -354,16 +377,16 @@ function ReviewSubmitPageContent() {
 
         {/* 2. 按订单表单的图片分组上传 */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-2"><h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">2. 按订单要求上传设计素材</h2><span className="text-[10px] text-slate-400">已上传 {images.length} 张</span></div>
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2"><h2 className="text-xs font-bold uppercase tracking-wider text-slate-800">2. 按订单要求上传设计素材 <span aria-hidden="true" className="text-rose-500">*</span></h2><span className="text-[10px] text-slate-400">已上传 {images.length} 张</span></div>
           <input type="file" ref={fileInputRef} onChange={handleImageFileUpload} accept="image/png,image/jpeg,image/webp" multiple className="hidden" />
           {requirementGroups.length ? <div className="space-y-3">{requirementGroups.map((group) => {
             const groupImages = images.filter((image) => image.groupId === getGroupKey(group));
             const requiredCount = group.quantity || 1;
             const ratioLabel = GROUP_MAP[group.groupType]?.ratio || '自适应';
             return <div key={group.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-2"><div><div className="flex items-center gap-2"><span className="text-xs font-bold text-slate-800">{group.name}</span><Badge variant="outline" className="border-blue-200 bg-blue-50 text-[10px] text-blue-700">{ratioLabel}</Badge>{group.dimensions && <span className="text-[10px] font-mono text-slate-400">{group.dimensions}</span>}</div>{group.description && <p className="mt-1 text-[11px] leading-5 text-slate-500">{group.description}</p>}</div><span className={`text-[11px] font-semibold ${groupImages.length >= requiredCount ? 'text-emerald-600' : 'text-amber-600'}`}>{groupImages.length} / {requiredCount} 张</span></div>
-              {(group.referenceImageItems?.length || group.referenceImages?.length || group.referenceLinks?.length) ? <div className="mt-2 rounded-xl bg-slate-50 p-2"><p className="text-[10px] font-semibold text-slate-500">品牌方参考要求</p>{(group.referenceImageItems || group.referenceImages.map((url, index) => ({ id: `${group.id}-ref-${index}`, url, description: '' }))).map((reference) => <div key={reference.id} className="mt-1 flex items-center gap-2 text-[10px] text-slate-500"><img src={reference.url} alt="参考图" className="h-8 w-8 rounded-md border border-slate-200 object-cover" /><span className="truncate">{reference.description || '参考图片'}</span></div>)}{group.referenceLinks?.map((link) => <a key={link} href={link} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[10px] text-blue-600 hover:underline">参考链接：{link}</a>)}</div> : null}
-              <div className="mt-2 flex flex-wrap gap-2">{groupImages.map((image, index) => <div key={image.id} className="group relative h-20 w-20 overflow-hidden rounded-xl border border-slate-200 bg-slate-100"><img src={image.url} alt={`${group.name}素材${index + 1}`} className="h-full w-full object-cover" /><Button type="button" size="icon" variant="destructive" onClick={() => setImages((current) => current.filter((item) => item.id !== image.id))} className="absolute right-1 top-1 h-6 w-6 rounded-full opacity-0 transition group-hover:opacity-100"><Trash2 className="h-3 w-3" /></Button><span className="absolute bottom-0 inset-x-0 bg-black/55 py-0.5 text-center text-[9px] text-white">#{index + 1}</span></div>)}<button type="button" disabled={uploadingImage || groupImages.length >= requiredCount} onClick={() => handleStartGroupUpload(group.id)} className="flex h-20 w-20 flex-col items-center justify-center rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/40 text-blue-600 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">{uploadingImage && uploadGroupIdRef.current === group.id ? <Loader2 className="h-5 w-5 animate-spin" /> : <UploadCloud className="h-5 w-5" />}<span className="mt-1 text-[10px]">{groupImages.length >= requiredCount ? '已完成' : '上传素材'}</span></button></div>
+              <div className="flex flex-wrap items-start justify-between gap-2"><div><div className="flex items-center gap-2"><span className="text-xs font-bold text-slate-800">{group.name}</span><Badge variant="outline" className="role-primary-border role-primary-soft text-[10px] role-primary-text">{ratioLabel}</Badge>{group.dimensions && <span className="text-[10px] font-mono text-slate-400">{group.dimensions}</span>}</div>{group.description && <p className="mt-1 text-[11px] leading-5 text-slate-500">{group.description}</p>}</div><span className={`text-[11px] font-semibold ${groupImages.length >= requiredCount ? 'text-emerald-600' : 'text-amber-600'}`}>{groupImages.length} / {requiredCount} 张</span></div>
+              <RequirementReferences group={group} />
+              <div className="mt-2 flex flex-wrap gap-2">{groupImages.map((image, index) => <div key={image.id} className="group relative h-20 w-20 overflow-hidden rounded-xl border border-slate-200 bg-slate-100"><AuthenticatedImage src={image.url} alt={`${group.name}素材${index + 1}`} className="h-full w-full object-cover" /><Button type="button" size="icon" variant="destructive" onClick={() => setImages((current) => current.filter((item) => item.id !== image.id))} className="absolute right-1 top-1 h-6 w-6 rounded-full opacity-0 transition group-hover:opacity-100"><Trash2 className="h-3 w-3" /></Button><span className="absolute bottom-0 inset-x-0 bg-black/55 py-0.5 text-center text-[9px] text-white">#{index + 1}</span></div>)}<button type="button" disabled={uploadingImage || groupImages.length >= requiredCount} onClick={() => handleStartGroupUpload(group.id)} className="flex h-20 w-20 flex-col items-center justify-center rounded-xl border-2 border-dashed role-primary-border role-primary-soft role-primary-text transition hover:bg-[var(--role-primary-soft)] disabled:cursor-not-allowed disabled:opacity-50">{uploadingImage && uploadGroupIdRef.current === group.id ? <Loader2 className="h-5 w-5 animate-spin" /> : <UploadCloud className="h-5 w-5" />}<span className="mt-1 text-[10px]">{groupImages.length >= requiredCount ? '已完成' : '上传素材'}</span></button></div>
             </div>;
           })}</div> : <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-400">当前任务没有可用的图片分组要求</div>}
           <p className="flex items-center gap-1 text-[10px] text-slate-400"><Info className="h-3.5 w-3.5" />每个分组只能上传订单要求数量的素材，上传后会自动关联对应比例。</p>
@@ -374,7 +397,7 @@ function ReviewSubmitPageContent() {
           <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
             <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
               <FileArchive className="w-4 h-4 text-purple-600" />
-              3. 分层源文件包交付 (PSD / AI / C4D / ZIP)
+              3. 分层源文件包交付 (PSD / AI / C4D / ZIP){requiresPsd && <><span className="ml-1 text-rose-500">*</span><span className="sr-only">订单要求必交</span></>}
             </h2>
             <span className="text-[10px] text-slate-400">终审通过与归档依据</span>
           </div>
@@ -394,7 +417,7 @@ function ReviewSubmitPageContent() {
               </div>
               <div>
                 <div className="text-xs font-bold text-slate-800">{sourceFileName || '尚未上传源文件'}</div>
-                <div className="text-[10px] text-slate-400 font-mono">{sourceFileSize ? `${sourceFileSize} · 包含完整文本矢量图层` : '支持 PSD / AI / C4D / ZIP 格式'}</div>
+                <div className="text-[10px] text-slate-400 font-mono">{sourceFileSize ? `${sourceFileSize} · 包含完整文本矢量图层` : requiresPsd ? '此订单需上传 PSD 源文件后才能提交审核' : '支持 PSD / AI / C4D / ZIP 格式'}</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -437,7 +460,7 @@ function ReviewSubmitPageContent() {
             </Button>
             <Button
               onClick={handleReviewSubmitClick}
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-2xl text-xs px-6 h-10 gap-1.5 font-semibold shadow-md shadow-blue-500/20"
+              className="role-primary-bg text-white hover:opacity-90 rounded-2xl text-xs px-6 h-10 gap-1.5 font-semibold shadow-sm"
             >
               <span>提交并派发会审</span>
               <ArrowRight className="w-4 h-4" />

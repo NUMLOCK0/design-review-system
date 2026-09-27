@@ -1,12 +1,6 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-dotenv.config({ path: path.join(__dirname, '../.env') });
+dotenv.config();
 
 const mysqlUrl = process.env.MYSQL_URL;
 
@@ -162,6 +156,19 @@ const ddlStatements = [
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (image_id) REFERENCES review_images(id) ON DELETE CASCADE,
     FOREIGN KEY (task_id) REFERENCES review_tasks(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+  // 9. 客服资料与二维码配置
+  `CREATE TABLE IF NOT EXISTS customer_service_contacts (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    wechat VARCHAR(128) NOT NULL,
+    qr_code_url TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INT NOT NULL DEFAULT 0,
+    created_at VARCHAR(64) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    INDEX idx_customer_service_contacts_order (enabled, sort_order, created_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
 ];
 
@@ -173,6 +180,7 @@ const seedUsers = [
 async function main() {
   let connection;
   try {
+    if (!mysqlUrl) throw new Error('缺少 MYSQL_URL 环境变量');
     connection = await mysql.createConnection(mysqlUrl);
     console.log('✅ 成功连接至 MySQL 服务器!');
 

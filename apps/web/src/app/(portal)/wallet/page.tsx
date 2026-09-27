@@ -157,7 +157,7 @@ export default function DesignerWalletPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700">提现金额 (元) *</label>
+                <label className="text-xs font-semibold text-slate-700">提现金额 (元) <span aria-hidden="true" className="text-rose-500">*</span></label>
                 <div className="relative">
                   <DollarSign className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <Input
@@ -175,9 +175,9 @@ export default function DesignerWalletPage() {
 
               <div className="space-y-3 rounded-2xl border border-slate-100 bg-slate-50 p-3">
                 <label className="block text-xs font-semibold text-slate-700">收款银行卡</label>
-                <Input required value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="开户银行，如招商银行" className="h-9 rounded-xl text-xs" />
-                <Input required value={accountNo} onChange={(e) => setAccountNo(e.target.value)} placeholder="完整银行卡号" inputMode="numeric" className="h-9 rounded-xl text-xs font-mono" />
-                <Input required value={holderName} onChange={(e) => setHolderName(e.target.value)} placeholder="持卡人姓名" className="h-9 rounded-xl text-xs" />
+                <label className="block space-y-1.5 text-xs font-medium text-slate-600">开户银行 <span aria-hidden="true" className="text-rose-500">*</span><Input required value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="开户银行，如招商银行" className="mt-1.5 h-9 rounded-xl text-xs" /></label>
+                <label className="block space-y-1.5 text-xs font-medium text-slate-600">银行卡号 <span aria-hidden="true" className="text-rose-500">*</span><Input required value={accountNo} onChange={(e) => setAccountNo(e.target.value)} placeholder="完整银行卡号" inputMode="numeric" className="mt-1.5 h-9 rounded-xl text-xs font-mono" /></label>
+                <label className="block space-y-1.5 text-xs font-medium text-slate-600">持卡人姓名 <span aria-hidden="true" className="text-rose-500">*</span><Input required value={holderName} onChange={(e) => setHolderName(e.target.value)} placeholder="持卡人姓名" className="mt-1.5 h-9 rounded-xl text-xs" /></label>
               </div>
 
               <div className="p-3 bg-emerald-50/60 rounded-2xl border border-emerald-100 text-[11px] text-emerald-800 space-y-1">

@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { GROUP_MAP, TASK_STATUS_MAP, PLATFORM_MAP, type ReviewTask, type PlatformType } from "@design-review/shared";
 import { Button } from "@/components/ui/button";
+import { AuthenticatedImage } from '@/components/authenticated-image';
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -64,6 +65,20 @@ import { fetchWithAuth } from "@/lib/auth";
 import { useCurrentUser } from "@/hooks/use-current-user";
 import ReviewWorkspaceContent from "@/components/review-workspace";
 import { ConfirmAction } from "@/components/ui/confirm-action";
+import { ReferenceLinkItemsDetail } from '@/components/reference-link-items-detail';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+const ORDER_STATUS_MAP: Record<string, { label: string; className: string }> = {
+  pending_deposit: { label: '待支付定金', className: 'bg-orange-50 text-orange-700 border-orange-100' },
+  pending_service_review: { label: '待客服审核', className: 'bg-amber-50 text-amber-700 border-amber-100' },
+  published: { label: '接单中', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+  claimed: { label: '已接单', className: 'bg-sky-50 text-sky-700 border-sky-100' },
+  in_progress: { label: '制作中', className: 'bg-violet-50 text-violet-700 border-violet-100' },
+  submitted: { label: '待作品审核', className: 'bg-indigo-50 text-indigo-700 border-indigo-100' },
+  completed: { label: '已完成', className: 'bg-slate-100 text-slate-600 border-slate-200' },
+  rejected: { label: '已驳回', className: 'bg-rose-50 text-rose-700 border-rose-100' },
+  cancelled: { label: '已关闭', className: 'bg-slate-100 text-slate-600 border-slate-200' },
+};
 
 export default function ReviewTasksPage() {
   const user = useCurrentUser();
@@ -76,6 +91,7 @@ export default function ReviewTasksPage() {
   // 任务详情弹窗状态
   const [detailTask, setDetailTask] = useState<ReviewTask | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [loadingOrderRequirements, setLoadingOrderRequirements] = useState(false);
   const [workspaceTaskId, setWorkspaceTaskId] = useState<string | null>(null);
 
   const fetchTasks = async () => {
@@ -98,9 +114,21 @@ export default function ReviewTasksPage() {
   }, []);
 
   // 打开任务详情
-  const handleOpenDetail = (task: ReviewTask) => {
+  const handleOpenDetail = async (task: ReviewTask) => {
     setDetailTask(task);
     setShowDetailModal(true);
+    if (!task.orderId) return;
+    setLoadingOrderRequirements(true);
+    try {
+      const response = await fetchWithAuth(`/review-tasks/${task.id}`);
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || '加载图片需求失败');
+      setDetailTask((current) => current?.id === task.id ? { ...current, orderImageRequirementGroups: result.data.orderImageRequirementGroups || [] } : current);
+    } catch (error: any) {
+      toast.error(error.message || '加载图片需求失败');
+    } finally {
+      setLoadingOrderRequirements(false);
+    }
   };
 
   const handleOpenWorkspace = (taskId: string) => {
@@ -362,6 +390,7 @@ export default function ReviewTasksPage() {
                   <TableHead className="font-semibold">切图进度</TableHead>
                   <TableHead className="font-semibold">订单价格</TableHead>
                   <TableHead className="font-semibold">当前状态</TableHead>
+                  <TableHead className="font-semibold">订单状态</TableHead>
                   <TableHead className="font-semibold">更新时间</TableHead>
                   <TableHead className="text-right font-semibold">操作与流转</TableHead>
                 </TableRow>
@@ -411,6 +440,13 @@ export default function ReviewTasksPage() {
                         >
                           {statusMeta.label}
                         </span>
+                      </TableCell>
+
+                      <TableCell>
+                        {(() => {
+                          const orderStatus = task.orderStatus ? ORDER_STATUS_MAP[task.orderStatus] : undefined;
+                          return <Badge variant="outline" className={`text-[10px] ${orderStatus?.className || 'border-slate-200 bg-slate-50 text-slate-500'}`}>{orderStatus?.label || task.orderStatus || '暂无关联订单'}</Badge>;
+                        })()}
                       </TableCell>
 
                       <TableCell className="text-[11px] text-slate-400">
@@ -564,6 +600,19 @@ export default function ReviewTasksPage() {
                   </div>
                 </div>
 
+                <div className="space-y-2">
+                  <div className="font-bold text-slate-800">订单图片设计需求</div>
+                  {loadingOrderRequirements && !detailTask.orderImageRequirementGroups ? <div className="rounded-xl bg-slate-50 p-4 text-center text-xs text-slate-400">正在加载图片需求…</div> : detailTask.orderImageRequirementGroups?.length ? <Tabs key={detailTask.id} defaultValue="requirement-group-0" className="w-full min-w-0">
+                    <TabsList className="flex h-10 w-full justify-start gap-1 overflow-x-auto rounded-xl bg-slate-50 p-1">
+                      {detailTask.orderImageRequirementGroups.map((group, groupIndex) => <TabsTrigger key={group.id || groupIndex} value={`requirement-group-${groupIndex}`} className="h-8 max-w-56 shrink-0 rounded-lg px-3 text-xs text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm">{group.name || `第 ${groupIndex + 1} 组`}<span className="ml-1 text-[10px] text-slate-400">{group.imageItems?.length || group.quantity || 0} 张</span></TabsTrigger>)}
+                    </TabsList>
+                    {detailTask.orderImageRequirementGroups.map((group, groupIndex) => {
+                      const imageItems = group.imageItems?.length ? group.imageItems : (group.materialImages?.length ? group.materialImages : ['']).map((materialImage, imageIndex) => ({ id: `${group.id}-${imageIndex}`, materialImage, description: imageIndex === 0 ? group.description : '', referenceImages: imageIndex === 0 ? group.referenceImages : [], referenceLinks: imageIndex === 0 ? group.referenceLinks : [], referenceLinkItems: undefined, referenceLinkDescription: undefined }));
+                      return <TabsContent key={group.id || groupIndex} value={`requirement-group-${groupIndex}`} className="mt-3"><div className="rounded-2xl border border-slate-200 bg-white p-3"><div className="mb-3 flex items-center justify-between gap-3"><h4 className="font-semibold text-slate-800">{groupIndex + 1}. {group.name}</h4><span className="shrink-0 text-[11px] text-slate-400">{imageItems.length} 张 · {group.dimensions || group.groupType}</span></div><div className="space-y-3">{imageItems.map((item, imageIndex) => <div key={item.id || imageIndex} className="rounded-xl bg-slate-50/70 p-3"><div className="mb-2 flex items-center justify-between"><span className="font-semibold text-slate-700">第 {imageIndex + 1} 张</span><span className="text-[10px] text-slate-400">{group.dimensions || '标准尺寸'}</span></div><div className="grid gap-3 sm:grid-cols-2">{item.materialImage && <div><p className="mb-1 font-medium text-slate-500">素材原图</p><AuthenticatedImage src={item.materialImage} alt={`${group.name}素材原图${imageIndex + 1}`} className="aspect-square w-full rounded-lg border border-slate-200 bg-white object-cover" /></div>}{item.description && <div className="sm:col-span-2"><p className="mb-1 font-medium text-slate-500">设计要点</p><p className="whitespace-pre-wrap break-words rounded-lg bg-white p-2 leading-5">{item.description}</p></div>}<ReferenceLinkItemsDetail item={item} /></div></div>)}</div></div></TabsContent>;
+                    })}
+                  </Tabs> : <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-slate-400">暂无订单图片设计需求</div>}
+                </div>
+
                 {/* 关联图片分组与切图列表 */}
                 <div className="space-y-2">
                   <div className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -583,7 +632,7 @@ export default function ReviewTasksPage() {
                           <div className="flex flex-wrap gap-2">
                             {grp.images?.map((img, imgIdx) => (
                               <div key={img.id || imgIdx} className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 group">
-                                <img src={img.imageUrl} alt="切图" className="w-full h-full object-cover" />
+                                <AuthenticatedImage src={img.imageUrl} alt="切图" className="w-full h-full object-cover" />
                                 <span className={`absolute bottom-0 inset-x-0 text-center text-[9px] text-white py-0.2 ${
                                   img.status === 'approved' ? 'bg-emerald-600/90' : (img.status === 'rejected' ? 'bg-rose-600/90' : 'bg-black/60')
                                 }`}>
@@ -607,7 +656,7 @@ export default function ReviewTasksPage() {
                   <div className="flex items-center gap-2.5">
                     <FileArchive className="w-4 h-4 text-purple-600" />
                     <div>
-                      <div className="font-bold text-slate-800">分层源文件 (PSD/AI/ZIP)</div>
+                    <div className="font-bold text-slate-800">分层源文件 (PSD/AI/ZIP){detailTask.requiresPsd && <span className="ml-1 text-rose-500">· 订单要求必交</span>}</div>
                       <div className="text-[10px] text-slate-400">{detailTask.sourceFileName || '未上传源文件包'}</div>
                     </div>
                   </div>

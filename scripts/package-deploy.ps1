@@ -44,9 +44,40 @@ function Copy-ProjectTree {
 }
 
 try {
+  Push-Location $projectRoot
+  $previousNodeEnv = $env:NODE_ENV
+  try {
+    $env:NODE_ENV = 'production'
+    Write-Output '[1/4] Building server locally'
+    pnpm --filter @design-review/server build
+    if ($LASTEXITCODE -ne 0) { throw 'Backend build failed' }
+
+    Write-Output '[2/4] Building web locally'
+    pnpm --filter @design-review/web build
+    if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
+  } finally {
+    if ($null -eq $previousNodeEnv) { Remove-Item Env:NODE_ENV -ErrorAction SilentlyContinue }
+    else { $env:NODE_ENV = $previousNodeEnv }
+    Pop-Location
+  }
+
+  $serverBuild = Join-Path $projectRoot 'apps/server/dist/server.js'
+  $webBuild = Join-Path $projectRoot 'apps/web/.next/BUILD_ID'
+  if (-not (Test-Path -LiteralPath $serverBuild)) { throw "Backend build output missing: $serverBuild" }
+  if (-not (Test-Path -LiteralPath $webBuild)) { throw "Frontend build output missing: $webBuild" }
+
   New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
   New-Item -ItemType Directory -Path $releaseDirectory -Force | Out-Null
   Copy-ProjectTree -Source $projectRoot -Destination $stageRoot
+
+  Copy-Item -LiteralPath (Join-Path $projectRoot 'apps/server/dist') -Destination (Join-Path $stageRoot 'apps/server/dist') -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $projectRoot 'apps/web/.next') -Destination (Join-Path $stageRoot 'apps/web/.next') -Recurse -Force
+  $webBuildCache = Join-Path $stageRoot 'apps/web/.next/cache'
+  if (Test-Path -LiteralPath $webBuildCache) {
+    Remove-Item -LiteralPath $webBuildCache -Recurse -Force
+  }
+
+  Write-Output '[3/4] Packaging source and local build outputs'
   Compress-Archive -Path $stageRoot -DestinationPath $zipPath -CompressionLevel Optimal -Force
   Write-Output "Deployment package created: $zipPath"
 } finally {

@@ -85,6 +85,12 @@ function createRule(body: any, owner?: { id: string; name: string; organizationI
   };
 }
 
+function hasUnauthorizedReviewer(body: any, reviewerId: string) {
+  return Array.isArray(body?.levels) && body.levels.some((level: any) =>
+    Array.isArray(level?.reviewerIds) && level.reviewerIds.some((id: unknown) => id !== reviewerId)
+  );
+}
+
 // 1. 获取所有审核规则流配置
 reviewRulesRouter.get('/', authenticate, requireRoles('admin'), (req, res) => {
   const page = Math.max(Number(req.query.page) || 1, 1);
@@ -111,6 +117,7 @@ reviewRulesRouter.get('/mine', authenticate, requireRoles('advertiser', 'admin')
 });
 
 reviewRulesRouter.post('/mine', authenticate, requireRoles('advertiser'), (req, res) => {
+  if (hasUnauthorizedReviewer(req.body, req.user!.id)) return res.status(400).json({ code: 400, success: false, message: '审核流只能指派当前账号可管理的审核人' });
   const rule = createRule(req.body, {
     id: req.user!.id,
     name: req.user!.name,
@@ -122,9 +129,11 @@ reviewRulesRouter.post('/mine', authenticate, requireRoles('advertiser'), (req, 
 });
 
 reviewRulesRouter.put('/mine/:id', authenticate, requireRoles('advertiser'), (req, res) => {
+  if (hasUnauthorizedReviewer(req.body, req.user!.id)) return res.status(400).json({ code: 400, success: false, message: '审核流只能指派当前账号可管理的审核人' });
   const index = rules.findIndex((rule) => rule.id === req.params.id && rule.ownerId === req.user!.id);
   if (index < 0) return res.status(404).json({ code: 404, success: false, message: '审核流不存在或无权修改' });
   const current = rules[index];
+  if (current.id === `rule_self_${req.user!.id}` && req.body?.isActive === false) return res.status(400).json({ code: 400, success: false, message: '默认的自己审核流程不可停用' });
   rules[index] = {
     ...current,
     ...req.body,
@@ -186,7 +195,7 @@ reviewRulesRouter.put('/:id', authenticate, requireRoles('admin'), (req, res) =>
     updatedAt: new Date().toISOString()
   };
   void persistReviewRule(rules[index]);
-  void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'review_rules', action: 'update', targetType: 'review_rule', targetId: id, summary: `${req.user!.name}更新审核规则「${rules[index].name}」`, detail: { changedFields: Object.keys(req.body || {}) }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 审核规则日志写入失败:', error));
+  void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'review_rules', action: 'update', targetType: 'review_rule', targetId: String(id), summary: `${req.user!.name}更新审核规则「${rules[index].name}」`, detail: { changedFields: Object.keys(req.body || {}) }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 审核规则日志写入失败:', error));
 
   res.json({
     code: 200,

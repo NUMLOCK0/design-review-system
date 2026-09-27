@@ -15,6 +15,30 @@ type Stores = {
   withdrawalRequests: WithdrawalRequest[];
 };
 
+export type PaymentEventRecord = {
+  id: string;
+  orderId: string;
+  orderNo: string;
+  stage: 'deposit' | 'balance';
+  paymentType?: string;
+  outTradeNo: string;
+  tradeNo?: string;
+  amount: number;
+  status: 'checkout_created' | 'success' | 'failed' | 'duplicate';
+  rawPayload?: unknown;
+  createdAt: string;
+};
+
+export type PendingOssUploadRecord = {
+  assetId: string;
+  ownerId: string;
+  objectKey: string;
+  filename: string;
+  mimetype: string;
+  size: number;
+  expiresAt: number;
+};
+
 const json = (value: unknown) => JSON.stringify(value ?? null);
 const mysqlDate = (value: string | undefined) => value ? new Date(value).toISOString().slice(0, 19).replace('T', ' ') : null;
 const parseJson = <T>(value: unknown, fallback: T): T => {
@@ -37,8 +61,8 @@ async function normalizeCollations() {
     'users', 'user_roles', 'review_rules', 'review_rule_levels', 'review_tasks',
     'review_image_groups', 'review_images', 'review_annotations', 'review_history',
     'design_orders', 'order_disputes', 'service_action_logs', 'admin_audit_logs', 'system_configs',
-    'media_assets', 'site_messages', 'designer_profiles', 'designer_portfolios',
-    'order_invitations', 'designer_wallets', 'withdrawal_requests'
+    'media_assets', 'site_messages', 'designer_profiles', 'designer_portfolios', 'customer_service_contacts',
+    'order_invitations', 'designer_wallets', 'withdrawal_requests', 'payment_events', 'pending_oss_uploads'
   ];
   const [rows]: any = await dbPool!.query(
     `SELECT TABLE_NAME FROM information_schema.TABLES
@@ -60,7 +84,7 @@ async function ensureSchema() {
     budget DECIMAL(12,2) NOT NULL,
     platform_commission_rate DECIMAL(8,4) NOT NULL DEFAULT 0,
     designer_payout DECIMAL(12,2) NOT NULL DEFAULT 0,
-    deadline VARCHAR(64), urgency VARCHAR(20), requirements TEXT,
+    deadline VARCHAR(64), urgency VARCHAR(20), requirements TEXT, requires_psd BOOLEAN NOT NULL DEFAULT FALSE,
     image_requirement_groups JSON, reference_images JSON, attachment_url TEXT,
     status VARCHAR(32) NOT NULL, publication_status VARCHAR(32), publication_review_comment TEXT,
     publication_reviewed_at VARCHAR(64), publication_reviewer_id VARCHAR(64), publication_reviewer_name VARCHAR(64),
@@ -69,7 +93,9 @@ async function ensureSchema() {
     claimed_at VARCHAR(64), completed_at VARCHAR(64), task_id VARCHAR(64), is_disputed BOOLEAN DEFAULT FALSE,
     dispute_id VARCHAR(64), payment_status VARCHAR(32), deposit_rate DECIMAL(8,4), deposit_amount DECIMAL(12,2),
     deposit_out_trade_no VARCHAR(64), deposit_trade_no VARCHAR(128), deposit_paid_at VARCHAR(64), balance_amount DECIMAL(12,2),
-    balance_out_trade_no VARCHAR(64), balance_trade_no VARCHAR(128), balance_paid_at VARCHAR(64), created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64)
+    balance_out_trade_no VARCHAR(64), balance_trade_no VARCHAR(128), balance_paid_at VARCHAR(64),
+    deposit_refund_status VARCHAR(24), deposit_refund_trade_no VARCHAR(128), deposit_refunded_at VARCHAR(64),
+    created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`);
   await dbPool!.query(`CREATE TABLE IF NOT EXISTS order_disputes (
     id VARCHAR(64) PRIMARY KEY, order_id VARCHAR(64) NOT NULL, order_no VARCHAR(64) NOT NULL,
@@ -77,6 +103,19 @@ async function ensureSchema() {
     respondent_id VARCHAR(64), respondent_name VARCHAR(128), reason VARCHAR(256) NOT NULL, description TEXT NOT NULL,
     evidence_urls JSON, status VARCHAR(32) NOT NULL, handler_id VARCHAR(64), handler_name VARCHAR(128),
     resolution_comment TEXT, payload_json JSON, created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`);
+  await dbPool!.query(`CREATE TABLE IF NOT EXISTS payment_events (
+    id VARCHAR(96) PRIMARY KEY, order_id VARCHAR(64) NOT NULL, order_no VARCHAR(64) NOT NULL,
+    stage VARCHAR(16) NOT NULL, payment_type VARCHAR(32), out_trade_no VARCHAR(128) NOT NULL,
+    trade_no VARCHAR(128), amount DECIMAL(12,2) NOT NULL DEFAULT 0, status VARCHAR(32) NOT NULL,
+    raw_payload JSON, created_at VARCHAR(64) NOT NULL,
+    INDEX idx_payment_events_order (order_id, created_at), INDEX idx_payment_events_out_trade (out_trade_no, created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`);
+  await dbPool!.query(`CREATE TABLE IF NOT EXISTS pending_oss_uploads (
+    asset_id VARCHAR(64) PRIMARY KEY, owner_id VARCHAR(64) NOT NULL, object_key VARCHAR(512) NOT NULL,
+    filename VARCHAR(512) NOT NULL, mimetype VARCHAR(128) NOT NULL, size BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL, created_at VARCHAR(64) NOT NULL,
+    INDEX idx_pending_oss_expiry (expires_at), INDEX idx_pending_oss_owner (owner_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`);
   await dbPool!.query(`CREATE TABLE IF NOT EXISTS service_action_logs (
     id VARCHAR(96) PRIMARY KEY, task_type VARCHAR(32) NOT NULL, task_id VARCHAR(64) NOT NULL,
@@ -93,11 +132,18 @@ async function ensureSchema() {
   await dbPool!.query(`CREATE TABLE IF NOT EXISTS system_configs (
     id VARCHAR(64) PRIMARY KEY, payload_json JSON NOT NULL, updated_at VARCHAR(64) NOT NULL
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`);
+  await dbPool!.query(`CREATE TABLE IF NOT EXISTS customer_service_contacts (
+    id VARCHAR(64) PRIMARY KEY, name VARCHAR(64) NOT NULL, wechat VARCHAR(128) NOT NULL,
+    qr_code_url TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, sort_order INT NOT NULL DEFAULT 0,
+    created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64) NOT NULL,
+    INDEX idx_customer_service_contacts_order (enabled, sort_order, created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
   await addColumn('design_orders', 'service_assignee_id', 'VARCHAR(64)');
   await addColumn('design_orders', 'service_assignee_name', 'VARCHAR(128)');
   await addColumn('design_orders', 'service_claimed_at', 'VARCHAR(64)');
   await addColumn('design_orders', 'service_due_at', 'VARCHAR(64)');
   await addColumn('design_orders', 'service_priority', "VARCHAR(20) NOT NULL DEFAULT 'normal'");
+  await addColumn('design_orders', 'requires_psd', 'BOOLEAN NOT NULL DEFAULT FALSE');
   await addColumn('design_orders', 'payment_status', 'VARCHAR(32)');
   await addColumn('design_orders', 'deposit_rate', 'DECIMAL(8,4)');
   await addColumn('design_orders', 'deposit_amount', 'DECIMAL(12,2)');
@@ -108,6 +154,9 @@ async function ensureSchema() {
   await addColumn('design_orders', 'balance_out_trade_no', 'VARCHAR(64)');
   await addColumn('design_orders', 'balance_trade_no', 'VARCHAR(128)');
   await addColumn('design_orders', 'balance_paid_at', 'VARCHAR(64)');
+  await addColumn('design_orders', 'deposit_refund_status', 'VARCHAR(24)');
+  await addColumn('design_orders', 'deposit_refund_trade_no', 'VARCHAR(128)');
+  await addColumn('design_orders', 'deposit_refunded_at', 'VARCHAR(64)');
   await dbPool!.query(`UPDATE design_orders SET payment_status='deposit_paid', deposit_rate=0.3,
     deposit_amount=ROUND(budget * 0.3, 2), balance_amount=budget - ROUND(budget * 0.3, 2)
     WHERE id LIKE 'seed_order_%' AND payment_status IS NULL`);
@@ -294,6 +343,162 @@ async function loadMediaAssets() {
   }
 }
 
+type StoredImageAsset = { id: string; ossOriginalKey?: string };
+
+function stableImageUrl(assetId: string) {
+  return `/api/upload/previews/${assetId}`;
+}
+
+function normalizeStoredImageUrl(value: string, assetsById: Map<string, StoredImageAsset>, assets: StoredImageAsset[]) {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+
+  const protectedMatch = trimmed.match(/\/api\/upload\/(?:assets|previews)\/([^/?#]+)/i);
+  if (protectedMatch) {
+    const asset = assetsById.get(decodeURIComponent(protectedMatch[1]));
+    return asset ? stableImageUrl(asset.id) : value;
+  }
+
+  const legacyPreviewMatch = trimmed.match(/\/uploads\/previews\/([^/?#]+)\.webp(?:[?#].*)?$/i);
+  if (legacyPreviewMatch) {
+    const asset = assetsById.get(decodeURIComponent(legacyPreviewMatch[1]));
+    return asset ? stableImageUrl(asset.id) : value;
+  }
+
+  const embeddedAssetId = trimmed.match(/(asset_[a-z0-9]+)/i)?.[1];
+  if (embeddedAssetId) {
+    const asset = assetsById.get(embeddedAssetId);
+    if (asset) return stableImageUrl(asset.id);
+  }
+
+  let pathname = '';
+  try {
+    pathname = decodeURIComponent(new URL(trimmed).pathname).replace(/^\/+/, '');
+  } catch {
+    return value;
+  }
+  const asset = assets.find((candidate) => {
+    const key = candidate.ossOriginalKey?.replace(/^\/+/, '');
+    return Boolean(key && (pathname === key || pathname.endsWith(`/${key}`)));
+  });
+  return asset ? stableImageUrl(asset.id) : value;
+}
+
+function normalizeStoredImageValue(value: unknown, assetsById: Map<string, StoredImageAsset>, assets: StoredImageAsset[]): unknown {
+  if (typeof value === 'string') return normalizeStoredImageUrl(value, assetsById, assets);
+  if (Array.isArray(value)) return value.map((item) => normalizeStoredImageValue(item, assetsById, assets));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalizeStoredImageValue(item, assetsById, assets)]));
+  }
+  return value;
+}
+
+export async function migrateStoredImageUrls() {
+  const readRows = async (sql: string) => {
+    try {
+      return (await dbPool!.query(sql)) as any;
+    } catch (error: any) {
+      if (error?.code === 'ER_NO_SUCH_TABLE') return [[]] as any;
+      throw error;
+    }
+  };
+  const [assetRows]: any = await readRows("SELECT id, kind, oss_original_key FROM media_assets WHERE kind = 'image'");
+  const assets: StoredImageAsset[] = (assetRows || []).map((row: any) => ({ id: String(row.id), ossOriginalKey: row.oss_original_key || undefined }));
+  if (!assets.length) return 0;
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
+  let changed = 0;
+
+  const jsonColumns = [
+    ['design_orders', 'id', 'image_requirement_groups'],
+    ['design_orders', 'id', 'reference_images'],
+    ['review_tasks', 'id', 'payload_json'],
+    ['order_disputes', 'id', 'evidence_urls'],
+    ['order_disputes', 'id', 'payload_json'],
+    ['designer_profiles', 'user_id', 'portfolio_urls'],
+    ['designer_portfolios', 'id', 'image_urls'],
+    ['system_configs', 'id', 'payload_json'],
+  ] as const;
+  for (const [table, idColumn, column] of jsonColumns) {
+    const [rows]: any = await readRows(`SELECT \`${idColumn}\`, \`${column}\` FROM \`${table}\``);
+    for (const row of rows || []) {
+      const original = row[column];
+      if (original === null || original === undefined) continue;
+      const parsed = typeof original === 'string' ? parseJson<unknown>(original, original) : original;
+      const normalized = normalizeStoredImageValue(parsed, assetsById, assets);
+      if (JSON.stringify(normalized) === JSON.stringify(parsed)) continue;
+      await dbPool!.query(`UPDATE \`${table}\` SET \`${column}\` = ? WHERE \`${idColumn}\` = ?`, [JSON.stringify(normalized), row[idColumn]]);
+      changed += 1;
+    }
+  }
+
+  const textColumns = [
+    ['users', 'id', 'avatar_url'],
+    ['review_images', 'id', 'image_url'],
+    ['review_images', 'id', 'thumbnail_url'],
+    ['review_history', 'id', 'image_url'],
+    ['designer_portfolios', 'id', 'cover_url'],
+    ['customer_service_contacts', 'id', 'qr_code_url'],
+  ] as const;
+  for (const [table, idColumn, column] of textColumns) {
+    const [rows]: any = await readRows(`SELECT \`${idColumn}\`, \`${column}\` FROM \`${table}\` WHERE \`${column}\` IS NOT NULL AND \`${column}\` <> ''`);
+    for (const row of rows || []) {
+      const original = String(row[column]);
+      const normalized = normalizeStoredImageUrl(original, assetsById, assets);
+      if (normalized === original) continue;
+      await dbPool!.query(`UPDATE \`${table}\` SET \`${column}\` = ? WHERE \`${idColumn}\` = ?`, [normalized, row[idColumn]]);
+      changed += 1;
+    }
+  }
+
+  if (changed) console.log(`✅ 已修复数据库中的 ${changed} 条历史图片地址`);
+  return changed;
+}
+
+export async function migrateReferenceLinkItems() {
+  const [rows]: any = await dbPool!.query('SELECT id, image_requirement_groups FROM design_orders');
+  let changed = 0;
+  for (const row of rows || []) {
+    const groups = parseJson<any[]>(row.image_requirement_groups, []);
+    if (!Array.isArray(groups)) continue;
+    const normalized = groups.map((group: any) => {
+      const imageItems = Array.isArray(group.imageItems) ? group.imageItems.map((item: any, imageIndex: number) => {
+        const oldItems = Array.isArray(item.referenceLinkItems) && item.referenceLinkItems.some((reference: any) => reference?.image || reference?.link || reference?.description)
+          ? item.referenceLinkItems
+          : Array.from({ length: Math.max(item.referenceImages?.length || 0, item.referenceLinks?.length || 0) }, (_, referenceIndex) => ({
+              id: `${item.id || `${group.id || row.id}_image_${imageIndex}`}_reference_${referenceIndex}`,
+              image: item.referenceImages?.[referenceIndex] || '',
+              link: item.referenceLinks?.[referenceIndex] || '',
+              description: referenceIndex === 0 ? item.referenceLinkDescription || '' : '',
+            }));
+        const referenceLinkItems = oldItems
+          .map((reference: any, referenceIndex: number) => ({
+            id: reference.id || `${item.id || `${group.id || row.id}_image_${imageIndex}`}_reference_${referenceIndex}`,
+            image: reference.image || '',
+            link: reference.link || '',
+            description: reference.description || '',
+          }))
+          .filter((reference: any) => reference.image || reference.link || reference.description);
+        return {
+          ...item,
+          referenceLinkItems,
+          referenceImages: referenceLinkItems.map((reference: any) => reference.image).filter(Boolean),
+          referenceLinks: referenceLinkItems.map((reference: any) => reference.link).filter(Boolean),
+        };
+      }) : [];
+      return {
+        ...group,
+        imageItems,
+        referenceImages: imageItems.flatMap((item: any) => item.referenceImages || []),
+        referenceLinks: imageItems.flatMap((item: any) => item.referenceLinks || []),
+      };
+    });
+    if (JSON.stringify(normalized) === JSON.stringify(groups)) continue;
+    await dbPool!.query('UPDATE design_orders SET image_requirement_groups=? WHERE id=?', [JSON.stringify(normalized), row.id]);
+    changed += 1;
+  }
+  return changed;
+}
+
 async function loadMessages(stores: Stores) {
   const [rows]: any = await dbPool!.query('SELECT * FROM site_messages ORDER BY created_at DESC');
   stores.messages.splice(0, stores.messages.length, ...rows.map((row: any) => ({
@@ -315,16 +520,17 @@ export async function persistDesignOrder(order: DesignOrder) {
   try {
     await dbPool.query(`INSERT INTO design_orders (
       id, order_no, title, category, platform, budget, platform_commission_rate, designer_payout, deadline, urgency,
-      requirements, image_requirement_groups, reference_images, attachment_url, status, publication_status,
+      requirements, requires_psd, image_requirement_groups, reference_images, attachment_url, status, publication_status,
       publication_review_comment, publication_reviewed_at, publication_reviewer_id, publication_reviewer_name,
       creator_id, creator_name, organization_id, review_rule_id, review_rule_name, claimed_by_id, claimed_by_name,
       claimed_at, completed_at, task_id, is_disputed, dispute_id, service_assignee_id, service_assignee_name,
       service_claimed_at, service_due_at, service_priority, payment_status, deposit_rate, deposit_amount, deposit_out_trade_no,
-      deposit_trade_no, deposit_paid_at, balance_amount, balance_out_trade_no, balance_trade_no, balance_paid_at, created_at, updated_at
-    ) VALUES (${Array(49).fill('?').join(',')})
+      deposit_trade_no, deposit_paid_at, balance_amount, balance_out_trade_no, balance_trade_no, balance_paid_at,
+      deposit_refund_status, deposit_refund_trade_no, deposit_refunded_at, created_at, updated_at
+    ) VALUES (${Array(53).fill('?').join(',')})
     ON DUPLICATE KEY UPDATE title=VALUES(title), category=VALUES(category), platform=VALUES(platform), budget=VALUES(budget),
       platform_commission_rate=VALUES(platform_commission_rate), designer_payout=VALUES(designer_payout), deadline=VALUES(deadline),
-      urgency=VALUES(urgency), requirements=VALUES(requirements), image_requirement_groups=VALUES(image_requirement_groups),
+      urgency=VALUES(urgency), requirements=VALUES(requirements), requires_psd=VALUES(requires_psd), image_requirement_groups=VALUES(image_requirement_groups),
       reference_images=VALUES(reference_images), status=VALUES(status), publication_status=VALUES(publication_status),
       publication_review_comment=VALUES(publication_review_comment), publication_reviewed_at=VALUES(publication_reviewed_at),
       publication_reviewer_id=VALUES(publication_reviewer_id), publication_reviewer_name=VALUES(publication_reviewer_name),
@@ -333,9 +539,10 @@ export async function persistDesignOrder(order: DesignOrder) {
       service_assignee_id=VALUES(service_assignee_id), service_assignee_name=VALUES(service_assignee_name), service_claimed_at=VALUES(service_claimed_at),
       service_due_at=VALUES(service_due_at), service_priority=VALUES(service_priority), payment_status=VALUES(payment_status), deposit_rate=VALUES(deposit_rate),
       deposit_amount=VALUES(deposit_amount), deposit_out_trade_no=VALUES(deposit_out_trade_no), deposit_trade_no=VALUES(deposit_trade_no), deposit_paid_at=VALUES(deposit_paid_at),
-      balance_amount=VALUES(balance_amount), balance_out_trade_no=VALUES(balance_out_trade_no), balance_trade_no=VALUES(balance_trade_no), balance_paid_at=VALUES(balance_paid_at), updated_at=VALUES(updated_at)`, [
+      balance_amount=VALUES(balance_amount), balance_out_trade_no=VALUES(balance_out_trade_no), balance_trade_no=VALUES(balance_trade_no), balance_paid_at=VALUES(balance_paid_at),
+      deposit_refund_status=VALUES(deposit_refund_status), deposit_refund_trade_no=VALUES(deposit_refund_trade_no), deposit_refunded_at=VALUES(deposit_refunded_at), updated_at=VALUES(updated_at)`, [
       order.id, order.orderNo, order.title, order.category, order.platform, order.budget, order.platformCommissionRate, order.designerPayout,
-      order.deadline, order.urgency, order.requirements, json(order.imageRequirementGroups), json(order.referenceImages), order.attachmentUrl || null,
+      order.deadline, order.urgency, order.requirements, order.requiresPsd ? 1 : 0, json(order.imageRequirementGroups), json(order.referenceImages), order.attachmentUrl || null,
       order.status, order.publicationStatus || null, order.publicationReviewComment || null, order.publicationReviewedAt || null,
       order.publicationReviewerId || null, order.publicationReviewerName || null, order.creatorId, order.creatorName, order.organizationId || null,
       order.reviewRuleId || null, order.reviewRuleName || null, order.claimedById || null, order.claimedByName || null, order.claimedAt || null,
@@ -343,9 +550,50 @@ export async function persistDesignOrder(order: DesignOrder) {
       order.serviceAssigneeId || null, order.serviceAssigneeName || null, order.serviceClaimedAt || null, order.serviceDueAt || null, order.servicePriority || 'normal',
       order.paymentStatus || null, order.depositRate ?? null, order.depositAmount ?? null, order.depositOutTradeNo || null, order.depositTradeNo || null,
       order.depositPaidAt || null, order.balanceAmount ?? null, order.balanceOutTradeNo || null, order.balanceTradeNo || null, order.balancePaidAt || null,
+      order.depositRefundStatus || null, order.depositRefundTradeNo || null, order.depositRefundedAt || null,
       order.createdAt, order.updatedAt || null
     ]);
   } catch (error) { console.error('[MySQL] 保存设计订单失败:', error); }
+}
+
+export async function persistPaymentEvent(event: PaymentEventRecord) {
+  if (!dbPool) return;
+  try {
+    await dbPool.query(`INSERT INTO payment_events
+      (id, order_id, order_no, stage, payment_type, out_trade_no, trade_no, amount, status, raw_payload, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`, [
+      event.id, event.orderId, event.orderNo, event.stage, event.paymentType || null, event.outTradeNo,
+      event.tradeNo || null, event.amount, event.status, json(event.rawPayload), event.createdAt
+    ]);
+  } catch (error) {
+    console.error('[MySQL] 保存支付事件失败:', error);
+  }
+}
+
+export async function persistPendingOssUpload(upload: PendingOssUploadRecord) {
+  if (!dbPool) return;
+  try {
+    await dbPool.query(`INSERT INTO pending_oss_uploads (asset_id, owner_id, object_key, filename, mimetype, size, expires_at, created_at)
+      VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE owner_id=VALUES(owner_id), object_key=VALUES(object_key), filename=VALUES(filename), mimetype=VALUES(mimetype), size=VALUES(size), expires_at=VALUES(expires_at)`, [
+      upload.assetId, upload.ownerId, upload.objectKey, upload.filename, upload.mimetype, upload.size, upload.expiresAt, new Date().toISOString()
+    ]);
+  } catch (error) {
+    console.error('[MySQL] 保存 OSS 上传任务失败:', error);
+    throw error;
+  }
+}
+
+export async function findPendingOssUpload(assetId: string): Promise<PendingOssUploadRecord | undefined> {
+  if (!dbPool) return undefined;
+  const [rows]: any = await dbPool.query('SELECT asset_id, owner_id, object_key, filename, mimetype, size, expires_at FROM pending_oss_uploads WHERE asset_id=? LIMIT 1', [assetId]);
+  const row = rows?.[0];
+  if (!row) return undefined;
+  return { assetId: row.asset_id, ownerId: row.owner_id, objectKey: row.object_key, filename: row.filename, mimetype: row.mimetype, size: Number(row.size), expiresAt: Number(row.expires_at) };
+}
+
+export async function removePendingOssUpload(assetId: string) {
+  if (!dbPool) return;
+  await dbPool.query('DELETE FROM pending_oss_uploads WHERE asset_id=?', [assetId]);
 }
 
 export async function persistReviewRule(rule: ReviewRule) {
@@ -437,7 +685,7 @@ async function loadStores(stores: Stores) {
     return {
     id: row.id, orderNo: row.order_no, title: row.title, category: row.category, platform: row.platform,
     budget, platformCommissionRate, designerPayout: settlement.designerPayout,
-    deadline: row.deadline, urgency: row.urgency, requirements: row.requirements || '', imageRequirementGroups: parseJson(row.image_requirement_groups, []),
+    deadline: row.deadline, urgency: row.urgency, requirements: row.requirements || '', requiresPsd: Boolean(row.requires_psd), imageRequirementGroups: parseJson(row.image_requirement_groups, []),
     referenceImages: parseJson(row.reference_images, []), attachmentUrl: row.attachment_url || undefined, status: row.status,
     publicationStatus: row.publication_status || undefined, publicationReviewComment: row.publication_review_comment || undefined,
     publicationReviewedAt: row.publication_reviewed_at || undefined, publicationReviewerId: row.publication_reviewer_id || undefined,
@@ -451,6 +699,7 @@ async function loadStores(stores: Stores) {
     depositRate,
     depositAmount: settlement.depositAmount,
     depositOutTradeNo: row.deposit_out_trade_no || undefined, depositTradeNo: row.deposit_trade_no || undefined, depositPaidAt: row.deposit_paid_at || undefined,
+    depositRefundStatus: row.deposit_refund_status || undefined, depositRefundTradeNo: row.deposit_refund_trade_no || undefined, depositRefundedAt: row.deposit_refunded_at || undefined,
     balanceAmount: settlement.balanceAmount,
     balanceOutTradeNo: row.balance_out_trade_no || undefined, balanceTradeNo: row.balance_trade_no || undefined, balancePaidAt: row.balance_paid_at || undefined,
     createdAt: row.created_at, updatedAt: row.updated_at || undefined
@@ -564,6 +813,8 @@ export async function initializePersistence(stores: Stores) {
   try {
     await ensureSchema();
     await clearTestData(stores);
+    await migrateStoredImageUrls();
+    await migrateReferenceLinkItems();
     const [orderCount]: any = await dbPool.query('SELECT COUNT(*) AS count FROM design_orders');
     if (Number(orderCount[0].count) === 0) for (const order of stores.designOrders) await persistDesignOrder(order);
     const [ruleCount]: any = await dbPool.query('SELECT COUNT(*) AS count FROM review_rules');

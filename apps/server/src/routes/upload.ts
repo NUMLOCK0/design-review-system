@@ -6,6 +6,7 @@ import { authenticate } from '../middleware/auth.middleware.js';
 import {
   createOssObjectKey,
   getObjectFromOss,
+  getSignedOssUrl,
   getSignedOssUploadUrl,
   getSignedOssProcessUrl,
   headOssObject,
@@ -20,7 +21,7 @@ import {
   protectedAssets,
   PUBLIC_PREVIEWS_DIR
 } from '../utils/media-protection.js';
-import { findMediaAsset, persistMediaAsset } from '../config/persistence.js';
+import { findMediaAsset, findPendingOssUpload, persistMediaAsset, persistPendingOssUpload, removePendingOssUpload } from '../config/persistence.js';
 
 export const uploadRouter = Router();
 
@@ -30,9 +31,12 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-const allowedFolders = new Set(['design-images', 'reference-samples', 'annotations', 'source-files', 'order-materials', 'designer-portfolio']);
+const allowedFolders = new Set(['design-images', 'reference-samples', 'annotations', 'source-files', 'order-materials', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio']);
 const imageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const apiOrigin = process.env.PUBLIC_API_ORIGIN || `http://localhost:${process.env.PORT || 8080}`;
+const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+const sourceExtensions = new Set(['.zip', '.rar', '.7z', '.psd', '.ai', '.eps', '.c4d', '.blend', '.pdf']);
+const sourceMimeTypes = new Set(['application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed', 'application/octet-stream', 'application/pdf', 'image/vnd.adobe.photoshop']);
+const imageOnlyFolders = new Set(['design-images', 'reference-samples', 'annotations', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio']);
 const maxUploadSize = 100 * 1024 * 1024;
 
 type PendingOssUpload = {
@@ -52,8 +56,23 @@ function isImageUpload(mimetype: string) {
   return imageMimeTypes.has(mimetype);
 }
 
+function shouldWatermark(value: string) {
+  return value === 'design-images' || value.split('/').includes('design-images');
+}
+
+function isAllowedUpload(folder: string, filename: string, mimetype: string) {
+  const extension = path.extname(filename).toLowerCase();
+  if (imageOnlyFolders.has(folder)) return imageMimeTypes.has(mimetype) && imageExtensions.has(extension);
+  if (folder === 'order-materials' && imageMimeTypes.has(mimetype) && imageExtensions.has(extension)) return true;
+  return sourceMimeTypes.has(mimetype) && sourceExtensions.has(extension);
+}
+
 function protectedAssetUrl(assetId: string) {
-  return `${apiOrigin}/api/upload/assets/${assetId}`;
+  return `/api/upload/assets/${assetId}`;
+}
+
+function imageAssetUrl(assetId: string) {
+  return `/api/upload/previews/${assetId}`;
 }
 
 function createOssWatermarkProcess() {
@@ -68,8 +87,8 @@ function createOssWatermarkProcess() {
 /**
  * 图片上传安全边界：
  * 1. 原图只落私有目录/私有 OSS；
- * 2. OSS 模式由 OSS 图片处理服务动态生成带水印预览，并把临时签名地址直接交给浏览器；
- *    服务端不代理图片内容，本地模式使用 Sharp 兜底；
+ * 2. OSS 模式由 OSS 图片处理服务在查看时动态生成带水印预览，业务数据只保存稳定资源地址；
+ *    服务端不代理 OSS 图片内容，本地模式使用 Sharp 兜底；
  * 3. 源文件只能通过登录后的受控下载接口读取；
  * 4. 不信任客户端传入的任意存储目录。
  */
@@ -83,16 +102,18 @@ uploadRouter.post('/', authenticate, upload.single('file'), async (req, res, nex
     if (!allowedFolders.has(requestedFolder)) {
       return res.status(400).json({ code: 400, success: false, message: '不支持的文件目录' });
     }
+    if (!isAllowedUpload(requestedFolder, req.file.originalname, req.file.mimetype)) {
+      return res.status(400).json({ code: 400, success: false, message: '当前目录不支持该文件类型' });
+    }
 
     const folder = requestedFolder;
     const assetId = createAssetId();
     const originalName = req.file.originalname;
     const isImage = isImageUpload(req.file.mimetype);
     // OSS 模式不再经过服务器 Sharp，只有本地存储兜底时才生成预览 Buffer。
-    const previewBuffer = !isOssConfigured && isImage
+    const previewBuffer = !isOssConfigured && isImage && shouldWatermark(requestedFolder)
       ? await createWatermarkedPreview(req.file.buffer, 'COZI REVIEW · 仅限审核')
       : null;
-    let url = protectedAssetUrl(assetId);
     let localOriginalPath: string | undefined;
     let ossOriginalKey: string | undefined;
     let storageType: 'aliyun-oss' | 'local-disk';
@@ -103,10 +124,6 @@ uploadRouter.post('/', authenticate, upload.single('file'), async (req, res, nex
       ossOriginalKey = originalResult.name;
       storageType = 'aliyun-oss';
 
-      if (isImage) {
-        // 浏览器直接请求 OSS 临时签名地址，图片内容不会经过本服务端。
-        url = getSignedOssProcessUrl(ossOriginalKey!, createOssWatermarkProcess(), 300);
-      }
     } else {
       const privateFolder = path.join(PRIVATE_UPLOADS_DIR, folder);
       fs.mkdirSync(privateFolder, { recursive: true });
@@ -117,7 +134,6 @@ uploadRouter.post('/', authenticate, upload.single('file'), async (req, res, nex
 
       if (previewBuffer) {
         fs.writeFileSync(path.join(PUBLIC_PREVIEWS_DIR, `${assetId}.webp`), previewBuffer);
-        url = `${apiOrigin}/uploads/previews/${assetId}.webp`;
       }
     }
 
@@ -138,12 +154,13 @@ uploadRouter.post('/', authenticate, upload.single('file'), async (req, res, nex
     return res.json({
       code: 200,
       success: true,
-      message: isImage ? '图片已生成带水印预览并安全保存' : '文件已安全保存',
+      message: isImage && shouldWatermark(folder) ? '图片已生成带水印预览并安全保存' : '文件已安全保存',
       data: {
-        url,
+        // 只返回稳定的资源地址，禁止把 OSS 临时签名参数写入业务数据。
+        url: isImage ? imageAssetUrl(assetId) : protectedAssetUrl(assetId),
         assetId,
         storageType,
-        watermarked: isImage,
+        watermarked: isImage && shouldWatermark(folder),
         filename: originalName,
         size: req.file.size,
         mimetype: req.file.mimetype
@@ -155,7 +172,7 @@ uploadRouter.post('/', authenticate, upload.single('file'), async (req, res, nex
 });
 
 // 为浏览器直传 OSS 生成一次性上传凭证，后端不接收文件内容。
-uploadRouter.post('/presign', authenticate, (req, res, next) => {
+uploadRouter.post('/presign', authenticate, async (req, res, next) => {
   try {
     if (!isOssConfigured) {
       return res.status(409).json({ code: 409, success: false, message: '当前未配置 OSS 直传，请使用本地上传模式' });
@@ -171,6 +188,9 @@ uploadRouter.post('/presign', authenticate, (req, res, next) => {
     if (!allowedFolders.has(folder)) {
       return res.status(400).json({ code: 400, success: false, message: '不支持的文件目录' });
     }
+    if (!isAllowedUpload(folder, filename, mimetype)) {
+      return res.status(400).json({ code: 400, success: false, message: '当前目录不支持该文件类型' });
+    }
 
     for (const [pendingAssetId, pendingUpload] of pendingOssUploads) {
       if (pendingUpload.expiresAt < Date.now()) pendingOssUploads.delete(pendingAssetId);
@@ -179,7 +199,9 @@ uploadRouter.post('/presign', authenticate, (req, res, next) => {
     const objectKey = createOssObjectKey(filename, `private/${folder}`, assetId);
     const expiresIn = 300;
     const uploadUrl = getSignedOssUploadUrl(objectKey, mimetype, expiresIn);
-    pendingOssUploads.set(assetId, { ownerId: req.user!.id, objectKey, filename, mimetype, size, expiresAt: Date.now() + expiresIn * 1000 });
+    const pendingUpload = { ownerId: req.user!.id, objectKey, filename, mimetype, size, expiresAt: Date.now() + expiresIn * 1000 };
+    await persistPendingOssUpload({ assetId, ...pendingUpload });
+    pendingOssUploads.set(assetId, pendingUpload);
 
     return res.json({ code: 200, success: true, data: { assetId, objectKey, uploadUrl, contentType: mimetype, expiresIn } });
   } catch (err) {
@@ -191,12 +213,13 @@ uploadRouter.post('/presign', authenticate, (req, res, next) => {
 uploadRouter.post('/complete', authenticate, async (req, res, next) => {
   try {
     const assetId = String(req.body.assetId || '');
-    const pending = pendingOssUploads.get(assetId);
+    const pending = pendingOssUploads.get(assetId) || await findPendingOssUpload(assetId);
     if (!pending || pending.ownerId !== req.user!.id) {
       return res.status(400).json({ code: 400, success: false, message: '上传任务不存在或无权确认' });
     }
     if (pending.expiresAt < Date.now()) {
       pendingOssUploads.delete(assetId);
+      await removePendingOssUpload(assetId);
       return res.status(410).json({ code: 410, success: false, message: '上传凭证已过期，请重新上传' });
     }
 
@@ -224,16 +247,18 @@ uploadRouter.post('/complete', authenticate, async (req, res, next) => {
     protectedAssets.set(assetId, asset);
     await persistMediaAsset(asset);
     pendingOssUploads.delete(assetId);
+    await removePendingOssUpload(assetId);
 
     return res.json({
       code: 200,
       success: true,
-      message: isImage ? '图片已直传 OSS 并生成带水印预览' : '文件已直传 OSS',
+      message: isImage && shouldWatermark(pending.objectKey) ? '图片已直传 OSS 并生成带水印预览' : '文件已直传 OSS',
       data: {
-        url: isImage ? getSignedOssProcessUrl(pending.objectKey, createOssWatermarkProcess(), 300) : protectedAssetUrl(assetId),
+        // 只返回稳定的资源地址，查看时由受保护的预览接口生成临时 OSS 地址。
+        url: isImage ? imageAssetUrl(assetId) : protectedAssetUrl(assetId),
         assetId,
         storageType: 'aliyun-oss',
-        watermarked: isImage,
+        watermarked: isImage && shouldWatermark(pending.objectKey),
         filename: pending.filename,
         size: pending.size,
         mimetype: pending.mimetype
@@ -244,8 +269,8 @@ uploadRouter.post('/complete', authenticate, async (req, res, next) => {
   }
 });
 
-// 兼容历史数据和页面刷新：根据 assetId 重新生成 OSS 直连签名地址。
-uploadRouter.get('/previews/:assetId', async (req, res, next) => {
+// 图片查看地址保持稳定，只有实际查看时才校验登录态并生成临时 OSS 地址。
+uploadRouter.get('/previews/:assetId', authenticate, async (req, res, next) => {
   try {
     const assetId = String(req.params.assetId);
     const asset = protectedAssets.get(assetId) || await findMediaAsset(assetId);
@@ -253,8 +278,16 @@ uploadRouter.get('/previews/:assetId', async (req, res, next) => {
       return res.status(404).json({ code: 404, success: false, message: '预览不存在或已失效' });
     }
     protectedAssets.set(asset.id, asset);
+    res.setHeader('Cache-Control', 'private, no-store');
     if (asset.ossOriginalKey) {
-      return res.redirect(302, getSignedOssProcessUrl(asset.ossOriginalKey, createOssWatermarkProcess(), 300));
+      return res.redirect(302, shouldWatermark(asset.ossOriginalKey) ? getSignedOssProcessUrl(asset.ossOriginalKey, createOssWatermarkProcess(), 300) : getSignedOssUrl(asset.ossOriginalKey, 300));
+    }
+    if (asset.localOriginalPath) {
+      const localPreviewPath = path.join(PUBLIC_PREVIEWS_DIR, `${assetId}.webp`);
+      const previewPath = fs.existsSync(localPreviewPath) ? localPreviewPath : asset.localOriginalPath;
+      res.setHeader('Content-Type', fs.existsSync(localPreviewPath) ? 'image/webp' : asset.mimetype);
+      res.setHeader('Content-Disposition', 'inline');
+      return res.sendFile(previewPath);
     }
     return res.status(404).json({ code: 404, success: false, message: '预览存储记录不完整' });
   } catch (err) {

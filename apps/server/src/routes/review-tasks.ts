@@ -39,7 +39,7 @@ const canReviewTask = (task: ReviewTask, user: AuthUserPayload) =>
   user.role === 'admin' || (task.designerId !== user.id && ['pending', 'in_review'].includes(task.status) && isCurrentNodeReviewer(task, user));
 
 // 1. 获取审核任务列表 (支持分页与多条件筛选)
-reviewTasksRouter.get('/', authenticate, (req, res) => {
+reviewTasksRouter.get('/', authenticate, async (req, res) => {
   const { status, platform, keyword, page = '1', pageSize = '10' } = req.query;
   let filtered = tasks.filter((task) => canAccessTask(task, req.user!));
 
@@ -58,10 +58,17 @@ reviewTasksRouter.get('/', authenticate, (req, res) => {
     );
   }
 
-  const p = parseInt(String(page), 10);
-  const ps = parseInt(String(pageSize), 10);
+  const p = Math.max(parseInt(String(page), 10) || 1, 1);
+  const ps = Math.min(Math.max(parseInt(String(pageSize), 10) || 10, 1), 100);
   const start = (p - 1) * ps;
-  const list = filtered.slice(start, start + ps);
+  const pageTasks = filtered.slice(start, start + ps);
+  // 任务状态与订单状态是两套状态，列表同时返回关联订单的最新状态。
+  const { designOrders } = await import('./design-orders.js');
+  const list = pageTasks.map((task) => {
+    const order = task.orderId ? designOrders.find((item) => item.id === task.orderId) : undefined;
+    if (!order) return task;
+    return { ...task, orderStatus: order.status === 'cancelled' && order.publicationStatus !== 'rejected' ? 'cancelled' : order.publicationStatus || order.status };
+  });
 
   res.json({
     code: 200,
@@ -77,23 +84,54 @@ reviewTasksRouter.get('/', authenticate, (req, res) => {
 });
 
 // 2. 获取任务详情
-reviewTasksRouter.get('/:id', authenticate, (req, res) => {
+reviewTasksRouter.get('/:id', authenticate, async (req, res) => {
   const task = tasks.find(t => t.id === req.params.id);
   if (!task) {
     return res.status(404).json({ code: 404, success: false, message: '审核任务不存在' });
   }
   if (!canAccessTask(task, req.user!)) return res.status(403).json({ code: 403, success: false, message: '该任务不属于当前处理节点' });
-  res.json({ code: 200, success: true, data: task });
+  const { designOrders } = await import('./design-orders.js');
+  const order = task.orderId ? designOrders.find((item) => item.id === task.orderId) : undefined;
+  res.json({ code: 200, success: true, data: { ...task, requiresPsd: Boolean(order?.requiresPsd ?? task.requiresPsd), orderImageRequirementGroups: order?.imageRequirementGroups || [] } });
 });
 
-// 3. 创建/提审任务
-reviewTasksRouter.post('/', (req, res) => {
-  const body = req.body;
-  const existingTask = body.orderId
-    ? tasks.find((task) => task.orderId === body.orderId && task.status !== 'returned' && task.status !== 'approved')
-    : undefined;
-  const taskId = existingTask?.id || `task_${Date.now()}`;
-  const groups = (body.groups || []).map((group: ReviewImageGroup) => ({
+// 3. 创建/提审任务。审核任务只能由已接单的设计师创建或更新。
+reviewTasksRouter.post('/', authenticate, requireRoles('designer'), async (req, res, next) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const orderId = typeof body.orderId === 'string' ? body.orderId.trim() : '';
+    if (!orderId) {
+      return res.status(400).json({ code: 400, success: false, message: '审核任务必须关联已接取的设计订单' });
+    }
+    const { designOrders } = await import('./design-orders.js');
+    const order = designOrders.find((item) => item.id === orderId);
+    if (!order || order.claimedById !== req.user!.id) {
+      return res.status(403).json({ code: 403, success: false, message: '只能为自己已接取的订单提交审核任务' });
+    }
+
+    const existingTask = orderId
+      ? tasks.find((task) => task.orderId === orderId && task.designerId === req.user!.id && task.status !== 'returned' && task.status !== 'approved')
+      : undefined;
+    const taskId = existingTask?.id || `task_${Date.now()}`;
+    const rawGroups = Array.isArray(body.groups) ? body.groups : [];
+    if (rawGroups.length > 30) {
+      return res.status(400).json({ code: 400, success: false, message: '图片分组数量不能超过 30 组' });
+    }
+    const incompleteGroup = rawGroups.find((group: any) => {
+      const images = Array.isArray(group?.images) ? group.images : [];
+      const requiredCount = Math.max(Number(group?.requiredCount) || 0, 0);
+      return images.length > 100 || images.length < requiredCount;
+    });
+    if (!body.isDraft && (!rawGroups.length || incompleteGroup)) {
+      return res.status(400).json({ code: 400, success: false, message: '请先完成所有图片分组后再提交审核' });
+    }
+    if (!body.isDraft && order.requiresPsd && !String(body.sourceFileUrl || '').trim()) {
+      return res.status(400).json({ code: 400, success: false, message: '该订单要求交付 PSD 源文件，请先上传源文件再提交审核' });
+    }
+    if (existingTask && !body.isDraft && !['draft', 'needs_revision'].includes(existingTask.status)) {
+      return res.status(400).json({ code: 400, success: false, message: '当前任务不在可提交状态' });
+    }
+  const groups = rawGroups.map((group: ReviewImageGroup) => ({
     ...group,
     taskId,
     images: (group.images || []).map((image: ReviewImage) => ({
@@ -103,11 +141,11 @@ reviewTasksRouter.post('/', (req, res) => {
     }))
   }));
   const taskData: Partial<ReviewTask> = {
-    productName: body.productName || '未命名设计任务',
-    sku: body.sku || '',
+    productName: String(body.productName || '未命名设计任务').trim().slice(0, 120),
+    sku: String(body.sku || '').trim().slice(0, 80),
     platform: body.platform || 'universal',
-    designerId: body.designerId || req.user!.id,
-    designerName: body.designerName || req.user!.name,
+    designerId: req.user!.id,
+    designerName: req.user!.name,
     status: body.isDraft ? 'draft' : 'pending',
     currentLevel: 1,
     totalImages: groups.reduce((acc: number, g: ReviewImageGroup) => acc + (g.images?.length || 0), 0),
@@ -116,9 +154,10 @@ reviewTasksRouter.post('/', (req, res) => {
     version: existingTask ? existingTask.version + 1 : 1,
     urgency: body.urgency || 'medium',
     sourceFileUrl: body.sourceFileUrl,
+    requiresPsd: Boolean(order.requiresPsd),
     sourceFileName: body.sourceFileName,
     sourceFileSize: body.sourceFileSize,
-    orderId: body.orderId,
+    orderId: orderId || undefined,
     orderBudget: body.orderBudget,
     designerPayout: body.designerPayout,
     submittedAt: body.isDraft ? undefined : new Date().toISOString(),
@@ -143,6 +182,9 @@ reviewTasksRouter.post('/', (req, res) => {
   void persistReviewTask(newTask);
   void syncOrderStatus(newTask.orderId, body.isDraft ? 'in_progress' : 'submitted');
   res.json({ code: 200, success: true, message: '提交成功', data: newTask });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // 4. 审核员进入工作台，任务从待初审流转为会审中
@@ -162,7 +204,7 @@ reviewTasksRouter.post('/:id/start-review', authenticate, requireRoles('advertis
 // 5. 审核单张图片（通过/驳回 + 批注保存）
 reviewTasksRouter.post('/:taskId/images/:imageId/review', authenticate, requireRoles('advertiser', 'admin'), (req, res) => {
   const { taskId, imageId } = req.params;
-  const { status, rejectReasons, rejectComment, annotations, reviewerId = req.user!.id, reviewerName = req.user!.name } = req.body;
+  const { status, rejectReasons, rejectComment, annotations } = req.body;
 
   if (status !== 'approved' && status !== 'rejected') {
     return res.status(400).json({ code: 400, success: false, message: '审核状态无效' });
@@ -180,18 +222,49 @@ reviewTasksRouter.post('/:taskId/images/:imageId/review', authenticate, requireR
 
   if (!targetImg) return res.status(404).json({ code: 404, success: false, message: '图片不存在' });
 
-  targetImg.status = status;
-  targetImg.reviewerId = reviewerId;
-  targetImg.reviewerName = reviewerName;
+  const rule = rules.find((item) => item.id === task.ruleId);
+  const currentNode = rule?.levels?.find((level) => level.level === task.currentLevel);
+  const nodeReviewerIds = currentNode?.reviewerIds || [req.user!.id];
+  const nodeApprovalMode = currentNode?.approvalMode || 'any';
+  if (targetImg.reviewHistory?.some((review) => review.level === task.currentLevel && review.version === targetImg!.version && review.reviewerId === req.user!.id)) {
+    return res.status(409).json({ code: 409, success: false, message: '你已完成当前图片的本级审核' });
+  }
+
+  targetImg.status = status === 'rejected' ? 'rejected' : 'pending';
+  // 审核人身份必须取自 Token，不能接受客户端传入的 reviewerId/reviewerName。
+  targetImg.reviewerId = req.user!.id;
+  targetImg.reviewerName = req.user!.name;
   targetImg.reviewedAt = new Date().toISOString();
   targetImg.reviewLevel = task.currentLevel;
+  const reviewRecord = {
+    level: task.currentLevel,
+    version: targetImg.version,
+    reviewerId: req.user!.id,
+    reviewerName: req.user!.name,
+    status,
+    reviewedAt: targetImg.reviewedAt,
+    ...(status === 'rejected' ? {
+      rejectReasons: Array.isArray(rejectReasons) ? rejectReasons.filter((item: unknown) => typeof item === 'string').slice(0, 20) : [],
+      rejectComment: String(rejectComment || '').slice(0, 2000),
+    } : {}),
+  } as const;
+  targetImg.reviewHistory = [...(targetImg.reviewHistory || []), reviewRecord];
   if (status === 'rejected') {
-    targetImg.rejectReasons = rejectReasons || [];
-    targetImg.rejectComment = rejectComment || '';
+    targetImg.rejectReasons = [...(reviewRecord.rejectReasons || [])];
+    targetImg.rejectComment = reviewRecord.rejectComment;
   }
   if (annotations) {
+    if (!Array.isArray(annotations) || annotations.length > 100) {
+      return res.status(400).json({ code: 400, success: false, message: '批注数量或格式无效' });
+    }
     targetImg.annotations = annotations;
   }
+
+  const currentApprovals = targetImg.reviewHistory.filter((review) => review.level === task.currentLevel && review.version === targetImg!.version && review.status === 'approved');
+  const currentImageDone = nodeApprovalMode === 'all'
+    ? nodeReviewerIds.every((reviewerId) => currentApprovals.some((review) => review.reviewerId === reviewerId))
+    : currentApprovals.length > 0;
+  if (status === 'approved' && currentImageDone) targetImg.status = 'approved';
 
   // 重新计算任务汇总指标
   let approved = 0;
@@ -207,6 +280,12 @@ reviewTasksRouter.post('/:taskId/images/:imageId/review', authenticate, requireR
 
   task.approvedCount = approved;
   task.rejectedCount = rejected;
+  const imageDoneAtNode = (image: ReviewImage) => {
+    const approvals = (image.reviewHistory || []).filter((review) => review.level === task.currentLevel && review.version === image.version && review.status === 'approved');
+    return nodeApprovalMode === 'all'
+      ? nodeReviewerIds.every((reviewerId) => approvals.some((review) => review.reviewerId === reviewerId))
+      : approvals.length > 0;
+  };
   if (rejected > 0) {
     task.status = 'needs_revision';
     task.rejectCount = (task.rejectCount || 0) + 1;
@@ -214,19 +293,38 @@ reviewTasksRouter.post('/:taskId/images/:imageId/review', authenticate, requireR
       task.isDisputed = true;
       task.disputeReason = '该任务累计驳回次数达到 3 次上限，已触发行业返修熔断，转入客服仲裁中心。';
     }
-  } else if (approved === allImages.length && allImages.length > 0) {
-    task.status = 'approved';
-    task.completedAt = new Date().toISOString();
+  } else if (allImages.length > 0 && allImages.every(imageDoneAtNode)) {
+    const nextNode = rule?.levels?.find((level) => level.level === task.currentLevel + 1);
+    if (nextNode) {
+      task.currentLevel = nextNode.level;
+      task.status = 'pending';
+      task.approvedCount = 0;
+      task.rejectedCount = 0;
+      for (const image of allImages) {
+        image.status = 'pending';
+        image.reviewerId = undefined;
+        image.reviewerName = undefined;
+        image.reviewedAt = undefined;
+        image.rejectReasons = undefined;
+        image.rejectComment = undefined;
+      }
+      for (const reviewerId of nextNode.reviewerIds) notifyUser(reviewerId, {
+        type: 'review', title: '有新的作品待审核', content: `任务「${task.productName}」已进入第 ${nextNode.level} 级审核。`, link: '/review-tasks',
+      });
+    } else {
+      task.status = 'approved';
+      task.completedAt = new Date().toISOString();
+    }
   } else {
     task.status = 'in_review';
   }
   task.updatedAt = new Date().toISOString();
   void persistReviewTask(task);
   void syncOrderStatus(task.orderId, task.status === 'approved' ? 'completed' : task.status === 'needs_revision' ? 'in_progress' : 'submitted');
-  notifyUser(task.designerId, {
+  if (status === 'rejected' || task.status === 'approved' || task.status === 'pending') notifyUser(task.designerId, {
     type: 'review',
-    title: status === 'approved' ? '作品审核已通过' : '作品需要修改',
-    content: status === 'approved' ? `任务「${task.productName}」已通过审核。` : `任务「${task.productName}」有图片未通过审核，请查看批注并修改。`,
+    title: task.status === 'approved' ? '作品审核已通过' : status === 'rejected' ? '作品需要修改' : '审核节点已完成',
+    content: task.status === 'approved' ? `任务「${task.productName}」已通过全部审核。` : status === 'rejected' ? `任务「${task.productName}」有图片未通过审核，请查看批注并修改。` : `任务「${task.productName}」已通过第 ${task.currentLevel - 1} 级审核，进入下一级审核。`,
     link: '/review-tasks',
   });
 
@@ -260,6 +358,16 @@ reviewTasksRouter.post('/:id/submit', authenticate, requireRoles('designer'), (r
   const { id } = req.params;
   const task = tasks.find(t => t.id === id);
   if (!task) return res.status(404).json({ code: 404, success: false, message: '任务不存在' });
+  if (task.designerId !== req.user!.id) return res.status(403).json({ code: 403, success: false, message: '无权提交该审核任务' });
+  if (task.status !== 'draft' && task.status !== 'needs_revision') {
+    return res.status(400).json({ code: 400, success: false, message: '当前任务不在可提交状态' });
+  }
+
+  const allImages = task.groups?.flatMap((group) => group.images || []) || [];
+  const incompleteGroup = task.groups?.find((group) => group.images.length < group.requiredCount);
+  if (!allImages.length || incompleteGroup) {
+    return res.status(400).json({ code: 400, success: false, message: '请先完成所有图片分组后再提交审核' });
+  }
 
   task.status = 'pending';
   task.submittedAt = new Date().toISOString();
@@ -322,6 +430,7 @@ reviewTasksRouter.post('/:id/return', authenticate, requireRoles('designer'), (r
   if (taskIndex === -1) return res.status(404).json({ code: 404, success: false, message: '任务不存在' });
 
   const task = tasks[taskIndex];
+  if (task.designerId !== req.user!.id) return res.status(403).json({ code: 403, success: false, message: '无权退回该审核任务' });
   if (task.status !== 'draft' && task.status !== 'needs_revision') {
     return res.status(400).json({ code: 400, success: false, message: '当前任务已进入不可撤销审核阶段，无法直接退单' });
   }

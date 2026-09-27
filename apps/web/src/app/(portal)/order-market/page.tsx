@@ -38,6 +38,9 @@ import { fetchWithAuth } from '@/lib/auth';
 import { uploadFile } from '@/lib/upload';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useRouter } from 'next/navigation';
+import { AuthenticatedImage } from '@/components/authenticated-image';
+import { ReferenceLinkItemsDetail } from '@/components/reference-link-items-detail';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { 
   DesignOrder, 
   PlatformType, 
@@ -75,6 +78,7 @@ export default function OrderMarketPage() {
   const [isPublishOpen, setIsPublishOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [reviewRules, setReviewRules] = useState<ReviewRule[]>([]);
+  const [minimumBudget, setMinimumBudget] = useState<number | null>(null);
 
   // 表单状态：每张图片均有独立的描述与要求
   const [formData, setFormData] = useState({
@@ -168,9 +172,18 @@ export default function OrderMarketPage() {
       .then((result) => {
         const nextRules = result.success ? result.data || [] : [];
         setReviewRules(nextRules);
-        if (nextRules[0]) setFormData((current) => ({ ...current, reviewRuleId: current.reviewRuleId || nextRules[0].id }));
+        const defaultRule = nextRules.find((rule: ReviewRule) => rule.ownerId === user.id && rule.name === '自己审核') || nextRules[0];
+        if (defaultRule) setFormData((current) => ({ ...current, reviewRuleId: current.reviewRuleId || defaultRule.id }));
       })
       .catch(() => setReviewRules([]));
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'advertiser') return;
+    fetchWithAuth('/system-config/order-pricing')
+      .then((response) => response.json())
+      .then((result) => setMinimumBudget(result.success && result.data && Number.isFinite(Number(result.data.minOrderBudget)) ? Number(result.data.minOrderBudget) : null))
+      .catch(() => setMinimumBudget(null));
   }, [user?.role]);
 
   useEffect(() => {
@@ -298,6 +311,14 @@ export default function OrderMarketPage() {
       toast.error('请填写需求标题和预算金额');
       return;
     }
+    if (minimumBudget === null) {
+      toast.error('正在加载订单规则，请稍后再试');
+      return;
+    }
+    if (!Number.isFinite(Number(formData.budget)) || Number(formData.budget) < minimumBudget) {
+      toast.error(`订单预算不能低于 ${minimumBudget} 元`);
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -399,7 +420,7 @@ export default function OrderMarketPage() {
               <form onSubmit={handlePublishOrder} className="space-y-4 mt-2">
                 {/* 1. 基本信息 */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700">需求标题 *</label>
+                  <label className="text-xs font-semibold text-slate-700">需求标题 <span aria-hidden="true" className="text-rose-500">*</span></label>
                   <Input
                     required
                     placeholder="如：2026秋冬轻奢羽绒服天猫首屏主图全套5张定制"
@@ -424,13 +445,13 @@ export default function OrderMarketPage() {
                 {/* 2. 价格、周期与加急程度 (位于图片组上方) */}
                 <div className="grid grid-cols-3 gap-3 pt-1 pb-1">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700">订单价格 (元) *</label>
+                    <label className="text-xs font-semibold text-slate-700">订单价格 (元) <span aria-hidden="true" className="text-rose-500">*</span></label>
                     <Input
                       type="number"
                       required
-                      min="0.01"
+                      min={minimumBudget ?? undefined}
                       step="0.01"
-                      placeholder="800"
+                      placeholder={minimumBudget === null ? '正在加载最低预算' : String(minimumBudget)}
                       value={formData.budget}
                       onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
                       className="text-xs rounded-xl font-mono h-9"
@@ -566,7 +587,7 @@ export default function OrderMarketPage() {
                                     className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-start gap-3 shadow-xs"
                                   >
                                     <div className="relative w-14 h-14 rounded-lg overflow-hidden bg-slate-100 shrink-0 border border-slate-200">
-                                      <img src={item.url} alt="样例图" className="w-full h-full object-cover" />
+                                      <AuthenticatedImage src={item.url} alt="样例图" className="w-full h-full object-cover" />
                                     </div>
 
                                     <div className="flex-1 min-w-0 space-y-1">
@@ -783,7 +804,7 @@ export default function OrderMarketPage() {
                   {order.referenceImages && order.referenceImages.length > 0 && (
                     <div className="px-2.5 pb-1.5">
                       <div className="relative h-20 w-full rounded-xl overflow-hidden bg-slate-100 border border-slate-200/50">
-                        <img
+                        <AuthenticatedImage
                           src={order.referenceImages[0]}
                           alt="参考图"
                           className="w-full h-full object-cover group-hover:scale-105 transition duration-500"
@@ -865,6 +886,7 @@ export default function OrderMarketPage() {
                 <div>投放平台：<b>{PLATFORMS.find((p) => p.id === selectedOrder.platform)?.name || selectedOrder.platform}</b></div>
                 <div>设计师收入：<b className="text-emerald-600">¥{selectedOrder.designerPayout || selectedOrder.budget}</b></div>
                 <div>交付时间：<b>{new Date(selectedOrder.deadline).toLocaleString('zh-CN')}</b></div>
+                <div>PSD 源文件：<b className={selectedOrder.requiresPsd ? 'text-rose-600' : 'text-slate-600'}>{selectedOrder.requiresPsd ? '需要交付' : '不需要'}</b></div>
               </div>
               <div className="rounded-2xl bg-slate-50 p-3 text-xs leading-6 text-slate-600 whitespace-pre-wrap">{selectedOrder.requirements || '暂无补充说明'}</div>
               <div className="space-y-2">
@@ -877,45 +899,15 @@ export default function OrderMarketPage() {
                   <label className="text-xs font-semibold text-slate-700">作品审核流</label>
                   <Select.Root value={formData.reviewRuleId || 'unselected'} onValueChange={(value) => setFormData({ ...formData, reviewRuleId: value === 'unselected' ? '' : value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="unselected" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>暂不绑定（后续补充）</Select.ItemText></Select.Item>{reviewRules.map((rule) => <Select.Item key={rule.id} value={rule.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{rule.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                 </div>
-                <div className="space-y-2">
-                  {(selectedOrder.imageRequirementGroups || []).map((group, index) => (
-                    <div key={group.id || index} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold text-slate-800">{index + 1}. {group.name}</div>
-                          <div className="mt-1 text-[11px] text-slate-500">{group.quantity} 张 · {group.dimensions || '标准尺寸'} · {group.groupType}</div>
-                        </div>
-                        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-600">需求组</span>
-                      </div>
-                      {group.description && <p className="mt-2 text-[11px] leading-5 text-slate-500">{group.description}</p>}
-                      {group.referenceImages?.length > 0 && (
-                        <div className="mt-2 flex gap-2 overflow-x-auto">
-                          {group.referenceImages.map((image, imageIndex) => (
-                            <button
-                              type="button"
-                              key={`${image}-${imageIndex}`}
-                              onClick={() => setPreviewImage({ url: image, label: `${group.name}参考图${imageIndex + 1}` })}
-                              className="group/image relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-slate-200"
-                            >
-                              <img src={image} alt={`${group.name}参考图${imageIndex + 1}`} className="h-full w-full object-cover transition group-hover/image:scale-105" />
-                              <span className="absolute inset-x-0 bottom-0 bg-black/55 py-0.5 text-center text-[9px] text-white">点击放大</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {group.referenceImageItems?.some((item) => item.description) && (
-                        <div className="mt-2 space-y-1 text-[11px] text-slate-500">
-                          {group.referenceImageItems.filter((item) => item.description).map((item) => <p key={item.id}>参考图说明：{item.description}</p>)}
-                        </div>
-                      )}
-                      {group.referenceLinks?.length > 0 && (
-                        <div className="mt-2 space-y-1 text-[11px]">
-                          {group.referenceLinks.map((link) => <a key={link} href={link} target="_blank" rel="noreferrer" className="block truncate text-blue-600 hover:underline">参考链接：{link}</a>)}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                {(selectedOrder.imageRequirementGroups || []).length > 0 ? <Tabs key={selectedOrder.id} defaultValue="order-group-0" className="min-w-0">
+                  <TabsList className="flex h-9 w-full justify-start gap-1 overflow-x-auto rounded-xl bg-slate-50 p-1">
+                    {selectedOrder.imageRequirementGroups!.map((group, index) => <TabsTrigger key={group.id || index} value={`order-group-${index}`} className="h-7 max-w-56 flex-none rounded-lg px-3 text-xs text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm">{group.name || `第 ${index + 1} 组`}<span className="ml-1 text-[10px] text-slate-400">{group.imageItems?.length || group.quantity || 0} 张</span></TabsTrigger>)}
+                  </TabsList>
+                  {selectedOrder.imageRequirementGroups!.map((group, index) => {
+                    const imageItems = group.imageItems?.length ? group.imageItems : (group.materialImages || []).map((materialImage, imageIndex) => ({ id: `${group.id}-${imageIndex}`, materialImage, description: imageIndex === 0 ? group.description : '', referenceImages: imageIndex === 0 ? group.referenceImages || [] : [], referenceLinks: imageIndex === 0 ? group.referenceLinks || [] : [], referenceLinkItems: undefined, referenceLinkDescription: undefined }));
+                    return <TabsContent key={group.id || index} value={`order-group-${index}`} className="mt-2"><div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><div className="flex items-start justify-between gap-3"><div><div className="text-xs font-semibold text-slate-800">{index + 1}. {group.name}</div><div className="mt-1 text-[11px] text-slate-500">{group.quantity} 张 · {group.dimensions || '标准尺寸'} · {group.groupType}</div></div><span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-600">需求组</span></div>{group.description && <p className="mt-2 text-[11px] leading-5 text-slate-500">{group.description}</p>}{imageItems.length > 0 && <div className="mt-3 space-y-2"><p className="text-[11px] font-semibold text-slate-600">每张图片需求</p>{imageItems.map((item, imageIndex) => <div key={item.id || imageIndex} className="rounded-xl bg-slate-50/70 p-2.5"><div className="mb-2 flex items-center justify-between"><span className="text-[11px] font-semibold text-slate-700">第 {imageIndex + 1} 张</span><span className="text-[10px] text-slate-400">{group.dimensions || group.groupType}</span></div><div className="grid gap-2 sm:grid-cols-2">{item.materialImage && <button type="button" onClick={() => setPreviewImage({ url: item.materialImage!, label: `${group.name}素材原图${imageIndex + 1}` })} className="text-left"><p className="mb-1 text-[10px] font-medium text-slate-500">素材原图</p><AuthenticatedImage src={item.materialImage} alt={`${group.name}素材原图${imageIndex + 1}`} className="aspect-square w-full rounded-lg border border-slate-200 object-cover" /></button>}{item.description && <div className="sm:col-span-2"><p className="mb-1 text-[10px] font-medium text-slate-500">设计要点</p><p className="whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-[11px] leading-5 text-slate-600">{item.description}</p></div>}<ReferenceLinkItemsDetail item={item} compact onPreview={(url, label) => setPreviewImage({ url, label })} /></div></div>)}</div>}</div></TabsContent>;
+                  })}
+                </Tabs> : <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-slate-400">暂无图片需求详情</div>}
               </div>
               <DialogFooter>
                 <Button onClick={() => { setSelectedOrder(null); handleClaimOrder(selectedOrder.id); }} className="rounded-xl bg-blue-600 text-xs text-white">立即抢单接取</Button>
@@ -933,7 +925,7 @@ export default function OrderMarketPage() {
                 <DialogTitle className="text-sm text-slate-100">{previewImage.label}</DialogTitle>
               </DialogHeader>
               <div className="flex max-h-[75vh] items-center justify-center overflow-auto rounded-2xl bg-black/30 p-2">
-                <img src={previewImage.url} alt={previewImage.label} className="max-h-[70vh] max-w-full rounded-xl object-contain" />
+                <AuthenticatedImage src={previewImage.url} alt={previewImage.label} className="max-h-[70vh] max-w-full rounded-xl object-contain" />
               </div>
             </>
           )}

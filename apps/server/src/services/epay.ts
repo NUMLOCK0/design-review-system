@@ -29,6 +29,14 @@ const gatewayRoot = () => {
   return value.replace(/\/(?:mapi|submit|api)\.php$/i, '');
 };
 
+const publicApiOrigin = () => {
+  const value = String(process.env.PUBLIC_API_ORIGIN || '').trim().replace(/\/+$/, '');
+  if (process.env.NODE_ENV === 'production' && (!value || /localhost|127\.0\.0\.1/i.test(value))) {
+    throw new Error('生产环境必须配置有效的 PUBLIC_API_ORIGIN，不能使用 localhost');
+  }
+  return value || 'http://localhost:8080';
+};
+
 export function createEpayCheckout(input: {
   outTradeNo: string;
   name: string;
@@ -39,15 +47,15 @@ export function createEpayCheckout(input: {
   const key = String(process.env.EPAY_KEY || '').trim();
   if (!pid || !key) throw new Error('Epay 商户配置不完整，请设置 EPAY_PID 与 EPAY_KEY');
 
-  const publicApiOrigin = String(process.env.PUBLIC_API_ORIGIN || 'http://localhost:8080').replace(/\/+$/, '');
+  const apiOrigin = publicApiOrigin();
   const fields: EpayFields = {
     pid,
     type: process.env.EPAY_PAYMENT_TYPE || 'wxpay',
     out_trade_no: input.outTradeNo,
     name: input.name,
     money: money(input.amount).toFixed(2),
-    notify_url: process.env.EPAY_NOTIFY_URL || `${publicApiOrigin}/api/payments/epay/notify`,
-    return_url: process.env.EPAY_RETURN_URL || `${publicApiOrigin}/api/payments/epay/return`,
+    notify_url: process.env.EPAY_NOTIFY_URL || `${apiOrigin}/api/payments/epay/notify`,
+    return_url: process.env.EPAY_RETURN_URL || `${apiOrigin}/api/payments/epay/return`,
     param: input.param,
     device: process.env.EPAY_DEVICE || 'pc',
     sign_type: 'MD5',
@@ -70,28 +78,36 @@ export async function createEpayApiCheckout(input: {
   const key = String(process.env.EPAY_KEY || '').trim();
   if (!pid || !key) throw new Error('Epay 商户配置不完整，请设置 EPAY_PID 与 EPAY_KEY');
 
-  const publicApiOrigin = String(process.env.PUBLIC_API_ORIGIN || 'http://localhost:8080').replace(/\/+$/, '');
+  const apiOrigin = publicApiOrigin();
   const fields: EpayFields = {
     pid,
     type: input.type,
     out_trade_no: input.outTradeNo,
     name: input.name,
     money: money(input.amount).toFixed(2),
-    notify_url: process.env.EPAY_NOTIFY_URL || `${publicApiOrigin}/api/payments/epay/notify`,
-    return_url: process.env.EPAY_RETURN_URL || `${publicApiOrigin}/api/payments/epay/return`,
+    notify_url: process.env.EPAY_NOTIFY_URL || `${apiOrigin}/api/payments/epay/notify`,
+    return_url: process.env.EPAY_RETURN_URL || `${apiOrigin}/api/payments/epay/return`,
     param: input.param,
     device: process.env.EPAY_DEVICE || 'pc',
     sign_type: 'MD5'
   };
 
-  const response = await fetch(`${gatewayRoot()}/mapi.php`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(Object.entries({ ...fields, sign: signEpay(fields, key) }).reduce<Record<string, string>>((result, [name, value]) => {
-      if (value !== undefined && value !== null) result[name] = String(value);
-      return result;
-    }, {}))
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  let response: Response;
+  try {
+    response = await fetch(`${gatewayRoot()}/mapi.php`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(Object.entries({ ...fields, sign: signEpay(fields, key) }).reduce<Record<string, string>>((result, [name, value]) => {
+        if (value !== undefined && value !== null) result[name] = String(value);
+        return result;
+      }, {})),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   const result = await response.json().catch(() => null) as { code?: number; msg?: string; trade_no?: string; o_id?: string; qrcode?: string; payurl?: string } | null;
   if (!response.ok || !result || Number(result.code) !== 1 || !result.qrcode) {
     throw new Error(result?.msg || '支付网关下单失败，未返回支付二维码');

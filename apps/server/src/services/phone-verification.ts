@@ -4,8 +4,9 @@ import jwt from 'jsonwebtoken';
 import sharp from 'sharp';
 import * as tencentcloudModule from 'tencentcloud-sdk-nodejs';
 import nodemailer from 'nodemailer';
+import { JWT_SECRET } from '../middleware/auth.middleware.js';
 
-const CAPTCHA_SECRET = process.env.JWT_SECRET || 'design-review-secret-key-2026';
+const CAPTCHA_SECRET = JWT_SECRET;
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 const CAPTCHA_TTL_MS = 5 * 60 * 1000;
 const SMS_TTL_MS = 5 * 60 * 1000;
