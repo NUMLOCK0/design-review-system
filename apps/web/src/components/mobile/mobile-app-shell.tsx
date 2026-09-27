@@ -67,9 +67,9 @@ export function MobileAppShell({ children }: { children: React.ReactNode }) {
   }, [user?.id]);
 
   const nav = navByRole[user?.role || 'designer'];
-  const accountRoute = ['/mobile/profile', '/mobile/wallet', '/mobile/invitations', '/mobile/designer-profile', '/mobile/billing', '/mobile/disputes', '/mobile/review-flows'].some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  const accountRoute = ['/mobile/profile', '/mobile/wallet', '/mobile/invitations', '/mobile/designer-profile', '/mobile/billing', '/mobile/disputes', '/mobile/review-flows', '/mobile/service/portfolio-review'].some((path) => pathname === path || pathname.startsWith(`${path}/`));
   const isReviewFlowsPage = pathname === '/mobile/review-flows' || pathname.startsWith('/mobile/review-flows/');
-  const isSecondaryMobilePage = isReviewFlowsPage || pathname === '/mobile/billing' || pathname === '/mobile/messages' || pathname === '/mobile/disputes';
+  const isSecondaryMobilePage = isReviewFlowsPage || pathname === '/mobile/billing' || pathname === '/mobile/messages' || pathname === '/mobile/disputes' || pathname === '/mobile/service/portfolio-review';
   const pageTitle = pathname === '/mobile' ? '工作台' : pathname.includes('orders') ? (user?.role === 'designer' ? '接单大厅' : '订单管理') : pathname.includes('tasks') ? (user?.role === 'customer_service' ? '客服待办' : '我的任务') : pathname.includes('messages') ? '站内信' : accountRoute ? '个人中心' : '移动工作台';
   const isStandaloneOrderForm = pathname === '/mobile/orders/new';
   const isStandalonePage = isStandaloneOrderForm || isSecondaryMobilePage;

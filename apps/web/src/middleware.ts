@@ -12,8 +12,6 @@ export function middleware(request: NextRequest) {
     '/advertiser/dashboard': '/mobile',
     '/advertiser/orders': '/mobile/orders',
     '/review-tasks': '/mobile/tasks',
-    '/service/dashboard': '/mobile/tasks',
-    '/admin': '/mobile',
     '/wallet': '/mobile/profile',
     '/designer/profile': '/mobile/profile',
     '/messages': '/mobile/messages',

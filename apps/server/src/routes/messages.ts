@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { SiteMessage, SiteMessageType } from '@design-review/shared';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { persistSiteMessage } from '../config/persistence.js';
+import { pushWecomMessage } from '../services/wecom-bot.js';
 
 export const messagesRouter = Router();
 export const messages: SiteMessage[] = [
@@ -24,6 +25,7 @@ export function notifyUser(recipientId: string | undefined, input: { type: SiteM
   };
   messages.unshift(message);
   void persistSiteMessage(message);
+  pushWecomMessage({ type: message.type, title: message.title, content: message.content, link: message.link, createdAt: message.createdAt });
 }
 
 messagesRouter.get('/', authenticate, (req, res) => {

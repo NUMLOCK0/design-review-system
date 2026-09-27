@@ -48,6 +48,7 @@ const PORTAL_NAV_ITEMS: Record<UserInfo['role'], Array<{ href: string; label: st
   ],
   customer_service: [
     { href: '/service/dashboard', label: '客服工作台', mobileLabel: '工作台', icon: CheckSquare },
+    { href: '/service/portfolio-review', label: '作品审核', mobileLabel: '作品审核', icon: ShieldCheck },
     { href: '/service/disputes', label: '纠纷处理中心', mobileLabel: '纠纷', icon: ShieldCheck },
   ],
   admin: [

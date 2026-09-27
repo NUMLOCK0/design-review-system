@@ -65,6 +65,17 @@ Write-Host '[3/3] Start frontend and backend development services'
 $env:NODE_ENV = 'development'
 $env:WEB_ORIGIN = 'http://localhost:3000'
 $env:PUBLIC_API_ORIGIN = 'http://localhost:8080'
+$serverEnvFile = Join-Path $projectRoot 'apps\server\.env'
+if (Test-Path -LiteralPath $serverEnvFile) {
+  $jwtSetting = Get-Content -LiteralPath $serverEnvFile | Where-Object { $_ -match '^\s*JWT_SECRET\s*=' } | Select-Object -First 1
+  if ($jwtSetting) {
+    $jwtSecret = ($jwtSetting -replace '^\s*JWT_SECRET\s*=\s*', '').Trim()
+    if (($jwtSecret.StartsWith('"') -and $jwtSecret.EndsWith('"')) -or ($jwtSecret.StartsWith("'") -and $jwtSecret.EndsWith("'"))) {
+      $jwtSecret = $jwtSecret.Substring(1, $jwtSecret.Length - 2)
+    }
+    $env:JWT_SECRET = $jwtSecret
+  }
+}
 $serverOut = Join-Path $projectRoot 'server-dev.log'
 $serverErr = Join-Path $projectRoot 'server-dev.err.log'
 $webOut = Join-Path $projectRoot 'web-dev.log'

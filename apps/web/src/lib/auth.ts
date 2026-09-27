@@ -30,6 +30,8 @@ export function getRoleHome(role: UserInfo['role']): string {
 }
 
 const API_BASE_URL = '/api';
+export const AUTH_EXPIRED_NOTICE_KEY = 'auth-expired-notice';
+let redirectingAfterUnauthorized = false;
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -100,10 +102,19 @@ export async function fetchWithAuth(url: string, options: RequestInit = {}) {
     headers,
   });
 
-  if (response.status === 401) {
-    clearAuthSession();
-    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-      window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
+  if (response.status === 401 && typeof window !== 'undefined') {
+    if (window.location.pathname.startsWith('/login')) {
+      clearAuthSession();
+    } else if (!redirectingAfterUnauthorized) {
+      redirectingAfterUnauthorized = true;
+      try {
+        window.sessionStorage.setItem(AUTH_EXPIRED_NOTICE_KEY, '登录状态已失效，请重新登录');
+      } catch {
+        // 页面跳转仍继续；存储不可用时无法跨页面保留提示。
+      }
+      const redirect = window.location.pathname + window.location.search;
+      clearAuthSession();
+      window.location.replace('/login?redirect=' + encodeURIComponent(redirect));
     }
   }
 

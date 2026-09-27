@@ -4,6 +4,7 @@ import type { DesignerPortfolio, DesignerProfile, PlatformType } from '@design-r
 import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { dbPool } from '../config/database.js';
 import { recordAdminAudit } from '../services/admin-audit.js';
+import { notifyUser } from './messages.js';
 
 export const designerProfilesRouter = Router();
 
@@ -145,6 +146,7 @@ designerProfilesRouter.post('/designer-portfolios', authenticate, requireRoles('
     if (data.isFeatured) await dbPool.query('UPDATE designer_portfolios SET is_featured=FALSE WHERE designer_id=?', [req.user!.id]);
     await dbPool.query(`INSERT INTO designer_portfolios (id, designer_id, title, cover_url, image_urls, category, industry, platform, description, designer_role, tags, sort_order, status, is_featured, created_at, updated_at, published_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id, req.user!.id, data.title, data.coverUrl, JSON.stringify(data.imageUrls), data.category || null, data.industry || null, data.platform || null, data.description || null, data.designerRole || null, JSON.stringify(data.tags), data.sortOrder, data.status, data.isFeatured ? 1 : 0, createdAt, createdAt, data.status === 'published' ? createdAt : null]);
+    if (data.status === 'published') notifyUser('u_rev_1', { type: 'review', title: '新设计师作品待审核', content: `${req.user!.name}提交了作品「${data.title}」，请在客服工作台完成审核。`, link: '/service/portfolio-review' });
     res.status(201).json({ code: 200, success: true, message: data.status === 'published' ? '作品已发布' : '作品草稿已保存', data: portfolioFromRow({ id, designer_id: req.user!.id, title: data.title, cover_url: data.coverUrl, image_urls: JSON.stringify(data.imageUrls), category: data.category, industry: data.industry, platform: data.platform, description: data.description, designer_role: data.designerRole, tags: JSON.stringify(data.tags), sort_order: data.sortOrder, status: data.status, is_featured: data.isFeatured, created_at: createdAt, updated_at: createdAt, published_at: data.status === 'published' ? createdAt : null }), timestamp: Date.now() });
   } catch (error) { next(error); }
 });
@@ -250,6 +252,38 @@ designerProfilesRouter.get('/admin/designer-portfolios', authenticate, requireRo
   } catch (error) { next(error); }
 });
 
+designerProfilesRouter.get('/service/designer-portfolios', authenticate, requireRoles('customer_service', 'admin'), async (req, res, next) => {
+  try {
+    if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
+    const status = ['draft', 'published', 'hidden'].includes(String(req.query.status)) ? String(req.query.status) : 'all';
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 20, 1), 100);
+    const where = status === 'all' ? '' : 'WHERE dp.status=?';
+    const params = status === 'all' ? [] : [status];
+    const [countRows]: any = await dbPool.query(`SELECT COUNT(*) AS total FROM designer_portfolios dp ${where}`, params);
+    const total = Number(countRows?.[0]?.total || 0);
+    const [rows]: any = await dbPool.query(`SELECT dp.*, u.name AS designer_name, u.avatar_url AS designer_avatar
+      FROM designer_portfolios dp JOIN users u ON u.id=dp.designer_id ${where}
+      ORDER BY dp.updated_at DESC, dp.created_at DESC LIMIT ? OFFSET ?`, [...params, pageSize, (page - 1) * pageSize]);
+    res.json({ code: 200, success: true, data: rows.map((row: any) => ({ ...portfolioFromRow(row), designerName: row.designer_name, designerAvatarUrl: row.designer_avatar || undefined })), total, page, pageSize, hasMore: page * pageSize < total, timestamp: Date.now() });
+  } catch (error) { next(error); }
+});
+
+designerProfilesRouter.put('/service/designer-portfolios/:id', authenticate, requireRoles('customer_service', 'admin'), async (req, res, next) => {
+  try {
+    if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
+    const status = String(req.body?.status || '');
+    if (!['published', 'hidden'].includes(status)) return res.status(400).json({ code: 400, success: false, message: '无效的作品审核状态' });
+    const id = String(req.params.id);
+    const [result]: any = await dbPool.query('UPDATE designer_portfolios SET status=?, published_at=CASE WHEN ?=\'published\' THEN COALESCE(published_at, ?) ELSE published_at END, updated_at=? WHERE id=?', [status, status, now(), now(), id]);
+    if (!result.affectedRows) return res.status(404).json({ code: 404, success: false, message: '作品不存在' });
+    const [portfolioRows]: any = await dbPool.query('SELECT designer_id, title FROM designer_portfolios WHERE id=? LIMIT 1', [id]);
+    notifyUser(portfolioRows[0]?.designer_id, { type: 'review', title: status === 'published' ? '设计师作品审核通过' : '设计师作品审核未通过', content: `作品「${portfolioRows[0]?.title || id}」${status === 'published' ? '已审核通过并公开' : '已审核未通过并下架'}。`, link: '/designer/profile' });
+    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'designer_moderation', action: 'service_portfolio_status_change', targetType: 'designer_portfolio', targetId: id, summary: `${req.user!.name}审核设计师作品：${status === 'published' ? '通过公开' : '下架'}`, detail: { status }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 作品审核日志写入失败:', error));
+    res.json({ code: 200, success: true, message: status === 'published' ? '作品已审核通过并公开' : '作品已下架', timestamp: Date.now() });
+  } catch (error) { next(error); }
+});
+
 designerProfilesRouter.put('/admin/designer-portfolios/:id', authenticate, requireRoles('admin'), async (req, res, next) => {
   try {
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
@@ -257,6 +291,8 @@ designerProfilesRouter.put('/admin/designer-portfolios/:id', authenticate, requi
     if (!['draft', 'published', 'hidden'].includes(status)) return res.status(400).json({ code: 400, success: false, message: '无效的作品状态' });
     const [result]: any = await dbPool.query('UPDATE designer_portfolios SET status=?, published_at=CASE WHEN ?=\'published\' THEN COALESCE(published_at, ?) ELSE published_at END, updated_at=? WHERE id=?', [status, status, now(), now(), String(req.params.id)]);
     if (!result.affectedRows) return res.status(404).json({ code: 404, success: false, message: '作品不存在' });
+    const [portfolioRows]: any = await dbPool.query('SELECT designer_id, title FROM designer_portfolios WHERE id=? LIMIT 1', [String(req.params.id)]);
+    notifyUser(portfolioRows[0]?.designer_id, { type: 'review', title: status === 'published' ? '设计师作品审核通过' : status === 'hidden' ? '设计师作品已下架' : '设计师作品状态已调整', content: `作品「${portfolioRows[0]?.title || String(req.params.id)}」${status === 'published' ? '已审核通过并公开' : status === 'hidden' ? '已审核未通过并下架' : '已设为草稿'}。`, link: '/designer/profile' });
     void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'designer_moderation', action: 'portfolio_status_change', targetType: 'designer_portfolio', targetId: String(req.params.id), summary: `${req.user!.name}修改设计师作品状态为${status}`, detail: { status }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 作品审核日志写入失败:', error));
     res.json({ code: 200, success: true, message: status === 'published' ? '作品已审核通过' : status === 'hidden' ? '作品已下架' : '作品已设为草稿', timestamp: Date.now() });
   } catch (error) { next(error); }

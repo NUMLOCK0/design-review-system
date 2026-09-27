@@ -10,7 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { SmsSliderCaptcha } from '@/components/slider-captcha';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AgreementModal } from '@/components/agreement-document';
-import { getRoleHome, setAuthSession } from '@/lib/auth';
+import { AUTH_EXPIRED_NOTICE_KEY, getRoleHome, setAuthSession } from '@/lib/auth';
 import { toast } from 'sonner';
 
 const fieldClass = 'h-11 rounded-xl border-slate-200 bg-white/75 px-3 pr-10 text-sm text-slate-900 placeholder:text-slate-400 transition-all duration-300';
@@ -64,6 +64,11 @@ function LoginPageContent() {
   const inputTone = isDesigner ? 'focus-visible:border-rose-400 focus-visible:ring-rose-500/20' : 'focus-visible:border-blue-500 focus-visible:ring-blue-500/20';
   const primaryButton = isDesigner ? 'bg-gradient-to-r from-orange-500 via-rose-500 to-fuchsia-600 shadow-rose-500/30 hover:from-orange-600 hover:via-rose-600 hover:to-fuchsia-700' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 shadow-blue-500/30 hover:from-blue-700 hover:via-indigo-700 hover:to-cyan-600';
   const policyLink = (type: 'user' | 'privacy', label: string, className = 'mx-1 text-blue-600 hover:underline') => <button type="button" onClick={() => setAgreement(type)} className={className}>{label}</button>;
+  const navigateToRoleHome = (role: Parameters<typeof getRoleHome>[0]) => {
+    const isMobile = window.matchMedia('(max-width: 767px)').matches || /Android|iPhone|iPad|iPod|Mobile|IEMobile|Windows Phone|BlackBerry/i.test(navigator.userAgent);
+    const destination = isMobile ? role === 'designer' ? '/mobile/orders' : '/mobile' : getRoleHome(role);
+    window.location.replace(destination);
+  };
 
   useEffect(() => {
     if (!smsCountdown) return;
@@ -73,6 +78,11 @@ function LoginPageContent() {
 
   useEffect(() => {
     setAgreedToPolicies(window.localStorage.getItem('login_policies_accepted') === 'true');
+    const expiredNotice = window.sessionStorage.getItem(AUTH_EXPIRED_NOTICE_KEY);
+    if (expiredNotice) {
+      window.sessionStorage.removeItem(AUTH_EXPIRED_NOTICE_KEY);
+      toast.error(expiredNotice);
+    }
     const saved = window.localStorage.getItem('saved_login_account');
     if (!saved) return;
     try {
@@ -141,7 +151,7 @@ function LoginPageContent() {
       if (rememberAccount) window.localStorage.setItem('saved_login_account', JSON.stringify({ mode: loginMode, value: loginMode === 'password' ? identifier.trim() : loginPhone.trim() }));
       else window.localStorage.removeItem('saved_login_account');
       toast.success(`欢迎回来，${session.user.name}`);
-      router.push(getRoleHome(session.user.role));
+      navigateToRoleHome(session.user.role);
     } catch (error: any) {
       toast.error(error.message || '网络连接异常，请检查后端服务是否启动');
     } finally {
@@ -164,7 +174,7 @@ function LoginPageContent() {
       if (!response.ok || !result.success) throw new Error(result.message || '注册失败');
       setAuthSession(result.data.token, result.data.user);
       toast.success('注册成功并已自动登录');
-      router.push(getRoleHome(result.data.user.role));
+      navigateToRoleHome(result.data.user.role);
     } catch (error: any) {
       toast.error(error.message || '注册发生错误');
     } finally {
@@ -195,7 +205,7 @@ function LoginPageContent() {
   };
 
   return (
-    <div className={`relative min-h-screen overflow-hidden text-slate-900 transition-colors duration-700 ${isDesigner ? 'bg-[#fff7f5] selection:bg-rose-100 selection:text-rose-900' : 'bg-[#f5f7ff] selection:bg-blue-100 selection:text-blue-900'}`}>
+    <div className={`relative min-h-screen w-full max-w-full overflow-x-clip text-slate-900 transition-colors duration-700 ${isDesigner ? 'bg-[#fff7f5] selection:bg-rose-100 selection:text-rose-900' : 'bg-[#f5f7ff] selection:bg-blue-100 selection:text-blue-900'}`}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className={`absolute -left-24 top-6 h-[28rem] w-[28rem] rounded-full bg-blue-400/35 blur-3xl transition-all duration-700 ease-out ${isDesigner ? 'translate-x-24 -translate-y-12 scale-75 opacity-0' : 'translate-x-0 translate-y-0 scale-100 opacity-100'}`} />
         <div className={`absolute -right-24 bottom-0 h-[30rem] w-[30rem] rounded-full bg-cyan-300/45 blur-3xl transition-all duration-700 ease-out ${isDesigner ? '-translate-x-24 translate-y-12 scale-75 opacity-0' : 'translate-x-0 translate-y-0 scale-100 opacity-100'}`} />
@@ -204,7 +214,7 @@ function LoginPageContent() {
         <div className={`absolute inset-0 opacity-[0.34] transition-[background-image] duration-700 [background-size:44px_44px] ${isDesigner ? '[background-image:linear-gradient(rgba(225,29,72,.06)_1px,transparent_1px),linear-gradient(90deg,rgba(225,29,72,.06)_1px,transparent_1px)]' : '[background-image:linear-gradient(rgba(37,99,235,.06)_1px,transparent_1px),linear-gradient(90deg,rgba(37,99,235,.06)_1px,transparent_1px)]'}`} />
       </div>
 
-      <main className="relative mx-auto grid min-h-screen w-full max-w-6xl items-center gap-10 px-4 py-8 sm:px-8 lg:grid-cols-[1.1fr_.9fr] lg:gap-20">
+      <main className="relative mx-auto grid min-h-screen w-full min-w-0 max-w-6xl items-center gap-10 px-4 py-8 sm:px-8 lg:grid-cols-[1.1fr_.9fr] lg:gap-20">
         <section className="hidden lg:block">
           <div className="flex items-center gap-3"><BrandMark designer={isDesigner} /><div><p className="text-lg font-bold tracking-tight text-slate-900">创赢</p><p className="text-xs text-slate-500">视觉协作工作台</p></div></div>
           <div className="mt-20 max-w-xl"><p className={`mb-4 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] transition-colors duration-700 ${accentText}`}><Sparkles className="h-4 w-4" />{isDesigner ? 'Designer creative space' : 'Brand collaboration hub'}</p><h1 className="text-5xl font-bold leading-[1.14] tracking-tight text-slate-900">{isDesigner ? <>让灵感变成<br /><span className="bg-gradient-to-r from-orange-500 via-rose-500 to-fuchsia-600 bg-clip-text text-transparent">有价值的作品</span></> : <>让每一笔设计需求<br /><span className="bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 bg-clip-text text-transparent">清晰、可靠、可交付</span></>}</h1><p className="mt-6 max-w-lg text-sm leading-7 text-slate-600">{isDesigner ? '发现适合你的设计订单，专注创作、提交审核，并获得清晰可见的收益。' : '发布设计需求、跟踪交付进度，并在一个工作空间里完成验收与协作。'}</p></div>
@@ -214,8 +224,8 @@ function LoginPageContent() {
           <p className="mt-16 text-[11px] text-slate-400">© 2026 创赢 · 安全登录，安心协作</p>
         </section>
 
-        <section className={`mx-auto w-full max-w-md rounded-[30px] border border-white/80 bg-white/80 p-2 text-slate-900 shadow-2xl backdrop-blur-xl transition-all duration-700 ${isDesigner ? 'shadow-rose-900/15' : 'shadow-blue-900/15'}`}>
-          <div className="relative overflow-hidden rounded-[24px] border border-white bg-white/90 p-6 sm:p-8">
+        <section className={`mx-auto w-full min-w-0 max-w-md rounded-[30px] border border-white/80 bg-white/80 p-2 text-slate-900 shadow-2xl backdrop-blur-xl transition-all duration-700 ${isDesigner ? 'shadow-rose-900/15' : 'shadow-blue-900/15'}`}>
+          <div className="relative min-w-0 overflow-hidden rounded-[24px] border border-white bg-white/90 p-4 sm:p-8">
             <div className={`absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-current to-transparent transition-colors duration-700 ${accentText}`} />
             <div className="mb-6 flex items-center gap-3 lg:hidden"><BrandMark designer={isDesigner} size={40} className="rounded-xl" /><div><p className="font-bold text-slate-900">创赢</p><p className="text-[11px] text-slate-400">视觉协作工作台</p></div></div>
             <div className="mb-6"><p className={`text-xs font-semibold transition-colors duration-700 ${accentText}`}>{isRegister ? '加入创赢' : isReset ? '安全找回账号' : isDesigner ? 'DESIGNER ACCESS' : 'BRAND ACCESS'}</p><h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">{isRegister ? '创建你的工作账号' : isReset ? '重置登录密码' : entryRole === 'advertiser' ? '登录品牌方工作台' : '登录设计师空间'}</h2><p className="mt-2 text-xs leading-5 text-slate-400">{isRegister ? '支持手机号或邮箱验证码注册，注册后自动开通双角色' : isReset ? '通过已绑定手机号或邮箱验证身份并设置新密码' : entryRole === 'advertiser' ? '发布设计需求、跟踪交付并完成验收' : '浏览订单、接单创作并提交设计作品'}</p></div>
@@ -247,7 +257,6 @@ function LoginPageContent() {
                 <div className="flex items-start gap-2"><Checkbox id="login-policies" checked={agreedToPolicies} onCheckedChange={(checked) => setAgreedToPolicies(checked === true)} className="mt-0.5" /><Label required htmlFor="login-policies" className="cursor-pointer text-[11px] font-normal leading-5 text-slate-500">我已阅读并同意{policyLink('user', '用户协议')}和{policyLink('privacy', '隐私协议', 'ml-1 text-blue-600 hover:underline')}</Label></div>
                 <Button type="submit" disabled={loading} className={`h-11 w-full rounded-xl text-xs font-semibold text-white shadow-lg transition-all duration-500 hover:-translate-y-0.5 ${primaryButton}`}>{loading ? '正在登录...' : isDesigner ? '进入设计师空间' : '进入品牌方工作台'}<ArrowRight className="ml-1 h-4 w-4" /></Button>
                 <p className="text-center text-xs text-slate-500">没有账号？<a href="/login?mode=register" className={`font-medium hover:underline ${accentLink}`}>去注册</a></p>
-                <p className="text-center text-[11px] leading-5 text-slate-400">登录即表示同意{policyLink('user', '用户协议')}和{policyLink('privacy', '隐私协议')}</p>
               </form>
             </>}
             <Dialog open={captchaFor !== null} onOpenChange={(open) => { if (!open) setCaptchaFor(null); }}>
