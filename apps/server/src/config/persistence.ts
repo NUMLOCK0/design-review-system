@@ -222,20 +222,36 @@ async function ensureSchema() {
 
   await addColumn('users', 'organization_id', 'VARCHAR(64)');
   await addColumn('users', 'is_organization_admin', 'BOOLEAN NOT NULL DEFAULT FALSE');
+  const [userIndexes]: any = await dbPool!.query('SHOW INDEX FROM users');
+  const indexGroups = new Map<string, any[]>();
+  for (const index of userIndexes) indexGroups.set(index.Key_name, [...(indexGroups.get(index.Key_name) || []), index]);
+  for (const [name, parts] of indexGroups) {
+    if (name !== 'PRIMARY' && parts.length === 1 && parts[0].Column_name === 'phone' && Number(parts[0].Non_unique) === 0) {
+      await dbPool!.query(`ALTER TABLE users DROP INDEX \`${String(name).replace(/`/g, '``')}\``);
+    }
+  }
+  if (!indexGroups.has('uk_users_phone_role')) {
+    const [duplicates]: any = await dbPool!.query(`SELECT phone, role FROM users WHERE phone IS NOT NULL GROUP BY phone, role HAVING COUNT(*) > 1 LIMIT 1`);
+    if (duplicates.length) throw new Error('发现同一手机号重复注册相同角色的账号，需先人工核对后再添加手机号角色唯一约束');
+    await dbPool!.query('ALTER TABLE users ADD UNIQUE KEY uk_users_phone_role (phone, role)');
+  }
   await dbPool!.query(`CREATE TABLE IF NOT EXISTS user_roles (
     user_id VARCHAR(64) NOT NULL,
     role VARCHAR(32) NOT NULL,
     created_at VARCHAR(64) NOT NULL,
-    PRIMARY KEY (user_id, role),
+    PRIMARY KEY (user_id),
     INDEX idx_user_roles_role (role, user_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`);
-  // 普通账号直接开放双角色；平台账号保持单一平台角色。
-  await dbPool!.query(`INSERT IGNORE INTO user_roles (user_id, role, created_at)
-    SELECT id, 'advertiser', COALESCE(CAST(created_at AS CHAR), NOW()) FROM users WHERE role IN ('advertiser', 'designer')`);
-  await dbPool!.query(`INSERT IGNORE INTO user_roles (user_id, role, created_at)
-    SELECT id, 'designer', COALESCE(CAST(created_at AS CHAR), NOW()) FROM users WHERE role IN ('advertiser', 'designer')`);
-  await dbPool!.query(`INSERT IGNORE INTO user_roles (user_id, role, created_at)
-    SELECT id, role, COALESCE(CAST(created_at AS CHAR), NOW()) FROM users WHERE role IN ('admin', 'customer_service', 'reviewer')`);
+  await dbPool!.query(`UPDATE users SET role = 'customer_service', department = '客服与争议处理部' WHERE role = 'reviewer'`);
+  // users.role is the canonical role; normalize legacy multi-role rows to exactly one row per user.
+  await dbPool!.query('DELETE FROM user_roles');
+  await dbPool!.query(`INSERT INTO user_roles (user_id, role, created_at)
+    SELECT id, role, COALESCE(CAST(created_at AS CHAR), NOW()) FROM users
+    WHERE role IN ('advertiser', 'designer', 'customer_service', 'admin')`);
+  const [roleIndexes]: any = await dbPool!.query("SHOW INDEX FROM user_roles WHERE Key_name = 'PRIMARY'");
+  if (roleIndexes.length !== 1 || roleIndexes[0].Column_name !== 'user_id') {
+    await dbPool!.query('ALTER TABLE user_roles DROP PRIMARY KEY, ADD PRIMARY KEY (user_id)');
+  }
   await addColumn('review_rules', 'organization_id', 'VARCHAR(64)');
   await addColumn('review_rules', 'owner_id', 'VARCHAR(64)');
   await addColumn('review_rules', 'owner_name', 'VARCHAR(128)');
@@ -247,7 +263,6 @@ async function ensureSchema() {
   // 清理旧版本明确的测试审核流，真实用户会在首次进入审核流时获得自己的默认流。
   await dbPool!.query(`DELETE FROM review_rule_levels WHERE rule_id IN ('rule_001', 'rule_002')`);
   await dbPool!.query(`DELETE FROM review_rules WHERE id IN ('rule_001', 'rule_002')`);
-  await dbPool!.query(`UPDATE users SET role = 'customer_service', department = '客服与争议处理部' WHERE role = 'reviewer'`);
   await dbPool!.query(`DELETE FROM site_messages WHERE id IN ('msg_welcome_adv', 'msg_welcome_des')`);
   // 仅清理演示账号的业务资料，账号及其角色关系必须保留。
   await dbPool!.query(`DELETE FROM designer_profiles WHERE user_id IN ('u_des_1', 'u_des_2', 'u_des_3', 'u_des_4', 'u_des_5', 'u_des_6')`);

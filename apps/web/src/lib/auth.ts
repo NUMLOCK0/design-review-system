@@ -25,6 +25,24 @@ export const ROLE_LABEL: Record<UserInfo['role'], string> = {
   admin: '系统管理员',
 };
 
+export const ROLE_LOGIN_PATH: Record<UserInfo['role'], string> = {
+  advertiser: '/login/advertiser',
+  designer: '/login/designer',
+  customer_service: '/login/staff',
+  admin: '/login/staff',
+};
+
+export function getRoleLoginPath(role?: UserInfo['role']): string {
+  return role ? ROLE_LOGIN_PATH[role] : '/login';
+}
+
+export function getRoleLoginPathForPath(pathname: string): string {
+  if (pathname.startsWith('/admin') || pathname.startsWith('/service') || pathname.startsWith('/mobile/service')) return '/login/staff';
+  if (pathname.startsWith('/advertiser') || pathname.startsWith('/mobile/review-flows')) return '/login/advertiser';
+  if (pathname.startsWith('/designer') || pathname.startsWith('/order-market') || pathname.startsWith('/wallet') || pathname.startsWith('/review-submit') || pathname.startsWith('/mobile/designer-profile')) return '/login/designer';
+  return '/login';
+}
+
 export function getRoleHome(role: UserInfo['role']): string {
   return ROLE_HOME[role] || ROLE_HOME.designer;
 }
@@ -113,8 +131,9 @@ export async function fetchWithAuth(url: string, options: RequestInit = {}) {
         // 页面跳转仍继续；存储不可用时无法跨页面保留提示。
       }
       const redirect = window.location.pathname + window.location.search;
+      const loginPath = getRoleLoginPath(getCurrentUser()?.role);
       clearAuthSession();
-      window.location.replace('/login?redirect=' + encodeURIComponent(redirect));
+      window.location.replace(loginPath + '?redirect=' + encodeURIComponent(redirect));
     }
   }
 

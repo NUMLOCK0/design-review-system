@@ -15,7 +15,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalFooter } from '@/components/ui/modal';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { DesignerClaimEligibilityBanner } from '@/components/designer-claim-eligibility-banner';
+import { CustomerServiceReviewModal } from '@/components/customer-service-review-modal';
 
 const categories = ['主图设计', '详情页设计', '活动海报', '3D建模与渲染', '精修合成', '店铺首页设计', 'Banner/横幅设计', '产品包装设计', '短视频封面', '品牌视觉设计'];
 const industries = ['服饰', '美妆', '食品', '家居', '数码', '母婴', '珠宝', '鞋包', '家电', '运动户外', '宠物用品', '汽车用品', '文创礼品', '办公文具', '家具建材', '医药健康', '其他'];
@@ -60,8 +63,8 @@ function SelectField({ value, onChange, children, placeholder = '请选择' }: {
   return <Select.Root value={value || undefined} onValueChange={onChange}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-rose-300 focus:ring-2 focus:ring-rose-500/10"><Select.Value placeholder={placeholder} /><Select.Icon><ChevronDown className="h-3.5 w-3.5 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-xl"><Select.Viewport>{children}</Select.Viewport></Select.Content></Select.Portal></Select.Root>;
 }
 
-function SelectItem({ value, children }: { value: string; children: React.ReactNode }) {
-  return <Select.Item value={value} className="flex cursor-pointer items-center rounded-lg px-2.5 py-2 text-xs text-slate-700 outline-none data-[highlighted]:bg-rose-50 data-[highlighted]:text-rose-700"><Select.ItemText>{children}</Select.ItemText><Select.ItemIndicator className="ml-auto"><Check className="h-3.5 w-3.5" /></Select.ItemIndicator></Select.Item>;
+function SelectItem({ value, children, disabled = false }: { value: string; children: React.ReactNode; disabled?: boolean }) {
+  return <Select.Item value={value} disabled={disabled} className="flex cursor-pointer items-center rounded-lg px-2.5 py-2 text-xs text-slate-700 outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50 data-[highlighted]:bg-rose-50 data-[highlighted]:text-rose-700"><Select.ItemText>{children}</Select.ItemText><Select.ItemIndicator className="ml-auto"><Check className="h-3.5 w-3.5" /></Select.ItemIndicator></Select.Item>;
 }
 
 export default function DesignerProfilePage() {
@@ -74,6 +77,7 @@ export default function DesignerProfilePage() {
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState<'profile' | 'portfolio'>('profile');
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
+  const [customerServiceModalOpen, setCustomerServiceModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
@@ -136,6 +140,10 @@ export default function DesignerProfilePage() {
       setDraft({ ...emptyPortfolio });
       setEditingId(null);
       toast.success(result.message || '作品已保存');
+      if (result.data?.status === 'pending_review') {
+        setPortfolioDialogOpen(false);
+        setCustomerServiceModalOpen(true);
+      }
     } catch (error: any) { toast.error(error.message || '作品保存失败'); } finally { setSaving(false); }
   };
 
@@ -158,9 +166,13 @@ export default function DesignerProfilePage() {
     setPortfolios((current) => current.filter((item) => item.id !== id));
     toast.success('作品已删除');
   };
+  const approvedPortfolioCount = portfolios.filter((item) => item.status === 'published' && item.title.trim() && item.coverUrl && item.imageUrls.length > 0).length;
+  const claimReadiness = { loading, error: false, eligibility: { profileCompleted: profile.profileCompleted === true, approvedPortfolioCount, canClaim: profile.profileCompleted === true && profile.publicStatus === 'published' && approvedPortfolioCount > 0 } };
+
 
   if (loading) return <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-400">正在加载个人主页…</div>;
   return <section className="space-y-5">
+    <DesignerClaimEligibilityBanner readiness={claimReadiness} href="/designer/profile" />
     <div className="flex flex-col gap-3 rounded-3xl border border-rose-100 bg-gradient-to-r from-white to-rose-50/70 p-6 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold text-rose-600">设计师空间</p><h1 className="mt-1 text-2xl font-bold text-slate-900">个人主页与作品集</h1><p className="mt-2 text-xs text-slate-500">完善资料，让品牌方更快了解你的专业方向。</p></div><div className="flex items-center gap-2"><Badge className={profile.publicStatus === 'published' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}>{profile.publicStatus === 'published' ? '主页已公开' : profile.publicStatus === 'hidden' ? '主页已隐藏' : '主页仅自己可见'}</Badge>{profile.publicStatus === 'published' && <Button variant="outline" className="h-8 rounded-xl text-xs" onClick={() => window.location.href = `/designers/${profile.userId}`}><Eye className="mr-1 h-3.5 w-3.5" />预览主页</Button>}</div></div>
     <div className="grid gap-5 lg:grid-cols-[210px_minmax(0,1fr)]">
       <nav aria-label="主页资料分区" className="h-fit rounded-3xl border border-slate-200 bg-white p-2.5">
@@ -225,12 +237,12 @@ export default function DesignerProfilePage() {
           )}
         </Card>
       )}
-    {activeSection === 'portfolio' && (<div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]"><Card><CardHeader><CardTitle className="flex items-center justify-between text-base"><span className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-rose-600" />我的作品集</span><Badge variant="outline" className="text-[10px]">已展示 {portfolios.filter((item) => item.status === 'published').length} / {portfolios.length}</Badge><Button type="button" onClick={openNewPortfolio} className="h-8 rounded-xl bg-rose-600 px-3 text-xs text-white hover:bg-rose-700"><Plus className="mr-1 h-3.5 w-3.5" />添加作品</Button></CardTitle></CardHeader><CardContent>{portfolios.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 p-10 text-center text-xs text-slate-400">还没有作品，添加你的第一个项目吧。</div> : <div className="grid gap-3 sm:grid-cols-2">{portfolios.map((item) => <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="relative aspect-[4/3] bg-slate-100"><AuthenticatedImage src={item.coverUrl} alt={item.title} className="h-full w-full object-cover" /><Badge className={`absolute left-2 top-2 text-[10px] ${item.status === 'published' ? 'bg-emerald-500 text-white' : 'bg-white/90 text-slate-600'}`}>{item.status === 'published' ? '已发布' : '草稿'}</Badge></div><div className="p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate text-xs font-bold text-slate-800">{item.title}</h3><p className="mt-1 truncate text-[10px] text-slate-400">{[item.industry, item.category, item.platform].filter(Boolean).join(' · ') || '未设置分类'}</p></div>{item.isFeatured && <Badge className="shrink-0 bg-amber-50 text-[10px] text-amber-700">精选</Badge>}</div><div className="mt-3 flex justify-end gap-1"><Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-rose-600" onClick={() => { setEditingId(item.id); editPortfolio(item); }}><Edit3 className="h-3.5 w-3.5" /></Button><Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-rose-600" onClick={() => void removePortfolio(item.id)}><Trash2 className="h-3.5 w-3.5" /></Button></div></div></article>)}</div>}</CardContent></Card>
+    {activeSection === 'portfolio' && (<div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]"><Card><CardHeader><CardTitle className="flex items-center justify-between text-base"><span className="flex items-center gap-2"><ImagePlus className="h-4 w-4 text-rose-600" />我的作品集</span><Badge variant="outline" className="text-[10px]">已展示 {portfolios.filter((item) => item.status === 'published').length} / {portfolios.length}</Badge><Button type="button" onClick={openNewPortfolio} className="h-8 rounded-xl bg-rose-600 px-3 text-xs text-white hover:bg-rose-700"><Plus className="mr-1 h-3.5 w-3.5" />添加作品</Button></CardTitle></CardHeader><CardContent>{portfolios.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 p-10 text-center text-xs text-slate-400">还没有作品，添加你的第一个项目吧。</div> : <div className="grid gap-3 sm:grid-cols-2">{portfolios.map((item) => <article key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="relative aspect-[4/3] bg-slate-100"><AuthenticatedImage src={item.coverUrl} alt={item.title} className="h-full w-full object-cover" /><Badge className={`absolute left-2 top-2 text-[10px] ${item.status === 'published' ? 'bg-emerald-500 text-white' : item.status === 'pending_review' ? 'bg-amber-500 text-white' : 'bg-white/90 text-slate-600'}`}>{item.status === 'published' ? '已审核公开' : item.status === 'pending_review' ? '审核中' : item.status === 'hidden' ? '已下架' : '草稿'}</Badge></div><div className="p-3"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate text-xs font-bold text-slate-800">{item.title}</h3><p className="mt-1 truncate text-[10px] text-slate-400">{[item.industry, item.category, item.platform].filter(Boolean).join(' · ') || '未设置分类'}</p></div>{item.isFeatured && <Badge className="shrink-0 bg-amber-50 text-[10px] text-amber-700">精选</Badge>}</div><div className="mt-3 flex justify-end gap-1"><Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-rose-600" onClick={() => { setEditingId(item.id); editPortfolio(item); }}><Edit3 className="h-3.5 w-3.5" /></Button><Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-rose-600" onClick={() => void removePortfolio(item.id)}><Trash2 className="h-3.5 w-3.5" /></Button></div></div></article>)}</div>}</CardContent></Card>
 
     </div>)}
-<Dialog open={portfolioDialogOpen} onOpenChange={setPortfolioDialogOpen}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto rounded-3xl border-slate-200 bg-white p-5 sm:p-6">
-          <DialogHeader><DialogTitle className="text-base">{editingId ? '编辑作品项目' : '添加作品项目'}</DialogTitle><DialogDescription className="text-xs">填写项目信息并上传作品图片，保存后可在作品集列表中管理。</DialogDescription></DialogHeader>
+      <Modal open={portfolioDialogOpen} onOpenChange={setPortfolioDialogOpen}>
+        <ModalContent className="max-h-[90vh] max-w-2xl overflow-y-auto rounded-3xl border-slate-200 bg-white p-5 sm:p-6">
+          <ModalHeader><DialogTitle className="text-base">{editingId ? '编辑作品项目' : '添加作品项目'}</DialogTitle><DialogDescription className="text-xs">填写项目信息并上传作品图片，保存后可在作品集列表中管理。</DialogDescription></ModalHeader>
           <form onSubmit={savePortfolio} className="space-y-3">
             <div className="space-y-1.5"><Label required className="text-xs text-slate-600">项目名称</Label><Input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="例如：春季女装主图视觉" className="h-9 rounded-xl text-xs" /></div>
             <ImageUpload required label="作品图片" value={draft.imageUrls} folder="designer-portfolio" onChange={(imageUrls) => setDraft({ ...draft, imageUrls, coverUrl: draft.coverUrl || imageUrls[0] || '' })} />
@@ -238,11 +250,16 @@ export default function DesignerProfilePage() {
             <div className="space-y-1.5"><Label className="text-xs text-slate-600">投放平台</Label><SelectField value={draft.platform || 'none'} onChange={(platform) => setDraft({ ...draft, platform: platform === 'none' ? '' : platform as PlatformType })}><SelectItem value="none">不限平台</SelectItem>{platforms.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectField></div>
             <div className="space-y-1.5"><Label className="text-xs text-slate-600">项目说明</Label><Textarea value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} rows={3} placeholder="说明项目目标、设计思路和最终效果" className="rounded-xl text-xs" /></div>
             <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label className="text-xs text-slate-600">你的职责</Label><Input value={draft.designerRole} onChange={(event) => setDraft({ ...draft, designerRole: event.target.value })} placeholder="例如：视觉方案、页面设计、精修合成" className="h-9 rounded-xl text-xs" /></div><div className="space-y-1.5"><Label className="text-xs text-slate-600">项目标签</Label><Input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} placeholder="简约、质感、转化" className="h-9 rounded-xl text-xs" /></div></div>
-            <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label className="text-xs text-slate-600">发布状态</Label><SelectField value={draft.status} onChange={(status) => setDraft({ ...draft, status: status as DesignerPortfolio['status'] })}><SelectItem value="draft">保存草稿</SelectItem><SelectItem value="published">发布到主页</SelectItem><SelectItem value="hidden">隐藏作品</SelectItem></SelectField></div><label className="flex h-9 cursor-pointer items-center gap-2 self-end rounded-xl border border-slate-200 px-3 text-xs text-slate-600"><input type="checkbox" checked={draft.isFeatured} onChange={(event) => setDraft({ ...draft, isFeatured: event.target.checked })} className="accent-rose-600" />设为精选作品</label></div>
-            <DialogFooter className="border-t border-slate-100 pt-4 sm:flex-row"><Button type="button" variant="outline" onClick={() => setPortfolioDialogOpen(false)} className="h-9 rounded-xl text-xs">取消</Button><Button type="submit" disabled={saving} className="h-9 rounded-xl bg-rose-600 text-xs text-white hover:bg-rose-700">{saving ? '保存中…' : editingId ? '保存作品修改' : '添加作品'}</Button></DialogFooter>
+            <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label className="text-xs text-slate-600">发布状态</Label><SelectField value={draft.status} onChange={(status) => setDraft({ ...draft, status: status as DesignerPortfolio['status'] })}><SelectItem value="draft">保存草稿</SelectItem><SelectItem value="pending_review" disabled>审核中（修改后重新提交审核）</SelectItem><SelectItem value="published">提交审核并公开</SelectItem><SelectItem value="hidden">隐藏作品</SelectItem></SelectField></div><label className="flex h-9 cursor-pointer items-center gap-2 self-end rounded-xl border border-slate-200 px-3 text-xs text-slate-600"><input type="checkbox" checked={draft.isFeatured} onChange={(event) => setDraft({ ...draft, isFeatured: event.target.checked })} className="accent-rose-600" />设为精选作品</label></div>
+            <ModalFooter className="border-t border-slate-100 pt-4 sm:flex-row"><Button type="button" variant="outline" onClick={() => setPortfolioDialogOpen(false)} className="h-9 rounded-xl text-xs">取消</Button><Button type="submit" disabled={saving} className="h-9 rounded-xl bg-rose-600 text-xs text-white hover:bg-rose-700">{saving ? '保存中…' : editingId ? '保存作品修改' : '添加作品'}</Button></ModalFooter>
           </form>
-        </DialogContent>
-      </Dialog>
+        </ModalContent>
+      </Modal>
+
+      <CustomerServiceReviewModal
+        open={customerServiceModalOpen}
+        onClose={() => setCustomerServiceModalOpen(false)}
+      />
 
       </div>
     </div>

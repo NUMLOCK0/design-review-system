@@ -41,14 +41,7 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
-  DialogDescription, 
-  DialogFooter 
-} from "@/components/ui/dialog";
+import { Modal, ModalContent, ModalHeader, ModalFooter, DialogTitle, DialogDescription } from '@/components/ui/modal';
 import { 
   AlertDialog,
   AlertDialogAction,
@@ -67,6 +60,7 @@ import ReviewWorkspaceContent from "@/components/review-workspace";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { ReferenceLinkItemsDetail } from '@/components/reference-link-items-detail';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { CustomerServiceReviewModal } from '@/components/customer-service-review-modal';
 
 const ORDER_STATUS_MAP: Record<string, { label: string; className: string }> = {
   pending_deposit: { label: '待支付定金', className: 'bg-orange-50 text-orange-700 border-orange-100' },
@@ -87,6 +81,7 @@ export default function ReviewTasksPage() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [operatingTaskId, setOperatingTaskId] = useState<string | null>(null);
+  const [customerServiceReviewOpen, setCustomerServiceReviewOpen] = useState(false);
 
   // 任务详情弹窗状态
   const [detailTask, setDetailTask] = useState<ReviewTask | null>(null);
@@ -155,6 +150,7 @@ export default function ReviewTasksPage() {
       toast.success("设计稿已成功提交会审！已进入初审质检流水线");
       fetchTasks();
       if (showDetailModal) setShowDetailModal(false);
+      setCustomerServiceReviewOpen(true);
     } catch (err: any) {
       toast.error(err.message || "提交审核发生错误");
     } finally {
@@ -550,11 +546,11 @@ export default function ReviewTasksPage() {
       </Card>
 
       {/* 任务详情查看弹窗 (Modal) */}
-      <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
-        <DialogContent className="max-w-2xl bg-white rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
+      <Modal open={showDetailModal} onOpenChange={setShowDetailModal}>
+        <ModalContent className="max-w-2xl bg-white rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
           {detailTask && (
             <>
-              <DialogHeader>
+              <ModalHeader>
                 <div className="flex items-center justify-between gap-2">
                   <Badge variant="outline" className="font-mono text-xs text-blue-600 border-blue-200 bg-blue-50">
                     {detailTask.taskNo}
@@ -575,7 +571,7 @@ export default function ReviewTasksPage() {
                 <DialogDescription className="text-xs text-slate-500">
                   款号/SKU: {detailTask.sku || '未指定'} · 目标平台: {PLATFORM_MAP[detailTask.platform]?.label || '全网通用'}
                 </DialogDescription>
-              </DialogHeader>
+              </ModalHeader>
 
               <div className="space-y-4 my-3 text-xs">
                 {/* 核心指标卡片 */}
@@ -675,7 +671,7 @@ export default function ReviewTasksPage() {
                 )}
               </div>
 
-              <DialogFooter className="gap-2 mt-2">
+              <ModalFooter className="gap-2 mt-2">
                 <Button variant="outline" onClick={() => setShowDetailModal(false)} className="rounded-xl text-xs">
                   关闭
                 </Button>
@@ -691,29 +687,33 @@ export default function ReviewTasksPage() {
                 {user?.role === 'advertiser' && detailTask.status === 'approved' && !detailTask.acceptedAt && (
                   <ConfirmAction title="确认支付尾款并验收？" description="确认后将发起尾款支付，验收完成后会开放无水印原图和源文件下载。" confirmText="确认支付并验收" tone="warning" onConfirm={() => handleAcceptTask(detailTask.id)} disabled={operatingTaskId === detailTask.id}><Button disabled={operatingTaskId === detailTask.id} className="rounded-xl bg-emerald-600 text-xs text-white hover:bg-emerald-700"><CheckCircle2 className="mr-1 h-3.5 w-3.5" />支付尾款并确认验收</Button></ConfirmAction>
                 )}
-              </DialogFooter>
+              </ModalFooter>
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </ModalContent>
+      </Modal>
 
-      <Dialog
+      <Modal
         open={Boolean(workspaceTaskId)}
         onOpenChange={(open) => {
           if (!open) handleCloseWorkspace();
         }}
       >
-        <DialogContent
+        <ModalContent
           showCloseButton={false}
-          className="fixed inset-0 left-0 top-0 z-50 h-screen w-screen max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none border-0 bg-slate-950 p-0 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right duration-300"
+          className="fixed inset-0 left-0 top-0 z-50 h-screen w-screen max-w-none max-h-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-none border-0 bg-slate-950 p-0 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right duration-300"
         >
           <DialogTitle className="sr-only">审核作业工作台</DialogTitle>
           <DialogDescription className="sr-only">全屏审核图片、添加坐标批注并更新审核状态</DialogDescription>
           {workspaceTaskId && (
             <ReviewWorkspaceContent taskId={workspaceTaskId} onClose={handleCloseWorkspace} />
           )}
-        </DialogContent>
-      </Dialog>
+        </ModalContent>
+      </Modal>
+      <CustomerServiceReviewModal
+        open={customerServiceReviewOpen}
+        onClose={() => setCustomerServiceReviewOpen(false)}
+      />
     </div>
   );
 }

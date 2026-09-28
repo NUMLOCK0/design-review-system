@@ -324,3 +324,8 @@ systemConfigRouter.get('/order-pricing', authenticate, requireRoles('advertiser'
   const contact = activeCustomerService();
   res.json({ code: 200, success: true, data: { imageUnitPrice: systemConfig.imageUnitPrice, imageUnitPrices: systemConfig.imageUnitPrices, minOrderBudget: systemConfig.minOrderBudget, psdSurchargeRate: systemConfig.psdSurchargeRate, customerService: contact ? { id: contact.id, name: contact.name, wechat: contact.wechat, qrCodeUrl: contact.qrCodeUrl } : null }, timestamp: Date.now() });
 });
+
+systemConfigRouter.get('/active-customer-service', authenticate, requireRoles('advertiser', 'designer', 'customer_service', 'admin'), (_req, res) => {
+  const contact = activeCustomerService();
+  res.json({ code: 200, success: true, data: contact ? { id: contact.id, name: contact.name, wechat: contact.wechat, qrCodeUrl: contact.qrCodeUrl } : null, timestamp: Date.now() });
+});

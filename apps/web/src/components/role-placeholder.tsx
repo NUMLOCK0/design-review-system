@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, ShieldCheck } from 'lucide-react';
-import { getCurrentUser, getRoleHome, ROLE_LABEL, UserInfo } from '@/lib/auth';
+import { getCurrentUser, getRoleHome, getRoleLoginPath, ROLE_LABEL, UserInfo } from '@/lib/auth';
 import { useCurrentUser } from '@/hooks/use-current-user';
 
 interface RolePlaceholderProps {
@@ -19,7 +19,7 @@ export function RolePlaceholder({ roles, title, nextSteps }: RolePlaceholderProp
   useEffect(() => {
     const user = getCurrentUser();
     if (!user) {
-      router.replace(`/login?redirect=${encodeURIComponent(window.location.pathname)}`);
+      router.replace(`${getRoleLoginPath(roles[0])}?redirect=${encodeURIComponent(window.location.pathname)}`);
       return;
     }
     if (!roles.includes(user.role)) {

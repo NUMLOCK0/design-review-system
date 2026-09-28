@@ -19,23 +19,11 @@ function normalizeRole(role: string) {
   return role === 'reviewer' ? 'customer_service' : role;
 }
 
-function rolesForUser(role: string, roles?: string[]): AppRole[] {
-  const normalized = normalizeRole(role) as AppRole;
-  if (PLATFORM_ROLES.includes(normalized)) return [normalized];
-  // 普通用户直接拥有双业务角色，兼容历史单角色数据和未完成迁移的数据。
-  const persistedBusinessRoles = BUSINESS_ROLES.filter((item) => roles?.includes(item));
-  return persistedBusinessRoles.length === BUSINESS_ROLES.length ? persistedBusinessRoles : [...BUSINESS_ROLES];
+function rolesForUser(role: string): AppRole[] {
+  return [normalizeRole(role) as AppRole];
 }
 
-async function loadUserRoles(userId: string, role: string): Promise<AppRole[]> {
-  if (dbPool) {
-    try {
-      const [rows]: any = await dbPool.query('SELECT role FROM user_roles WHERE user_id = ? ORDER BY role', [userId]);
-      if (rows?.length) return rolesForUser(role, rows.map((row: any) => normalizeRole(row.role)));
-    } catch (error) {
-      console.error('读取用户角色失败，使用兼容角色:', error);
-    }
-  }
+async function loadUserRoles(_userId: string, role: string): Promise<AppRole[]> {
   return rolesForUser(role);
 }
 
@@ -92,7 +80,8 @@ let memoryUsers: any[] = [
 
 const loginSchema = z.object({
   identifier: z.string().min(1, { message: '请输入邮箱或手机号' }),
-  password: z.string().min(1, { message: '密码不能为空' })
+  password: z.string().min(1, { message: '密码不能为空' }),
+  role: z.enum(['advertiser', 'designer', 'staff']).optional()
 });
 
 const registerSchema = z.object({
@@ -111,6 +100,7 @@ const resetPasswordSchema = z.object({
   channel: z.enum(['phone', 'email']).default('phone'),
   phone: z.string().optional(),
   email: z.string().optional(),
+  role: z.enum(['advertiser', 'designer', 'staff']).optional(),
   code: z.string().length(6, { message: '请输入6位验证码' }),
   password: z.string().min(6, { message: '密码长度不能少于6位' })
 });
@@ -121,7 +111,7 @@ const normalizeEmail = (email: string) => email.trim().toLowerCase();
 // 1. 用户登录 API
 authRouter.post('/login', async (req, res, next) => {
   try {
-    const parseResult = loginSchema.safeParse({ identifier: req.body?.identifier || req.body?.email, password: req.body?.password });
+    const parseResult = loginSchema.safeParse({ identifier: req.body?.identifier || req.body?.email, password: req.body?.password, role: req.body?.role });
     if (!parseResult.success) {
       return res.status(400).json({
         code: 400,
@@ -130,7 +120,7 @@ authRouter.post('/login', async (req, res, next) => {
       });
     }
 
-    const { identifier, password } = parseResult.data;
+    const { identifier, password, role: entryRole } = parseResult.data;
     const phoneIdentifier = normalizePhone(identifier);
     if (!identifier.includes('@') && !isValidPhone(phoneIdentifier)) {
       return res.status(400).json({ code: 400, success: false, message: '请输入有效的邮箱或手机号' });
@@ -139,7 +129,9 @@ authRouter.post('/login', async (req, res, next) => {
 
     if (dbPool) {
       try {
-        const [rows]: any = await dbPool.query('SELECT * FROM users WHERE email = ? OR phone = ? LIMIT 1', [identifier, phoneIdentifier]);
+        const roleClause = entryRole === 'staff' ? " AND role IN ('admin', 'customer_service')" : entryRole ? ' AND role = ?' : '';
+        const [rows]: any = await dbPool.query(`SELECT * FROM users WHERE (email = ? OR phone = ?)${roleClause} LIMIT 2`, [identifier, phoneIdentifier, ...(entryRole && entryRole !== 'staff' ? [entryRole] : [])]);
+        if (!entryRole && rows?.length > 1) return res.status(400).json({ code: 400, success: false, message: '该手机号绑定了多个系统账号，请从对应的登录入口进入' });
         if (rows && rows.length > 0) {
           user = {
             id: rows[0].id,
@@ -161,7 +153,9 @@ authRouter.post('/login', async (req, res, next) => {
     }
 
     if (!user && useMemoryAuth) {
-      user = memoryUsers.find(u => u.email === identifier || u.phone === phoneIdentifier);
+      const matches = memoryUsers.filter((u) => (u.email === identifier || u.phone === phoneIdentifier) && (entryRole === 'staff' ? PLATFORM_ROLES.includes(u.role) : !entryRole || u.role === entryRole));
+      if (!entryRole && matches.length > 1) return res.status(400).json({ code: 400, success: false, message: '该手机号绑定了多个系统账号，请从对应的登录入口进入' });
+      user = matches[0];
     }
 
     if (!user) {
@@ -228,10 +222,10 @@ authRouter.post('/register', async (req, res, next) => {
 
     const { name, channel, password, role, department } = parseResult.data;
     const phone = channel === 'phone' ? normalizePhone(parseResult.data.phone || '') : null;
-    const email = channel === 'email' ? normalizeEmail(parseResult.data.email || '') : `${phone}@phone.local`;
+    const email = channel === 'email' ? normalizeEmail(parseResult.data.email || '') : `${phone}+${role}@phone.local`;
     if (channel === 'phone' && !isValidPhone(phone || '')) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
     if (channel === 'email' && !EMAIL_PATTERN.test(email)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的邮箱地址' });
-    if (useMemoryAuth && memoryUsers.some((item) => item.phone === phone || item.email === email)) return res.status(400).json({ code: 400, success: false, message: channel === 'email' ? '该邮箱已注册' : '该手机号已注册' });
+    if (useMemoryAuth && memoryUsers.some((item) => item.email === email || (channel === 'phone' && item.phone === phone && item.role === role))) return res.status(400).json({ code: 400, success: false, message: channel === 'email' ? '该邮箱已注册' : '该手机号已在当前入口注册' });
     try {
       if (channel === 'phone') consumeSmsCode(phone!, parseResult.data.code, 'register');
       else consumeEmailCode(email, parseResult.data.code, 'register');
@@ -242,13 +236,13 @@ authRouter.post('/register', async (req, res, next) => {
     const userId = `u_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
     const organizationId = role === 'advertiser' ? 'org_demo_1' : undefined;
     const isOrganizationAdmin = role === 'advertiser';
-    const roles: AppRole[] = [...BUSINESS_ROLES];
+    const roles: AppRole[] = [role];
 
     if (dbPool) {
       try {
-        const [existing]: any = await dbPool.query('SELECT id FROM users WHERE email = ? OR phone = ?', [email, phone]);
+        const [existing]: any = await dbPool.query('SELECT id FROM users WHERE email = ? OR (phone = ? AND role = ?)', [email, phone, role]);
         if (existing && existing.length > 0) {
-          return res.status(400).json({ code: 400, success: false, message: channel === 'email' ? '该邮箱已注册' : '该手机号已注册' });
+          return res.status(400).json({ code: 400, success: false, message: channel === 'email' ? '该邮箱已注册' : '该手机号已在当前入口注册' });
         }
 
         await dbPool.query(
@@ -310,11 +304,18 @@ authRouter.post('/password/reset', async (req, res, next) => {
       code: req.body?.code || req.body?.smsCode || req.body?.emailCode
     });
     if (!parseResult.success) return res.status(400).json({ code: 400, success: false, message: parseResult.error.errors[0].message });
-    const { channel, password } = parseResult.data;
+    const { channel, password, role } = parseResult.data;
     const phone = channel === 'phone' ? normalizePhone(parseResult.data.phone || '') : null;
     const email = channel === 'email' ? normalizeEmail(parseResult.data.email || '') : null;
     if (channel === 'phone' && !isValidPhone(phone || '')) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
     if (channel === 'email' && !EMAIL_PATTERN.test(email || '')) return res.status(400).json({ code: 400, success: false, message: '请输入有效的邮箱地址' });
+    if (channel === 'phone' && !role) {
+      if (dbPool) {
+        const [matches]: any = await dbPool.query('SELECT id FROM users WHERE phone = ? LIMIT 2', [phone]);
+        if (matches?.length > 1) return res.status(400).json({ code: 400, success: false, message: '该手机号绑定了多个系统账号，请从对应的登录入口找回密码' });
+      }
+      if (useMemoryAuth && memoryUsers.filter((item) => item.phone === phone).length > 1) return res.status(400).json({ code: 400, success: false, message: '该手机号绑定了多个系统账号，请从对应的登录入口找回密码' });
+    }
     try {
       if (channel === 'phone') consumeSmsCode(phone!, parseResult.data.code, 'reset');
       else consumeEmailCode(email!, parseResult.data.code, 'reset');
@@ -324,10 +325,11 @@ authRouter.post('/password/reset', async (req, res, next) => {
     const passwordHash = await bcrypt.hash(password, 10);
     let updated = false;
     if (dbPool) {
-      const [result]: any = await dbPool.query(`UPDATE users SET password_hash = ? WHERE ${channel === 'phone' ? 'phone' : 'email'} = ?`, [passwordHash, channel === 'phone' ? phone : email]);
+      const roleClause = channel === 'phone' && role && role !== 'staff' ? ' AND role = ?' : channel === 'phone' && role === 'staff' ? " AND role IN ('admin', 'customer_service')" : '';
+      const [result]: any = await dbPool.query(`UPDATE users SET password_hash = ? WHERE ${channel === 'phone' ? 'phone' : 'email'} = ?${roleClause}`, [passwordHash, channel === 'phone' ? phone : email, ...(channel === 'phone' && role && role !== 'staff' ? [role] : [])]);
       updated = Boolean(result?.affectedRows);
     }
-    const memoryUser = useMemoryAuth ? memoryUsers.find((item) => channel === 'phone' ? item.phone === phone : item.email === email) : undefined;
+    const memoryUser = useMemoryAuth ? memoryUsers.find((item) => (channel === 'phone' ? item.phone === phone : item.email === email) && (channel !== 'phone' || !role ? true : role === 'staff' ? PLATFORM_ROLES.includes(item.role) : item.role === role)) : undefined;
     if (memoryUser) {
       memoryUser.passwordHash = passwordHash;
       updated = true;
@@ -359,15 +361,21 @@ authRouter.post('/sms/send', async (req, res) => {
   try {
     const phone = normalizePhone(String(req.body?.phone || ''));
     const purpose = req.body?.purpose === 'register' || req.body?.purpose === 'reset' ? req.body.purpose : 'login';
+    const role = ['advertiser', 'designer', 'staff'].includes(req.body?.role) ? req.body.role as 'advertiser' | 'designer' | 'staff' : undefined;
     if (!isValidPhone(phone)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
     if (purpose === 'register' || purpose === 'reset') {
-      let exists = useMemoryAuth && memoryUsers.some((item) => item.phone === phone);
+      if (purpose === 'register' && (!role || role === 'staff')) return res.status(400).json({ code: 400, success: false, message: '注册入口无效，请从品牌方或设计师入口注册' });
+      const matchingMemoryUsers = useMemoryAuth ? memoryUsers.filter((item) => item.phone === phone && (!role || (role === 'staff' ? PLATFORM_ROLES.includes(item.role) : item.role === role))) : [];
+      if (purpose === 'reset' && !role && matchingMemoryUsers.length > 1) return res.status(400).json({ code: 400, success: false, message: '该手机号绑定了多个系统账号，请从对应的登录入口找回密码' });
+      let exists = matchingMemoryUsers.length > 0;
       if (dbPool) {
-        const [rows]: any = await dbPool.query('SELECT id FROM users WHERE phone = ? LIMIT 1', [phone]);
+        const roleClause = role === 'staff' ? " AND role IN ('admin', 'customer_service')" : role ? ' AND role = ?' : '';
+        const [rows]: any = await dbPool.query(`SELECT id FROM users WHERE phone = ?${roleClause} LIMIT 2`, [phone, ...(role && role !== 'staff' ? [role] : [])]);
+        if (purpose === 'reset' && !role && rows?.length > 1) return res.status(400).json({ code: 400, success: false, message: '该手机号绑定了多个系统账号，请从对应的登录入口找回密码' });
         exists = Boolean(rows?.length);
       }
-      if (purpose === 'register' && exists) return res.status(400).json({ code: 400, success: false, message: '该手机号已注册' });
-      if (purpose === 'reset' && !exists) return res.status(404).json({ code: 404, success: false, message: '该手机号尚未绑定账号' });
+      if (purpose === 'register' && exists) return res.status(400).json({ code: 400, success: false, message: '该手机号已在当前入口注册' });
+      if (purpose === 'reset' && !exists) return res.status(404).json({ code: 404, success: false, message: '当前入口下该手机号尚未绑定账号' });
     }
     const result = await sendSmsCode(phone, String(req.body?.captchaToken || ''), purpose);
     res.json({ code: 200, success: true, message: '验证码已发送', data: result, timestamp: Date.now() });
@@ -401,31 +409,41 @@ authRouter.post('/email/send', async (req, res) => {
 authRouter.post('/sms/login', async (req, res, next) => {
   try {
     const phone = normalizePhone(String(req.body?.phone || ''));
+    const entryRole = ['advertiser', 'designer', 'staff'].includes(req.body?.role) ? req.body.role as 'advertiser' | 'designer' | 'staff' : undefined;
+    if (req.body?.role && !entryRole) return res.status(400).json({ code: 400, success: false, message: '登录入口无效' });
     if (!isValidPhone(phone)) return res.status(400).json({ code: 400, success: false, message: '请输入有效的中国大陆手机号' });
     try { consumeSmsCode(phone, String(req.body?.code || ''), 'login'); }
     catch (error: any) { return res.status(400).json({ code: 400, success: false, message: error.message || '验证码无效' }); }
     let user: any = null;
     let registered = false;
     if (dbPool) {
-      const [rows]: any = await dbPool.query('SELECT * FROM users WHERE phone = ? LIMIT 1', [phone]);
+      const roleClause = entryRole === 'staff' ? " AND role IN ('admin', 'customer_service')" : entryRole ? ' AND role = ?' : '';
+      const [rows]: any = await dbPool.query(`SELECT * FROM users WHERE phone = ?${roleClause} LIMIT 2`, [phone, ...(entryRole && entryRole !== 'staff' ? [entryRole] : [])]);
+      if (!entryRole && rows?.length > 1) return res.status(400).json({ code: 400, success: false, message: '该手机号绑定了多个系统账号，请从对应的登录入口进入' });
       if (rows?.length) user = { id: rows[0].id, name: rows[0].name, email: rows[0].email, phone: rows[0].phone, passwordHash: rows[0].password_hash, isActive: Boolean(rows[0].is_active), role: normalizeRole(rows[0].role), department: rows[0].department, avatarUrl: rows[0].avatar_url, organizationId: rows[0].organization_id, isOrganizationAdmin: rows[0].is_organization_admin };
     }
-    if (!user && useMemoryAuth) user = memoryUsers.find((item) => item.phone === phone);
+    if (!user && useMemoryAuth) {
+      const matches = memoryUsers.filter((item) => item.phone === phone && (entryRole === 'staff' ? PLATFORM_ROLES.includes(item.role) : !entryRole || item.role === entryRole));
+      if (!entryRole && matches.length > 1) return res.status(400).json({ code: 400, success: false, message: '该手机号绑定了多个系统账号，请从对应的登录入口进入' });
+      user = matches[0];
+    }
     if (user?.isActive === false) return res.status(403).json({ code: 403, success: false, message: '该账号已被管理员停用' });
     if (!user) {
+      if (entryRole === 'staff') return res.status(404).json({ code: 404, success: false, message: '该手机号没有平台工作人员账号' });
       const userId = `u_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
-      const roles: AppRole[] = [...BUSINESS_ROLES];
+      const role: AppRole = entryRole || 'advertiser';
+      const roles: AppRole[] = [role];
       user = {
         id: userId,
         name: `用户${phone.slice(-4)}`,
-        email: `${phone}@phone.local`,
+        email: `${phone}+${role}@phone.local`,
         phone,
         passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
-        role: 'advertiser',
+        role,
         roles,
-        department: '品牌与设计协作部',
-        organizationId: `org_${userId}`,
-        isOrganizationAdmin: true,
+        department: role === 'advertiser' ? '品牌与设计协作部' : '视觉设计部',
+        organizationId: role === 'advertiser' ? `org_${userId}` : undefined,
+        isOrganizationAdmin: role === 'advertiser',
         avatarUrl: ''
       };
       if (dbPool) {

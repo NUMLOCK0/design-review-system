@@ -7,6 +7,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalFooter } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Calendar as CalendarIcon, Download, Loader2 } from 'lucide-react';
@@ -148,14 +149,14 @@ export function ExportDateModal({
   ];
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[340px] p-5 rounded-2xl sm:max-w-[340px] shadow-2xl border bg-background/95 backdrop-blur-md">
-        <DialogHeader className="p-0 pb-3 border-b">
+    <Modal open={open} onOpenChange={onOpenChange}>
+      <ModalContent className="w-[340px] p-5 rounded-2xl sm:max-w-[340px] shadow-2xl border bg-background/95 backdrop-blur-md">
+        <ModalHeader className="p-0 pb-3 border-b">
           <DialogTitle className="text-sm font-semibold flex items-center gap-1.5 text-foreground">
             <Download className="size-4 text-primary" />
             {title}
           </DialogTitle>
-        </DialogHeader>
+        </ModalHeader>
 
         <div className="space-y-4 pt-1">
           {/* 选择日期区间输入框 */}
@@ -249,7 +250,7 @@ export function ExportDateModal({
             </Button>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </ModalContent>
+    </Modal>
   );
 }

@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalFooter } from '@/components/ui/modal';
 import { toast } from 'sonner';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { useToast } from '@/components/ui/app-toast';
@@ -130,15 +131,15 @@ export default function DesignerWalletPage() {
           </div>
         </div>
 
-        <Dialog open={isWithdrawOpen} onOpenChange={setIsWithdrawOpen}>
+        <Modal open={isWithdrawOpen} onOpenChange={setIsWithdrawOpen}>
           <DialogTrigger asChild>
             <Button className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold px-5 h-10 rounded-2xl shadow-md shadow-emerald-600/20 gap-1.5">
               <ArrowUpRight className="w-4 h-4" />
               申请提现至银行卡
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-md bg-white rounded-3xl p-6">
-            <DialogHeader>
+          <ModalContent className="max-w-md bg-white rounded-3xl p-6">
+            <ModalHeader>
               <DialogTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-emerald-600" />
                 收益提现申请
@@ -146,7 +147,7 @@ export default function DesignerWalletPage() {
               <CardDescription className="text-xs text-slate-500">
                 提现申请需由客服审核；审核不通过时金额原路退回收益钱包
               </CardDescription>
-            </DialogHeader>
+            </ModalHeader>
 
             <form onSubmit={handleWithdraw} className="space-y-4 mt-2">
               <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between text-xs">
@@ -188,17 +189,17 @@ export default function DesignerWalletPage() {
                 <div className="text-emerald-900 font-medium">客服审核通过后处理，驳回时提现金额原路退回收益钱包。</div>
               </div>
 
-              <DialogFooter className="mt-4 gap-2">
+              <ModalFooter className="mt-4 gap-2">
                 <Button type="button" variant="outline" onClick={() => setIsWithdrawOpen(false)} className="rounded-xl text-xs">
                   取消
                 </Button>
                 <Button type="submit" disabled={withdrawing} className="rounded-xl text-xs bg-emerald-600 hover:bg-emerald-700 text-white">
                   {withdrawing ? '提交中...' : '确认提现'}
                 </Button>
-              </DialogFooter>
+              </ModalFooter>
             </form>
-          </DialogContent>
-        </Dialog>
+          </ModalContent>
+        </Modal>
       </div>
 
       {/* 4 大核心资金资产卡片 */}

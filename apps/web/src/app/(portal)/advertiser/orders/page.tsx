@@ -12,12 +12,14 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalFooter } from '@/components/ui/modal';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { DesignerInviteDrawer } from '@/components/designer-invite-drawer';
 import { ReferenceLinkItemsDetail } from '@/components/reference-link-items-detail';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { AuthenticatedImage } from '@/components/authenticated-image';
 import { toast } from 'sonner';
+import { OrderModeDropdownButton } from '@/components/order-mode-dropdown';
 
 const statusMap: Record<string, { label: string; className: string }> = {
   pending_deposit: { label: '待支付定金', className: 'bg-orange-50 text-orange-700' },
@@ -246,18 +248,18 @@ export default function AdvertiserOrdersPage() {
           <h1 className="mt-1 text-2xl font-bold text-slate-900">订单管理</h1>
         </div>
         <div className="flex gap-2">
-          <Link href="/advertiser/orders/new"><Button className="h-9 rounded-xl bg-blue-600 text-xs text-white hover:bg-blue-700">新增设计订单</Button></Link>
+          <OrderModeDropdownButton label="新增设计订单" className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700" />
         </div>
       </div>
 
       <DesignerInviteDrawer open={Boolean(inviteOrder)} onOpenChange={(open) => !open && setInviteOrder(null)} order={inviteOrder} onUpdated={loadOrders} />
 
-      <Dialog open={Boolean(payment)} onOpenChange={(open) => { if (!open) closePayment(); }}>
-        <DialogContent className="w-[calc(100%-2rem)] max-w-lg overflow-hidden rounded-3xl border-0 bg-white p-0 shadow-2xl">
-          <DialogHeader className="border-b border-slate-100 bg-gradient-to-br from-blue-50 via-white to-indigo-50 px-6 py-5">
+      <Modal open={Boolean(payment)} onOpenChange={(open) => { if (!open) closePayment(); }}>
+        <ModalContent className="w-[calc(100%-2rem)] max-w-lg overflow-hidden rounded-3xl border-0 bg-white p-0 shadow-2xl">
+          <ModalHeader className="border-b border-slate-100 bg-gradient-to-br from-blue-50 via-white to-indigo-50 px-6 py-5">
             <DialogTitle className="flex items-center gap-2 text-base text-slate-900"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm"><QrCode className="h-5 w-5" /></span>{payment?.stage === 'deposit' ? '支付订单定金' : '支付订单尾款'}</DialogTitle>
             <DialogDescription className="pl-11 text-xs text-slate-500">订单：{payment?.order.title}</DialogDescription>
-          </DialogHeader>
+          </ModalHeader>
           {payment && <div className="space-y-4 px-6 py-5">
             <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
               {([['wxpay', '微信支付'], ['alipay', '支付宝']] as const).map(([type, label]) => <button key={type} type="button" disabled={payment.loading} onClick={() => { if (type !== payment.type) void startPayment(payment.order, payment.stage, type); }} className={`rounded-lg px-3 py-2.5 text-xs font-semibold transition ${payment.type === type ? 'bg-white text-blue-700 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:bg-white/60 hover:text-slate-700'}`}>{label}</button>)}
@@ -270,8 +272,8 @@ export default function AdvertiserOrdersPage() {
             <p className="text-center text-[11px] text-slate-400">支付完成后页面会自动确认订单状态</p>
             {payment.paid && <Button onClick={closePayment} className="w-full rounded-xl bg-emerald-600 text-xs text-white hover:bg-emerald-700">完成</Button>}
           </div>}
-        </DialogContent>
-      </Dialog>
+        </ModalContent>
+      </Modal>
 
       <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -340,12 +342,12 @@ export default function AdvertiserOrdersPage() {
         <div ref={loadMoreRef} className="h-1" />
       </div>
 
-      <Dialog open={Boolean(detailOrder)} onOpenChange={(open) => !open && setDetailOrder(null)}>
-        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto rounded-3xl bg-white">
-          <DialogHeader><DialogTitle>{detailOrder?.title}</DialogTitle><DialogDescription>{detailOrder?.orderNo} · {detailOrder?.category}</DialogDescription></DialogHeader>
+      <Modal open={Boolean(detailOrder)} onOpenChange={(open) => !open && setDetailOrder(null)}>
+        <ModalContent className="max-h-[85vh] max-w-3xl overflow-y-auto rounded-3xl bg-white">
+          <ModalHeader><DialogTitle>{detailOrder?.title}</DialogTitle><DialogDescription>{detailOrder?.orderNo} · {detailOrder?.category}</DialogDescription></ModalHeader>
           {detailOrder && <OrderRequirementsDetail order={detailOrder} />}
-        </DialogContent>
-      </Dialog>
+        </ModalContent>
+      </Modal>
 
       <Drawer direction="right" open={Boolean(progressOrder)} onOpenChange={(open) => { if (!open) { setProgressOrder(null); setProgress(null); } }}>
         <DrawerContent className="h-full max-h-full overflow-y-auto rounded-l-3xl bg-white p-6 [--drawer-width:32rem]">

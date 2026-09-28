@@ -28,7 +28,7 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { getCurrentUser, clearAuthSession, UserInfo } from '@/lib/auth';
+import { getCurrentUser, clearAuthSession, getRoleLoginPath, UserInfo } from '@/lib/auth';
 import { toast } from 'sonner';
 
 type NavItem = { href: string; label: string; icon: LucideIcon; badge?: string };
@@ -67,9 +67,10 @@ export function Sidebar() {
   }, []);
 
   const handleLogout = () => {
+    const loginPath = getRoleLoginPath(user?.role || getCurrentUser()?.role);
     clearAuthSession();
     toast.info('已退出登录');
-    router.push('/login');
+    window.location.replace(loginPath);
   };
 
   const getRoleLabel = (role?: string) => {

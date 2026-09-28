@@ -29,6 +29,7 @@ import {
   DialogHeader, 
   DialogTitle 
 } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalFooter } from '@/components/ui/modal';
 import { TASK_STATUS_MAP, GROUP_MAP, type AnnotationItem, type ReviewTask, type ReviewImage } from '@design-review/shared';
 import { fetchWithAuth } from '@/lib/auth';
 import { useCurrentUser } from '@/hooks/use-current-user';
@@ -743,9 +744,9 @@ export default function ReviewWorkspaceContent({
       </div>
 
       {/* 弹窗 1：输入批注意见 */}
-      <Dialog open={showAddCommentModal} onOpenChange={setShowAddCommentModal}>
-        <DialogContent className="bg-white border-slate-200 text-slate-800 max-w-md rounded-3xl">
-          <DialogHeader>
+      <Modal open={showAddCommentModal} onOpenChange={setShowAddCommentModal}>
+        <ModalContent className="bg-white border-slate-200 text-slate-800 max-w-md rounded-3xl">
+          <ModalHeader>
             <DialogTitle className="text-sm font-bold flex items-center gap-2 text-indigo-400">
               <Square className="w-4 h-4" />
               添加坐标打标批注内容
@@ -753,7 +754,7 @@ export default function ReviewWorkspaceContent({
             <DialogDescription className="text-xs text-slate-500">
               精准描述选定区域需要修改排版、色调或文案的指导建议
             </DialogDescription>
-          </DialogHeader>
+          </ModalHeader>
 
           <div className="space-y-3 py-2">
             <Textarea
@@ -765,21 +766,21 @@ export default function ReviewWorkspaceContent({
             />
           </div>
 
-          <DialogFooter className="gap-2">
+          <ModalFooter className="gap-2">
             <Button variant="ghost" size="sm" onClick={() => setShowAddCommentModal(false)} className="text-xs">
               取消
             </Button>
             <Button size="sm" onClick={handleSaveAnnotation} className="text-xs rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">
               保存打标批注
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       {/* 弹窗 2：驳回修改弹窗 */}
-      <Dialog open={showRejectModal} onOpenChange={setShowRejectModal}>
-        <DialogContent className="bg-white border-slate-200 text-slate-800 max-w-lg rounded-3xl">
-          <DialogHeader>
+      <Modal open={showRejectModal} onOpenChange={setShowRejectModal}>
+        <ModalContent className="bg-white border-slate-200 text-slate-800 max-w-lg rounded-3xl">
+          <ModalHeader>
             <DialogTitle className="text-sm font-bold flex items-center gap-2 text-rose-400">
               <AlertTriangle className="w-4 h-4 text-rose-500" />
               下发设计稿驳回修改工单 (第 {currentRejectCount} 次返修 / 上限 3 次)
@@ -787,7 +788,7 @@ export default function ReviewWorkspaceContent({
             <DialogDescription className="text-xs text-slate-500">
               勾选常见违规项或输入具体批注意见，工单将同步通知设计师修改。
             </DialogDescription>
-          </DialogHeader>
+          </ModalHeader>
 
           {/* 行业返修熔断提示 */}
           <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between">
@@ -840,16 +841,16 @@ export default function ReviewWorkspaceContent({
             />
           </div>
 
-          <DialogFooter className="gap-2">
+          <ModalFooter className="gap-2">
             <Button variant="ghost" size="sm" onClick={() => setShowRejectModal(false)} className="text-xs">
               取消
             </Button>
             <Button variant="destructive" size="sm" onClick={handleReject} className="text-xs rounded-xl px-4">
               确认下发驳回工单
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

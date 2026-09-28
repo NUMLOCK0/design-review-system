@@ -33,6 +33,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalFooter } from '@/components/ui/modal';
 import { toast } from 'sonner';
 import { fetchWithAuth } from '@/lib/auth';
 import { uploadFile } from '@/lib/upload';
@@ -41,6 +42,8 @@ import { useRouter } from 'next/navigation';
 import { AuthenticatedImage } from '@/components/authenticated-image';
 import { ReferenceLinkItemsDetail } from '@/components/reference-link-items-detail';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useDesignerClaimEligibility } from '@/hooks/use-designer-claim-eligibility';
+import { DesignerClaimEligibilityBanner } from '@/components/designer-claim-eligibility-banner';
 import type { 
   DesignOrder, 
   PlatformType, 
@@ -62,6 +65,7 @@ const PLATFORMS: { id: PlatformType; name: string }[] = [
 export default function OrderMarketPage() {
   const router = useRouter();
   const user = useCurrentUser();
+  const claimReadiness = useDesignerClaimEligibility(user?.role === 'designer');
   const [orders, setOrders] = useState<DesignOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -358,6 +362,10 @@ export default function OrderMarketPage() {
   };
 
   const handleClaimOrder = async (orderId: string) => {
+    if (user?.role === 'designer' && !claimReadiness.eligibility?.canClaim) {
+      toast.error('请先完善个人资料并提交审核通过的作品');
+      return;
+    }
     try {
       const res = await fetchWithAuth(`/design-orders/${orderId}/claim`, {
         method: 'POST',
@@ -388,6 +396,7 @@ export default function OrderMarketPage() {
 
   return (
     <div className="space-y-6">
+      {user?.role === 'designer' && <DesignerClaimEligibilityBanner readiness={claimReadiness} href="/designer/profile" />}
       {/* 顶部标题与派单按钮 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-6 rounded-3xl bg-white/70 border border-white/80 shadow-sm backdrop-blur-md">
         <div>
@@ -405,9 +414,9 @@ export default function OrderMarketPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {user?.role === 'advertiser' && <Dialog open={isPublishOpen} onOpenChange={setIsPublishOpen}>
-            <DialogContent className="max-w-3xl bg-white rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
-              <DialogHeader>
+          {user?.role === 'advertiser' && <Modal open={isPublishOpen} onOpenChange={setIsPublishOpen}>
+            <ModalContent className="max-w-3xl bg-white rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
+              <ModalHeader>
                 <DialogTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
                   <PlusCircle className="w-5 h-5 text-blue-600" />
                   发布多图片需求组定制派单
@@ -415,7 +424,7 @@ export default function OrderMarketPage() {
                 <CardDescription className="text-xs text-slate-500">
                   支持按规格增加多个图片组，上传的每一张参考图都可以填写针对性的设计要求描述
                 </CardDescription>
-              </DialogHeader>
+              </ModalHeader>
 
               <form onSubmit={handlePublishOrder} className="space-y-4 mt-2">
                 {/* 1. 基本信息 */}
@@ -695,17 +704,17 @@ export default function OrderMarketPage() {
                   />
                 </div>
 
-                <DialogFooter className="mt-4 gap-2">
+                <ModalFooter className="mt-4 gap-2">
                   <Button type="button" variant="outline" onClick={() => setIsPublishOpen(false)} className="rounded-xl text-xs">
                     取消
                   </Button>
                   <Button type="submit" disabled={submitting} className="rounded-xl text-xs bg-blue-600 hover:bg-blue-700 text-white">
                     {submitting ? '发布中...' : '确认派发多组需求'}
                   </Button>
-                </DialogFooter>
+                </ModalFooter>
               </form>
-            </DialogContent>
-          </Dialog>}
+            </ModalContent>
+          </Modal>}
         </div>
       </div>
 
@@ -856,8 +865,9 @@ export default function OrderMarketPage() {
                   </div>
 
                   <Button
+                    disabled={user?.role === 'designer' && (claimReadiness.loading || !claimReadiness.eligibility?.canClaim)}
                     onClick={(e) => { e.stopPropagation(); handleClaimOrder(order.id); }}
-                    className="w-full rounded-xl text-xs h-8 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/20 gap-1.5 font-semibold"
+                    className="w-full rounded-xl text-xs h-8 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/20 gap-1.5 font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Coins className="w-4 h-4" />
                     立即抢单接取
@@ -873,14 +883,14 @@ export default function OrderMarketPage() {
         {loadingMore ? '正在加载更多...' : hasMore ? '下拉加载更多' : filteredOrders.length > 0 ? '已加载全部需求' : ''}
       </div>
 
-      <Dialog open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto rounded-3xl bg-white p-6">
+      <Modal open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
+        <ModalContent className="max-w-2xl max-h-[85vh] overflow-y-auto rounded-3xl bg-white p-6">
           {selectedOrder && (
             <>
-              <DialogHeader>
+              <ModalHeader>
                 <DialogTitle className="text-base text-slate-800">{selectedOrder.title}</DialogTitle>
                 <CardDescription className="text-xs">{selectedOrder.orderNo} · {selectedOrder.creatorName}</CardDescription>
-              </DialogHeader>
+              </ModalHeader>
               <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
                 <div>设计类目：<b>{selectedOrder.category}</b></div>
                 <div>投放平台：<b>{PLATFORMS.find((p) => p.id === selectedOrder.platform)?.name || selectedOrder.platform}</b></div>
@@ -909,28 +919,28 @@ export default function OrderMarketPage() {
                   })}
                 </Tabs> : <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-slate-400">暂无图片需求详情</div>}
               </div>
-              <DialogFooter>
-                <Button onClick={() => { setSelectedOrder(null); handleClaimOrder(selectedOrder.id); }} className="rounded-xl bg-blue-600 text-xs text-white">立即抢单接取</Button>
-              </DialogFooter>
+              <ModalFooter>
+                <Button disabled={user?.role === 'designer' && (claimReadiness.loading || !claimReadiness.eligibility?.canClaim)} onClick={() => { setSelectedOrder(null); handleClaimOrder(selectedOrder.id); }} className="rounded-xl bg-blue-600 text-xs text-white disabled:opacity-50">立即抢单接取</Button>
+              </ModalFooter>
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </ModalContent>
+      </Modal>
 
-      <Dialog open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}>
-        <DialogContent className="max-w-4xl rounded-3xl border-slate-700 bg-slate-950 p-4">
+      <Modal open={!!previewImage} onOpenChange={(open) => !open && setPreviewImage(null)}>
+        <ModalContent className="max-w-4xl rounded-3xl border-slate-700 bg-slate-950 p-4">
           {previewImage && (
             <>
-              <DialogHeader>
+              <ModalHeader>
                 <DialogTitle className="text-sm text-slate-100">{previewImage.label}</DialogTitle>
-              </DialogHeader>
+              </ModalHeader>
               <div className="flex max-h-[75vh] items-center justify-center overflow-auto rounded-2xl bg-black/30 p-2">
                 <AuthenticatedImage src={previewImage.url} alt={previewImage.label} className="max-h-[70vh] max-w-full rounded-xl object-contain" />
               </div>
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

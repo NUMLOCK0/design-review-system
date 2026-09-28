@@ -46,19 +46,13 @@ usersRouter.get('/', async (req, res, next) => {
        FROM users u ${where} ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
       [...params, pageSize, (page - 1) * pageSize]
     );
-    const ids = rows.map((row: any) => row.id);
-    const roleMap = new Map<string, string[]>();
-    if (ids.length) {
-      const [roleRows]: any = await dbPool.query(`SELECT user_id, role FROM user_roles WHERE user_id IN (${ids.map(() => '?').join(',')})`, ids);
-      for (const row of roleRows) roleMap.set(row.user_id, [...(roleMap.get(row.user_id) || []), row.role]);
-    }
     const data = rows.map((row: any) => ({
       id: row.id,
       name: row.name,
       email: row.email,
       phone: row.phone || undefined,
       role: row.role,
-      roles: roleMap.get(row.id) || [row.role],
+      roles: [row.role],
       department: row.department || undefined,
       avatarUrl: row.avatar_url || undefined,
       isActive: Boolean(row.is_active),
@@ -93,9 +87,8 @@ usersRouter.patch('/:id', async (req, res, next) => {
       await dbPool.query(`UPDATE users SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, values);
     }
     if (updates.role !== undefined) {
-      const nextRoles = updates.role === 'advertiser' || updates.role === 'designer' ? ['advertiser', 'designer'] : [updates.role];
       await dbPool.query('DELETE FROM user_roles WHERE user_id = ?', [req.params.id]);
-      for (const role of nextRoles) await dbPool.query('INSERT INTO user_roles (user_id, role, created_at) VALUES (?, ?, NOW())', [req.params.id, role]);
+      await dbPool.query('INSERT INTO user_roles (user_id, role, created_at) VALUES (?, ?, NOW())', [req.params.id, updates.role]);
     }
     void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'users', action: updates.role !== undefined ? 'role_change' : updates.isActive !== undefined ? 'status_change' : 'update', targetType: 'user', targetId: req.params.id, summary: `${req.user!.name}更新用户「${req.params.id}」`, detail: { changedFields: Object.keys(updates), isActive: updates.isActive, role: updates.role }, ipAddress: req.ip }).catch((error) => console.error('[Audit] 用户管理日志写入失败:', error));
     res.json({ code: 200, success: true, message: '用户信息已更新', timestamp: Date.now() });

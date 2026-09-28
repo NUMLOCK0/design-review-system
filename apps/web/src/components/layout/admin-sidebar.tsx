@@ -28,7 +28,7 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { getCurrentUser, clearAuthSession, getRoleHome, UserInfo } from '@/lib/auth';
+import { getCurrentUser, clearAuthSession, getRoleHome, getRoleLoginPath, UserInfo } from '@/lib/auth';
 import { toast } from 'sonner';
 
 const ALL_ADMIN_NAV_ITEMS: Array<{ href: string; label: string; icon: LucideIcon; badge?: string; roles: string[] }> = [
@@ -53,7 +53,7 @@ export function AdminSidebar() {
     const currentUser = getCurrentUser();
     setUser(currentUser);
     if (!currentUser) {
-      router.replace('/login?redirect=/admin');
+      router.replace('/login/staff?redirect=/admin');
     } else if (currentUser.role !== 'admin') {
       router.replace(getRoleHome(currentUser.role));
     }
@@ -63,9 +63,10 @@ export function AdminSidebar() {
   }, []);
 
   const handleLogout = () => {
+    const loginPath = getRoleLoginPath(user?.role || getCurrentUser()?.role);
     clearAuthSession();
     toast.info('已退出登录');
-    router.push('/login');
+    window.location.replace(loginPath);
   };
 
   const userRole = user?.role;

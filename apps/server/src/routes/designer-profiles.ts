@@ -5,6 +5,7 @@ import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { dbPool } from '../config/database.js';
 import { recordAdminAudit } from '../services/admin-audit.js';
 import { notifyUser } from './messages.js';
+import { getDesignerClaimEligibility } from '../services/designer-claim-eligibility.js';
 
 export const designerProfilesRouter = Router();
 
@@ -89,6 +90,13 @@ function profilePayload(body: any, current: DesignerProfile) {
   };
 }
 
+designerProfilesRouter.get('/designer-profile/claim-eligibility', authenticate, requireRoles('designer'), async (req, res, next) => {
+  try {
+    const eligibility = await getDesignerClaimEligibility(req.user!.id);
+    res.json({ code: 200, success: true, data: eligibility, timestamp: Date.now() });
+  } catch (error) { next(error); }
+});
+
 designerProfilesRouter.get('/designer-profile/me', authenticate, requireRoles('designer'), async (req, res, next) => {
   try {
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接，暂时无法保存设计师资料' });
@@ -125,7 +133,8 @@ designerProfilesRouter.get('/designer-portfolios/mine', authenticate, requireRol
 function portfolioPayload(body: any, current?: DesignerPortfolio) {
   const imageUrls = stringArray(body.imageUrls ?? current?.imageUrls, 20);
   const title = String(body.title ?? current?.title ?? '').trim().slice(0, 256);
-  const status = ['draft', 'published', 'hidden'].includes(body.status) ? body.status : current?.status || 'draft';
+  const requestedStatus = body.status ?? current?.status ?? 'draft';
+  const status = requestedStatus === 'draft' ? 'draft' : requestedStatus === 'hidden' ? 'hidden' : 'pending_review';
   return {
     title, imageUrls, coverUrl: String(body.coverUrl ?? current?.coverUrl ?? imageUrls[0] ?? '').trim(),
     category: String(body.category ?? current?.category ?? '').trim().slice(0, 64), industry: String(body.industry ?? current?.industry ?? '').trim().slice(0, 64),
@@ -140,14 +149,14 @@ designerProfilesRouter.post('/designer-portfolios', authenticate, requireRoles('
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
     const data = portfolioPayload(req.body || {});
     if (!data.title || !data.imageUrls.length || !data.coverUrl) return res.status(400).json({ code: 400, success: false, message: '请填写项目名称并至少上传一张作品图' });
-    if (data.status === 'published' && data.imageUrls.length < 1) return res.status(400).json({ code: 400, success: false, message: '作品至少需要一张图片' });
+    if (data.status === 'pending_review' && data.imageUrls.length < 1) return res.status(400).json({ code: 400, success: false, message: '作品至少需要一张图片' });
     const id = `portfolio_${crypto.randomUUID()}`;
     const createdAt = now();
     if (data.isFeatured) await dbPool.query('UPDATE designer_portfolios SET is_featured=FALSE WHERE designer_id=?', [req.user!.id]);
     await dbPool.query(`INSERT INTO designer_portfolios (id, designer_id, title, cover_url, image_urls, category, industry, platform, description, designer_role, tags, sort_order, status, is_featured, created_at, updated_at, published_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id, req.user!.id, data.title, data.coverUrl, JSON.stringify(data.imageUrls), data.category || null, data.industry || null, data.platform || null, data.description || null, data.designerRole || null, JSON.stringify(data.tags), data.sortOrder, data.status, data.isFeatured ? 1 : 0, createdAt, createdAt, data.status === 'published' ? createdAt : null]);
-    if (data.status === 'published') notifyUser('u_rev_1', { type: 'review', title: '新设计师作品待审核', content: `${req.user!.name}提交了作品「${data.title}」，请在客服工作台完成审核。`, link: '/service/portfolio-review' });
-    res.status(201).json({ code: 200, success: true, message: data.status === 'published' ? '作品已发布' : '作品草稿已保存', data: portfolioFromRow({ id, designer_id: req.user!.id, title: data.title, cover_url: data.coverUrl, image_urls: JSON.stringify(data.imageUrls), category: data.category, industry: data.industry, platform: data.platform, description: data.description, designer_role: data.designerRole, tags: JSON.stringify(data.tags), sort_order: data.sortOrder, status: data.status, is_featured: data.isFeatured, created_at: createdAt, updated_at: createdAt, published_at: data.status === 'published' ? createdAt : null }), timestamp: Date.now() });
+    if (data.status === 'pending_review') notifyUser('u_rev_1', { type: 'review', title: '新设计师作品待审核', content: `${req.user!.name}提交了作品「${data.title}」，请在客服工作台完成审核。`, link: '/service/portfolio-review' });
+    res.status(201).json({ code: 200, success: true, message: data.status === 'pending_review' ? '作品已提交审核' : data.status === 'hidden' ? '作品已隐藏' : '作品草稿已保存', data: portfolioFromRow({ id, designer_id: req.user!.id, title: data.title, cover_url: data.coverUrl, image_urls: JSON.stringify(data.imageUrls), category: data.category, industry: data.industry, platform: data.platform, description: data.description, designer_role: data.designerRole, tags: JSON.stringify(data.tags), sort_order: data.sortOrder, status: data.status, is_featured: data.isFeatured, created_at: createdAt, updated_at: createdAt, published_at: data.status === 'published' ? createdAt : null }), timestamp: Date.now() });
   } catch (error) { next(error); }
 });
 
@@ -164,7 +173,8 @@ designerProfilesRouter.put('/designer-portfolios/:id', authenticate, requireRole
       data.title, data.coverUrl, JSON.stringify(data.imageUrls), data.category || null, data.industry || null, data.platform || null, data.description || null, data.designerRole || null, JSON.stringify(data.tags), data.sortOrder, data.status, data.isFeatured ? 1 : 0, updatedAt, data.status === 'published' ? (rows[0].published_at || updatedAt) : null, req.params.id, req.user!.id
     ]);
     const [updated]: any = await dbPool.query('SELECT * FROM designer_portfolios WHERE id=? LIMIT 1', [req.params.id]);
-    res.json({ code: 200, success: true, message: '作品已保存', data: portfolioFromRow(updated[0]), timestamp: Date.now() });
+    if (data.status === 'pending_review') notifyUser('u_rev_1', { type: 'review', title: '设计师作品待审核', content: req.user!.name + '更新并提交了作品「' + data.title + '」，请在客服工作台完成审核。', link: '/service/portfolio-review' });
+    res.json({ code: 200, success: true, message: data.status === 'pending_review' ? '作品已重新提交审核' : '作品已保存', data: portfolioFromRow(updated[0]), timestamp: Date.now() });
   } catch (error) { next(error); }
 });
 
@@ -238,7 +248,7 @@ designerProfilesRouter.get('/designers/:id/portfolios', authenticate, requireRol
 designerProfilesRouter.get('/admin/designer-portfolios', authenticate, requireRoles('admin'), async (req, res, next) => {
   try {
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
-    const status = ['draft', 'published', 'hidden'].includes(String(req.query.status)) ? String(req.query.status) : 'all';
+    const status = ['draft', 'pending_review', 'published', 'hidden'].includes(String(req.query.status)) ? String(req.query.status) : 'all';
     const page = Math.max(Number(req.query.page) || 1, 1);
     const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 20, 1), 100);
     const where = status === 'all' ? '' : 'WHERE dp.status=?';
@@ -255,7 +265,7 @@ designerProfilesRouter.get('/admin/designer-portfolios', authenticate, requireRo
 designerProfilesRouter.get('/service/designer-portfolios', authenticate, requireRoles('customer_service', 'admin'), async (req, res, next) => {
   try {
     if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '数据库未连接' });
-    const status = ['draft', 'published', 'hidden'].includes(String(req.query.status)) ? String(req.query.status) : 'all';
+    const status = ['draft', 'pending_review', 'published', 'hidden'].includes(String(req.query.status)) ? String(req.query.status) : 'all';
     const page = Math.max(Number(req.query.page) || 1, 1);
     const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 20, 1), 100);
     const where = status === 'all' ? '' : 'WHERE dp.status=?';

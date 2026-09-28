@@ -30,8 +30,9 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { fetchWithAuth, getCurrentUser, clearAuthSession, getRoleHome, ROLE_LABEL, UserInfo } from '@/lib/auth';
+import { fetchWithAuth, getCurrentUser, clearAuthSession, getRoleHome, getRoleLoginPath, getRoleLoginPathForPath, ROLE_LABEL, UserInfo } from '@/lib/auth';
 import { toast } from 'sonner';
+import { useMessageRealtime } from '@/hooks/use-message-realtime';
 
 const PORTAL_NAV_ITEMS: Record<UserInfo['role'], Array<{ href: string; label: string; mobileLabel: string; icon: typeof ShoppingBag; badge?: string; disabled?: boolean }>> = {
   advertiser: [
@@ -60,6 +61,7 @@ export function PortalNavbar() {
   const router = useRouter();
   const [user, setUser] = useState<UserInfo | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
+  useMessageRealtime(user?.id);
 
   useEffect(() => {
     setUser(getCurrentUser());
@@ -78,7 +80,7 @@ export function PortalNavbar() {
       if (typeof count === 'number') setUnreadCount(Math.max(0, count));
     };
     window.addEventListener('messages-unread-change', handleUnreadCountChange);
-    fetchWithAuth('/messages?page=1&pageSize=1')
+    fetchWithAuth('/messages/summary')
       .then((response) => response.json())
       .then((result) => setUnreadCount(result.success ? result.data?.unreadCount || 0 : 0))
       .catch(() => setUnreadCount(0));
@@ -86,15 +88,18 @@ export function PortalNavbar() {
   }, [user?.id]);
 
   const handleLogout = () => {
+    const loginPath = getRoleLoginPath(user?.role || getCurrentUser()?.role);
     clearAuthSession();
     toast.info('已退出登录');
-    router.push('/login');
+    window.location.replace(loginPath);
   };
 
   const userName = user?.name || '未登录';
   const userRole = user?.role || 'designer';
   const isAdmin = userRole === 'admin';
   const navItems = PORTAL_NAV_ITEMS[userRole];
+  const pageLoginPath = getRoleLoginPathForPath(pathname);
+  const loginHref = pathname.startsWith('/login') || pageLoginPath === '/login' ? '/login' : `${pageLoginPath}?redirect=${encodeURIComponent(pathname)}`;
 
   return (
     <>
@@ -192,7 +197,7 @@ export function PortalNavbar() {
 
           {/* 未登录显示登录按钮，登录后显示用户菜单 */}
           {!user ? (
-            <Link href={pathname === '/login' ? '/login' : `/login?redirect=${encodeURIComponent(pathname)}`} className="role-primary-bg inline-flex h-9 items-center rounded-xl px-4 text-xs font-semibold text-white shadow-sm transition hover:brightness-95">
+            <Link href={loginHref} className="role-primary-bg inline-flex h-9 items-center rounded-xl px-4 text-xs font-semibold text-white shadow-sm transition hover:brightness-95">
                 登录
             </Link>
           ) : <DropdownMenu>

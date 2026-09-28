@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { AdminPagination } from '@/components/admin/admin-pagination';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalFooter } from '@/components/ui/modal';
 import { toast } from 'sonner';
 import { fetchWithAuth } from '@/lib/auth';
 
@@ -196,15 +197,15 @@ export default function ReviewRulesPage() {
           </p>
         </div>
 
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <Modal open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
             <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-semibold px-4 h-10 rounded-2xl shadow-md shadow-blue-500/20 gap-1.5">
               <Plus className="w-4 h-4" />
               新建自定义审核人员流
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl bg-white rounded-3xl p-6">
-            <DialogHeader>
+          <ModalContent className="max-w-2xl bg-white rounded-3xl p-6">
+            <ModalHeader>
               <DialogTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
                 <Sliders className="w-5 h-5 text-indigo-600" />
                 配置新的审核人员流转链路
@@ -212,7 +213,7 @@ export default function ReviewRulesPage() {
               <CardDescription className="text-xs text-slate-500">
                 可自定义设置 1~3 级审核环节，并为每个层级独立指定责任审核人员与会签策略
               </CardDescription>
-            </DialogHeader>
+            </ModalHeader>
 
             <form onSubmit={handleCreateRule} className="space-y-4 mt-2">
               <div className="space-y-1.5">
@@ -324,17 +325,17 @@ export default function ReviewRulesPage() {
                 </div>
               </div>
 
-              <DialogFooter className="mt-4 gap-2">
+              <ModalFooter className="mt-4 gap-2">
                 <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)} className="rounded-xl text-xs">
                   取消
                 </Button>
                 <Button type="submit" disabled={submitting} className="rounded-xl text-xs bg-indigo-600 hover:bg-indigo-700 text-white">
                   {submitting ? '保存中...' : '发布并生效'}
                 </Button>
-              </DialogFooter>
+              </ModalFooter>
             </form>
-          </DialogContent>
-        </Dialog>
+          </ModalContent>
+        </Modal>
       </div>
 
       {/* 规则卡片列表 */}

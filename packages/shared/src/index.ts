@@ -382,7 +382,7 @@ export interface DesignerPortfolio {
   designerRole?: string;
   tags: string[];
   sortOrder: number;
-  status: 'draft' | 'published' | 'hidden';
+  status: 'draft' | 'pending_review' | 'published' | 'hidden';
   isFeatured: boolean;
   createdAt: string;
   updatedAt?: string;

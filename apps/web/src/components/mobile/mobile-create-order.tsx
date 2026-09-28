@@ -92,7 +92,7 @@ export function MobileCreateOrder() {
   const currentUser = getCurrentUser();
 
   useEffect(() => {
-    if (!currentUser || currentUser.role !== 'advertiser') { router.replace(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`); return; }
+    if (!currentUser || currentUser.role !== 'advertiser') { router.replace(`/login/advertiser?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`); return; }
     Promise.all([
       fetchWithAuth('/review-rules/mine').then((r) => r.json()),
       fetchWithAuth('/system-config/order-pricing').then((r) => r.json()),

@@ -6,6 +6,7 @@ import { dbPool } from '../config/database.js';
 import { designOrders, claimDesignOrder } from './design-orders.js';
 import { notifyUser } from './messages.js';
 import { tasks } from './review-tasks.js';
+import { getDesignerClaimEligibility } from '../services/designer-claim-eligibility.js';
 
 export const invitationsRouter = Router();
 const memoryInvitations: OrderInvitation[] = [];
@@ -142,6 +143,16 @@ invitationsRouter.post('/invitations/:id/respond', authenticate, requireRoles('d
     }
     const order = designOrders.find((item) => item.id === invitation.orderId);
     if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
+    let eligibility;
+    try { eligibility = await getDesignerClaimEligibility(req.user!.id); }
+    catch (error: any) {
+      if (error?.message === '数据库未连接，暂时无法核验设计师接单资格') return res.status(503).json({ code: 503, success: false, message: error.message });
+      return next(error);
+    }
+    if (!eligibility.canClaim) {
+      const reasons = [!eligibility.profileCompleted ? '完善个人资料' : '', eligibility.approvedPortfolioCount === 0 ? '至少提交一件审核通过的作品' : ''].filter(Boolean);
+      return res.status(403).json({ code: 403, success: false, message: '请先' + reasons.join('、') + '后再接受邀请' });
+    }
     let claimed: ReturnType<typeof claimDesignOrder>;
     if (dbPool) {
       const connection = await dbPool.getConnection();

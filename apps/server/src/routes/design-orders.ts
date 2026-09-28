@@ -10,6 +10,7 @@ import { dbPool } from '../config/database.js';
 import { getSystemConfig } from './system-config.js';
 import { calculateOrderSettlement } from '../utils/order-finance.js';
 import { recordAdminAudit } from '../services/admin-audit.js';
+import { getDesignerClaimEligibility } from '../services/designer-claim-eligibility.js';
 
 export const designOrdersRouter = Router();
 
@@ -40,7 +41,7 @@ designOrdersRouter.get('/service/pending', authenticate, requireRoles('customer_
 });
 
 // 品牌方订单视图包含待客服审核、已驳回和已发布订单；接单大厅不会暴露这些内部状态。
-designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'admin'), (req, res) => {
+designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'designer', 'admin'), (req, res) => {
   const status = String(req.query.status || 'all');
   const billingStatus = String(req.query.billingStatus || 'all');
   const keyword = String(req.query.keyword || '').trim().toLowerCase();
@@ -48,7 +49,9 @@ designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'admin'
   const page = Math.max(Math.floor(Number(req.query.page) || 1), 1);
   let list = req.user!.role === 'admin'
     ? designOrders
-    : designOrders.filter((order) => order.creatorId === req.user!.id || order.organizationId === req.user!.organizationId);
+    : req.user!.role === 'designer'
+      ? designOrders.filter((order) => order.claimedById === req.user!.id)
+      : designOrders.filter((order) => order.creatorId === req.user!.id || order.organizationId === req.user!.organizationId);
   const statusCounts = list.reduce<Record<string, number>>((counts, order) => {
     const currentStatus = order.status === 'cancelled' && order.publicationStatus !== 'rejected'
       ? 'cancelled'
@@ -644,9 +647,19 @@ export function claimDesignOrder(order: DesignOrder, designerId: string, designe
 }
 
 // 设计师抢单 / 接单 (接单后自动在审核任务中心创建关联任务)
-designOrdersRouter.post('/:id/claim', authenticate, requireRoles('designer'), (req, res) => {
+designOrdersRouter.post('/:id/claim', authenticate, requireRoles('designer'), async (req, res, next) => {
   const order = designOrders.find(o => o.id === req.params.id);
   if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
+  let eligibility;
+  try { eligibility = await getDesignerClaimEligibility(req.user!.id); }
+  catch (error: any) {
+    if (error?.message === '数据库未连接，暂时无法核验设计师接单资格') return res.status(503).json({ code: 503, success: false, message: error.message });
+    return next(error);
+  }
+  if (!eligibility.canClaim) {
+    const reasons = [!eligibility.profileCompleted ? '完善个人资料' : '', eligibility.approvedPortfolioCount === 0 ? '至少提交一件审核通过的作品' : ''].filter(Boolean);
+    return res.status(403).json({ code: 403, success: false, message: '请先' + reasons.join('、') + '后再接单' });
+  }
   try {
     const { order: claimedOrder, task } = claimDesignOrder(order, req.user!.id, req.user!.name);
     res.json({ code: 200, success: true, message: '接单成功！已自动同步至我的任务中心', data: { order: claimedOrder, taskId: task.id, taskNo: task.taskNo }, timestamp: Date.now() });

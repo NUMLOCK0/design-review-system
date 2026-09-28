@@ -69,10 +69,16 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
   // 签名有效不代表账号仍然有效。禁用账号后立即拒绝旧 Token，避免 7 天 Token 继续生效。
   if (dbPool) {
     try {
-      const [rows]: any = await dbPool.query('SELECT id, is_active FROM users WHERE id = ? LIMIT 1', [decoded.id]);
+      const [rows]: any = await dbPool.query('SELECT id, is_active, role FROM users WHERE id = ? LIMIT 1', [decoded.id]);
       if (!rows?.length || !Boolean(rows[0].is_active)) {
         return res.status(401).json({ code: 401, success: false, message: '账号不存在或已被停用，请重新登录' });
       }
+      const currentRole = rows[0].role === 'reviewer' ? 'customer_service' : rows[0].role;
+      if (!['advertiser', 'designer', 'customer_service', 'admin'].includes(currentRole)) {
+        return res.status(401).json({ code: 401, success: false, message: '账号角色无效，请联系管理员' });
+      }
+      decoded.role = currentRole;
+      decoded.roles = [currentRole];
     } catch (error) {
       return next(error);
     }

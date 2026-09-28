@@ -24,15 +24,16 @@ const ddlStatements = [
     phone VARCHAR(20),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_users_phone_role (phone, role)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
-  // 普通用户的可用业务角色。users.role 仍保存默认/当前角色，便于兼容旧接口。
+  // 每个用户只允许一个角色，users.role 和 user_roles.role 保持一致。
   `CREATE TABLE IF NOT EXISTS user_roles (
     user_id VARCHAR(64) NOT NULL,
     role VARCHAR(32) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, role),
+    PRIMARY KEY (user_id),
     INDEX idx_user_roles_role (role, user_id),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
@@ -206,13 +207,10 @@ async function main() {
          ON DUPLICATE KEY UPDATE name=VALUES(name), department=VALUES(department), role=VALUES(role);`,
         user
       );
-      const roles = user[3] === 'admin' || user[3] === 'customer_service' ? [user[3]] : ['advertiser', 'designer'];
-      for (const role of roles) {
-        await connection.execute(
-          `INSERT IGNORE INTO user_roles (user_id, role) VALUES (?, ?);`,
-          [user[0], role]
-        );
-      }
+      await connection.execute(
+        `INSERT INTO user_roles (user_id, role) VALUES (?, ?) ON DUPLICATE KEY UPDATE role=VALUES(role);`,
+        [user[0], user[3]]
+      );
     }
     console.log('✅ 平台账号初始化完成 (admin, customer_service)');
 

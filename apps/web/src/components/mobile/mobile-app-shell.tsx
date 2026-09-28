@@ -3,14 +3,15 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Bell, BriefcaseBusiness, CheckSquare2, CircleUserRound, House, LogOut, Palette, Plus, ShoppingBag, WalletCards } from 'lucide-react';
-import { clearAuthSession, fetchWithAuth, getCurrentUser, getRoleHome, type UserInfo } from '@/lib/auth';
+import { Bell, BriefcaseBusiness, CheckSquare2, CircleUserRound, House, LogOut, MessageCircle, Palette, Plus, ShoppingBag, WalletCards } from 'lucide-react';
+import { clearAuthSession, fetchWithAuth, getCurrentUser, getRoleHome, getRoleLoginPath, getRoleLoginPathForPath, type UserInfo } from '@/lib/auth';
+import { useMessageRealtime } from '@/hooks/use-message-realtime';
 
 const navByRole: Record<UserInfo['role'], Array<{ href: string; label: string; icon: typeof House }>> = {
   advertiser: [
     { href: '/mobile', label: '首页', icon: House },
     { href: '/mobile/orders', label: '订单', icon: ShoppingBag },
-    { href: '/mobile/orders/new', label: '发布', icon: Plus },
+    { href: '/mobile/messages', label: '消息', icon: MessageCircle },
     { href: '/mobile/profile', label: '我的', icon: CircleUserRound },
   ],
   designer: [
@@ -39,13 +40,14 @@ export function MobileAppShell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [unread, setUnread] = useState(0);
+  useMessageRealtime(user?.id);
 
   useEffect(() => {
     const syncUser = () => {
       const current = getCurrentUser();
       setUser(current);
       setAuthChecked(true);
-      if (!current) router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
+      if (!current) router.replace(`${getRoleLoginPathForPath(pathname)}?redirect=${encodeURIComponent(pathname)}`);
     };
     syncUser();
     window.addEventListener('auth-state-change', syncUser);
@@ -69,10 +71,12 @@ export function MobileAppShell({ children }: { children: React.ReactNode }) {
   const nav = navByRole[user?.role || 'designer'];
   const accountRoute = ['/mobile/profile', '/mobile/wallet', '/mobile/invitations', '/mobile/designer-profile', '/mobile/billing', '/mobile/disputes', '/mobile/review-flows', '/mobile/service/portfolio-review'].some((path) => pathname === path || pathname.startsWith(`${path}/`));
   const isReviewFlowsPage = pathname === '/mobile/review-flows' || pathname.startsWith('/mobile/review-flows/');
-  const isSecondaryMobilePage = isReviewFlowsPage || pathname === '/mobile/billing' || pathname === '/mobile/messages' || pathname === '/mobile/disputes' || pathname === '/mobile/service/portfolio-review';
+  const isSecondaryMobilePage = isReviewFlowsPage || pathname.startsWith('/mobile/tasks/') || pathname === '/mobile/review-submit' || pathname === '/mobile/designer-profile' || pathname === '/mobile/billing' || pathname === '/mobile/messages' || pathname.startsWith('/mobile/messages/') || pathname === '/mobile/disputes' || pathname === '/mobile/service/portfolio-review';
   const pageTitle = pathname === '/mobile' ? '工作台' : pathname.includes('orders') ? (user?.role === 'designer' ? '接单大厅' : '订单管理') : pathname.includes('tasks') ? (user?.role === 'customer_service' ? '客服待办' : '我的任务') : pathname.includes('messages') ? '站内信' : accountRoute ? '个人中心' : '移动工作台';
-  const isStandaloneOrderForm = pathname === '/mobile/orders/new';
+  const isStandaloneOrderForm = pathname.startsWith('/mobile/orders/new');
   const isStandalonePage = isStandaloneOrderForm || isSecondaryMobilePage;
+  const isAdvertiserMessageTab = user?.role === 'advertiser' && pathname === '/mobile/messages';
+  const isAdvertiserMainTab = user?.role === 'advertiser' && ['/mobile', '/mobile/orders', '/mobile/messages', '/mobile/profile'].includes(pathname);
 
   if (!authChecked || !user) return <div className="grid min-h-[100dvh] place-items-center text-sm text-slate-400">正在进入移动工作台…</div>;
 
@@ -85,19 +89,24 @@ export function MobileAppShell({ children }: { children: React.ReactNode }) {
         </Link>
         <div className="flex items-center gap-2">
           <Link href="/mobile/messages" aria-label="站内信" className="relative flex h-10 w-10 items-center justify-center rounded-full text-slate-600 active:bg-slate-100"><Bell className="h-5 w-5" />{unread > 0 && <span className="absolute right-1 top-1 h-[17px] min-w-[17px] rounded-full bg-rose-500 px-1 text-center text-[10px] font-bold leading-[17px] text-white">{unread > 99 ? '99+' : unread}</span>}</Link>
-          {user && <button aria-label="退出登录" onClick={() => { clearAuthSession(); router.push('/login'); }} className="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 active:bg-slate-100"><LogOut className="h-[18px] w-[18px]" /></button>}
+          {user && <button aria-label="退出登录" onClick={() => { const loginPath = getRoleLoginPath(user.role); clearAuthSession(); window.location.replace(loginPath); }} className="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 active:bg-slate-100"><LogOut className="h-[18px] w-[18px]" /></button>}
         </div>
       </div>
     </header>}
     <main className={`mx-auto w-full ${isStandalonePage ? 'min-h-dvh max-w-none px-0 pb-0 pt-0' : 'min-h-[calc(100dvh-126px)] max-w-xl px-4 pb-[calc(92px+env(safe-area-inset-bottom))] pt-5'}`}>{children}</main>
-    {!isStandaloneOrderForm && !isSecondaryMobilePage && <nav aria-label="移动端主导航" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 pb-[max(env(safe-area-inset-bottom),8px)] shadow-[0_-8px_28px_rgba(15,23,42,.06)] backdrop-blur">
+    {isAdvertiserMainTab && <div className="pointer-events-none fixed inset-x-0 bottom-[calc(76px+env(safe-area-inset-bottom))] z-50 mx-auto flex max-w-xl justify-end px-4">
+      <Link href="/mobile/orders/new" aria-label="发布新订单" className="role-primary-bg pointer-events-auto flex h-14 items-center gap-2 rounded-full px-5 text-sm font-bold text-white shadow-[0_8px_24px_rgba(15,23,42,.22)] active:scale-95">
+        <Plus className="h-5 w-5" strokeWidth={2.5} />发布
+      </Link>
+    </div>}
+    {!isStandaloneOrderForm && (!isSecondaryMobilePage || isAdvertiserMessageTab) && <nav aria-label="移动端主导航" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 pb-[max(env(safe-area-inset-bottom),8px)] shadow-[0_-8px_28px_rgba(15,23,42,.06)] backdrop-blur">
       <div className="mx-auto grid h-[62px] max-w-xl grid-cols-4 px-2">
         {nav.map((item) => {
           const Icon = item.icon;
           const itemPath = item.href.split('?')[0];
           const active = itemPath === '/mobile' ? pathname === '/mobile' : itemPath === '/mobile/profile' ? accountRoute : pathname === itemPath || pathname.startsWith(`${itemPath}/`);
           return <Link key={item.href} href={item.href} aria-current={active ? 'page' : undefined} className={`flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl text-[10px] font-semibold active:scale-[.97] ${active ? 'role-primary-text' : 'text-slate-400'}`}>
-            <span className={`flex h-7 w-10 items-center justify-center rounded-full ${active ? 'role-primary-soft' : ''}`}><Icon className="h-[19px] w-[19px]" strokeWidth={active ? 2.4 : 1.9} /></span>{item.label}
+            <span className={`relative flex h-7 w-10 items-center justify-center rounded-full ${active ? 'role-primary-soft' : ''}`}><Icon className="h-[19px] w-[19px]" strokeWidth={active ? 2.4 : 1.9} />{itemPath === '/mobile/messages' && unread > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-rose-500 px-1 text-center text-[9px] font-bold leading-4 text-white ring-2 ring-white">{unread > 99 ? '99+' : unread}</span>}</span>{item.label}
           </Link>;
         })}
       </div>

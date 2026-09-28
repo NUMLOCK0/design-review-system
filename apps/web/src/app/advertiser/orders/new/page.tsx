@@ -16,7 +16,7 @@ export default function NewAdvertiserOrderPage() {
   useEffect(() => {
     const currentUser = getCurrentUser();
     if (!currentUser || currentUser.role !== 'advertiser') {
-      router.replace(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+      router.replace(`/login/advertiser?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
       return;
     }
     const editId = new URLSearchParams(window.location.search).get('edit');
@@ -44,7 +44,7 @@ export default function NewAdvertiserOrderPage() {
   return <><RoleTheme /><CreateOrderDialog
     open
     fullscreen
-    editingOrder={editingOrder}
+    editingOrder={editingOrder || undefined}
     onOpenChange={(open) => { if (!open) router.push('/advertiser/orders'); }}
     onCreated={() => { router.push('/advertiser/orders'); }}
     onUpdated={() => { router.push('/advertiser/orders'); }}

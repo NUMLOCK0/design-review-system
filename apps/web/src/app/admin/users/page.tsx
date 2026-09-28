@@ -63,7 +63,7 @@ export default function AdminUsersPage() {
       const response = await fetchWithAuth(`/users/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || '更新用户失败');
-      setUsers((items) => items.map((item) => item.id === id ? { ...item, ...updates, roles: updates.role && ['advertiser', 'designer'].includes(updates.role) ? ['advertiser', 'designer'] : updates.role ? [updates.role] : item.roles } : item));
+      setUsers((items) => items.map((item) => item.id === id ? { ...item, ...updates, roles: updates.role ? [updates.role] : item.roles } : item));
       toast.success('用户信息已更新');
     } catch (error: any) {
       toast.error(error.message || '更新用户失败');

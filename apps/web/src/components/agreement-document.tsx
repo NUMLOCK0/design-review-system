@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalFooter } from '@/components/ui/modal';
 
 export type AgreementKey = 'userAgreementContent' | 'privacyPolicyContent';
 
@@ -34,14 +35,14 @@ export function AgreementModal({ open, onOpenChange, title, contentKey }: { open
   }, [open, contentKey]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto rounded-2xl bg-white">
-        <DialogHeader>
+    <Modal open={open} onOpenChange={onOpenChange}>
+      <ModalContent className="max-h-[85vh] max-w-2xl overflow-y-auto rounded-2xl bg-white">
+        <ModalHeader>
           <DialogTitle>创赢{title}</DialogTitle>
           <DialogDescription>以管理员当前配置为准</DialogDescription>
-        </DialogHeader>
+        </ModalHeader>
         <div className="text-sm leading-7 text-slate-600 [&_h2]:my-4 [&_h2]:text-xl [&_h2]:font-bold [&_h3]:my-3 [&_h3]:text-base [&_h3]:font-bold [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-6" dangerouslySetInnerHTML={{ __html: agreementHtml(content) }} />
-      </DialogContent>
-    </Dialog>
+      </ModalContent>
+    </Modal>
   );
 }

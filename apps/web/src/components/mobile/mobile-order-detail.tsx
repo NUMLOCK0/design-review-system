@@ -14,6 +14,8 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Button } from '@/components/ui/button';
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { toast } from 'sonner';
+import { useDesignerClaimEligibility } from '@/hooks/use-designer-claim-eligibility';
+import { DesignerClaimEligibilityBanner } from '@/components/designer-claim-eligibility-banner';
 
 type Progress = { task: null | { status: TaskStatus; currentLevel: number; totalImages: number; approvedCount: number; rejectedCount: number; designerName: string }; nodes: Array<{ level: number; reviewerNames: string[]; approvalMode: 'any' | 'all' }> };
 type Payment = { stage: 'deposit' | 'balance'; type: 'wxpay' | 'alipay'; amount: number; tradeNo?: string; qr?: string; loading: boolean; paid: boolean };
@@ -107,11 +109,14 @@ export function MobileOrderDetail() {
     return statuses[key] || key;
   }, [order]);
 
+  const isDesigner = user?.role === 'designer';
+  const claimReadiness = useDesignerClaimEligibility(isDesigner);
+
   if (loading) return <div className="py-16 text-center text-sm text-slate-400">正在加载订单详情…</div>;
   if (!order) return <div className="py-16 text-center"><p className="text-sm text-slate-500">无法加载订单详情</p><button type="button" onClick={() => goBackOrReplace(router, '/mobile/orders')} className="mt-4 text-sm font-semibold role-primary-text">返回订单列表</button></div>;
 
   const isAdvertiser = user?.role === 'advertiser';
-  const isDesigner = user?.role === 'designer';
+
   const canModerate = user?.role === 'customer_service' && order.publicationStatus === 'pending_service_review';
   const canEdit = isAdvertiser && (order.status === 'open' || order.publicationStatus === 'rejected');
   const canPayDeposit = isAdvertiser && order.status === 'open' && order.publicationStatus === 'pending_deposit' && order.paymentStatus === 'deposit_pending';
@@ -151,6 +156,10 @@ export function MobileOrderDetail() {
   };
 
   const claim = async () => {
+    if (!claimReadiness.eligibility?.canClaim) {
+      toast.error('请先完善个人资料并提交审核通过的作品');
+      return;
+    }
     setOperating(true);
     try {
       const response = await fetchWithAuth(`/design-orders/${order.id}/claim`, { method: 'POST', body: JSON.stringify({ designerId: user?.id, designerName: user?.name }) });
@@ -220,7 +229,7 @@ export function MobileOrderDetail() {
       <section className="flex flex-wrap gap-2 text-[11px] text-slate-400"><span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" />创建于 {new Date(order.createdAt).toLocaleString('zh-CN')}</span>{order.claimedByName && <span className="inline-flex items-center gap-1"><UsersRound className="h-3.5 w-3.5" />设计师 {order.claimedByName}</span>}{order.reviewRuleName && <span className="inline-flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" />审核流 {order.reviewRuleName}</span>}</section>
     </div>
 
-    {(isDesigner && order.status === 'open' && order.publicationStatus === 'published' && order.paymentStatus !== 'deposit_pending') || isAdvertiser ? <div className="fixed inset-x-0 bottom-[calc(70px+env(safe-area-inset-bottom))] z-20 border-t border-slate-200/80 bg-white/95 p-3 backdrop-blur"><div className="mx-auto flex max-w-xl gap-2">{isDesigner && <Button disabled={operating} onClick={() => void claim()} className="h-12 flex-1 rounded-xl role-primary-bg text-sm font-bold text-white">{operating ? '接单中…' : '确认接单'}</Button>}{isAdvertiser && <>{canPayDeposit && <Button onClick={() => void startPayment(order, 'deposit', 'wxpay')} className="h-12 flex-1 rounded-xl bg-orange-500 text-sm font-bold text-white">支付定金 {money(order.depositAmount)}</Button>}{order.status === 'completed' && order.paymentStatus !== 'paid' && <Button onClick={() => void startPayment(order, 'balance', 'wxpay')} className="h-12 flex-1 rounded-xl role-primary-bg text-sm font-bold text-white">支付尾款并验收 {money(order.balanceAmount)}</Button>}{order.status === 'completed' && order.paymentStatus === 'paid' && <Link href="/mobile/billing" className="flex h-12 flex-1 items-center justify-center rounded-xl role-primary-bg text-sm font-bold text-white">查看账单</Link>}{!canPayDeposit && order.status !== 'completed' && <Button variant="outline" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="h-12 flex-1 rounded-xl text-sm font-semibold">订单详情</Button>}</>}{isAdvertiser && <button onClick={() => setActionsOpen((value) => !value)} aria-label="更多订单操作" className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><ChevronRight className={`h-5 w-5 transition-transform ${actionsOpen ? 'rotate-90' : ''}`} /></button>}</div></div> : null}
+    {(isDesigner && order.status === 'open' && order.publicationStatus === 'published' && order.paymentStatus !== 'deposit_pending') || isAdvertiser ? <div className="fixed inset-x-0 bottom-[calc(70px+env(safe-area-inset-bottom))] z-20 border-t border-slate-200/80 bg-white/95 p-3 backdrop-blur">{isDesigner && !claimReadiness.eligibility?.canClaim && <div className="mx-auto mb-2 max-w-xl"><DesignerClaimEligibilityBanner readiness={claimReadiness} href="/mobile/designer-profile" compact /></div>}<div className="mx-auto flex max-w-xl gap-2">{isDesigner && <Button disabled={operating || claimReadiness.loading || !claimReadiness.eligibility?.canClaim} onClick={() => void claim()} className="h-12 flex-1 rounded-xl role-primary-bg text-sm font-bold text-white disabled:opacity-50">{operating ? '接单中…' : '确认接单'}</Button>}{isAdvertiser && <>{canPayDeposit && <Button onClick={() => void startPayment(order, 'deposit', 'wxpay')} className="h-12 flex-1 rounded-xl bg-orange-500 text-sm font-bold text-white">支付定金 {money(order.depositAmount)}</Button>}{order.status === 'completed' && order.paymentStatus !== 'paid' && <Button onClick={() => void startPayment(order, 'balance', 'wxpay')} className="h-12 flex-1 rounded-xl role-primary-bg text-sm font-bold text-white">支付尾款并验收 {money(order.balanceAmount)}</Button>}{order.status === 'completed' && order.paymentStatus === 'paid' && <Link href="/mobile/billing" className="flex h-12 flex-1 items-center justify-center rounded-xl role-primary-bg text-sm font-bold text-white">查看账单</Link>}{!canPayDeposit && order.status !== 'completed' && <Button variant="outline" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="h-12 flex-1 rounded-xl text-sm font-semibold">订单详情</Button>}</>}{isAdvertiser && <button onClick={() => setActionsOpen((value) => !value)} aria-label="更多订单操作" className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-600"><ChevronRight className={`h-5 w-5 transition-transform ${actionsOpen ? 'rotate-90' : ''}`} /></button>}</div></div> : null}
 
     {isAdvertiser && actionsOpen && <div className="fixed bottom-[calc(126px+env(safe-area-inset-bottom))] left-1/2 z-30 grid w-[min(440px,calc(100vw-24px))] grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl sm:hidden">{canEdit && <Link href={`/mobile/orders/new?edit=${encodeURIComponent(order.id)}`} className="flex min-h-11 items-center justify-center rounded-xl bg-slate-50 text-xs font-semibold text-slate-700">编辑订单</Link>}{order.publicationStatus === 'rejected' && <ConfirmAction title="重新提交订单？" description="订单将再次进入客服审核。" confirmText="确认重新提交" tone="warning" onConfirm={() => operate('resubmit')} disabled={operating}><Button className="h-11 w-full rounded-xl bg-amber-500 text-xs text-white">重新提交</Button></ConfirmAction>}{canInvite && <Button variant="outline" onClick={() => setInviteOpen(true)} className="h-11 rounded-xl text-xs"><UsersRound className="mr-1.5 h-4 w-4" />邀请设计师</Button>}{order.status === 'cancelled' && order.publicationStatus !== 'rejected' && <ConfirmAction title="重新发布订单？" description="系统会保留原订单并创建新订单，接单前需要重新支付定金。" confirmText="确认重新发布" tone="warning" onConfirm={() => operate('republish')} disabled={operating}><Button className="h-11 w-full rounded-xl role-primary-bg text-xs text-white">重新发布</Button></ConfirmAction>}{canCancel && <ConfirmAction title="确认取消订单？" description={['deposit_paid', 'balance_pending', 'paid'].includes(order.paymentStatus || '') ? `客服将按原支付渠道退还定金 ${money(order.depositAmount)}。` : '取消后订单将停止处理，此操作不可直接恢复。'} confirmText="确认取消订单" onConfirm={() => operate('cancel')} disabled={operating}><Button variant="outline" className="h-11 w-full rounded-xl border-rose-200 text-xs text-rose-600">取消订单</Button></ConfirmAction>}<Button variant="outline" onClick={() => setActionsOpen(false)} className="h-11 rounded-xl text-xs">收起</Button></div>}
 

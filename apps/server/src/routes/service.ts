@@ -6,12 +6,52 @@ import { disputes } from './disputes.js';
 import { persistDesignOrder, persistDispute, persistServiceActionLog } from '../config/persistence.js';
 import { withdrawalRequests } from './wallet.js';
 import { recordAdminAudit } from '../services/admin-audit.js';
+import { dbPool } from '../config/database.js';
 
 export const serviceRouter = Router();
 export const serviceLogs: ServiceActionLog[] = [];
 
 const ORDER_SLA_HOURS = 4;
 const DISPUTE_SLA_HOURS = 24;
+const PORTFOLIO_REVIEW_SLA_HOURS = 24;
+
+type PortfolioReviewItem = {
+  id: string;
+  type: 'portfolio_review';
+  title: string;
+  subtitle: string;
+  assigneeId?: undefined;
+  assigneeName?: undefined;
+  status: 'pending_review';
+  statusLabel: string;
+  priority: 'high';
+  dueAt: string;
+  createdAt: string;
+  updatedAt: string;
+  completed: false;
+  payload: { designerId: string; designerName: string; title: string };
+};
+
+function buildPortfolioReviewItems(rows: any[]): PortfolioReviewItem[] {
+  return rows.map((row) => {
+    const createdAt = new Date(row.created_at).toISOString();
+    const updatedAt = new Date(row.updated_at || row.created_at).toISOString();
+    return {
+      id: row.id,
+      type: 'portfolio_review',
+      title: `作品审核：${row.title}`,
+      subtitle: `${row.designer_name} · 设计师作品`,
+      status: 'pending_review',
+      statusLabel: '待审核',
+      priority: 'high',
+      dueAt: dueAt(createdAt, PORTFOLIO_REVIEW_SLA_HOURS),
+      createdAt,
+      updatedAt,
+      completed: false,
+      payload: { designerId: row.designer_id, designerName: row.designer_name, title: row.title },
+    };
+  });
+}
 
 function dueAt(createdAt: string, hours: number) {
   return new Date(new Date(createdAt).getTime() + hours * 60 * 60 * 1000).toISOString();
@@ -99,7 +139,7 @@ function buildWorkItems() {
   });
 }
 
-function filterItems(items: ReturnType<typeof buildWorkItems>, req: any) {
+function filterItems(items: Array<ReturnType<typeof buildWorkItems>[number] | PortfolioReviewItem>, req: any) {
   const tab = String(req.query.tab || 'all');
   const keyword = String(req.query.keyword || '').trim().toLowerCase();
   const assignee = String(req.query.assignee || 'all');
@@ -117,8 +157,10 @@ function filterItems(items: ReturnType<typeof buildWorkItems>, req: any) {
           ? !item.completed && item.type === 'dispute' && !item.assigneeId
           : tab === 'deposit_refund'
             ? !item.completed && item.type === 'order_audit' && (item.payload as DesignOrder).depositRefundStatus === 'pending'
-            : tab === 'order_audit'
-              ? !item.completed && item.type === 'order_audit' && (item.payload as DesignOrder).depositRefundStatus !== 'pending'
+            : tab === 'portfolio_review'
+              ? !item.completed && item.type === 'portfolio_review'
+              : tab === 'order_audit'
+                ? !item.completed && item.type === 'order_audit' && (item.payload as DesignOrder).depositRefundStatus !== 'pending'
             : tab === 'dispute'
               ? !item.completed && item.type === 'dispute'
               : tab === 'withdrawal_review'
@@ -153,39 +195,49 @@ function addLog(taskType: ServiceTaskType, taskId: string, action: string, comme
   return log;
 }
 
-serviceRouter.get('/dashboard', authenticate, requireRoles('customer_service', 'admin'), (req, res) => {
-  const items = buildWorkItems();
-  const active = items.filter((item) => !item.completed);
-  const filtered = filterItems(items, req);
-  const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 10, 1), 20);
-  const page = Math.max(Number(req.query.page) || 1, 1);
-  const start = (page - 1) * pageSize;
-  const data = filtered.slice(start, start + pageSize);
-  const completedToday = items.filter((item) => item.completed && isCompletedToday(item.updatedAt)).length;
+serviceRouter.get('/dashboard', authenticate, requireRoles('customer_service', 'admin'), async (req, res, next) => {
+  try {
+    const items = buildWorkItems();
+    let portfolioItems: PortfolioReviewItem[] = [];
+    if (dbPool) {
+      const [rows]: any = await dbPool.query(`SELECT dp.id, dp.title, dp.created_at, dp.updated_at, u.id AS designer_id, u.name AS designer_name
+        FROM designer_portfolios dp JOIN users u ON u.id=dp.designer_id
+        WHERE dp.status='pending_review' ORDER BY dp.created_at ASC LIMIT 500`);
+      portfolioItems = buildPortfolioReviewItems(rows);
+    }
+    const allItems = [...items, ...portfolioItems].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const active = allItems.filter((item) => !item.completed);
+    const filtered = filterItems(allItems, req);
+    const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 10, 1), 20);
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const start = (page - 1) * pageSize;
+    const data = filtered.slice(start, start + pageSize);
+    const completedToday = items.filter((item) => item.completed && isCompletedToday(item.updatedAt)).length;
 
-  res.json({
-    code: 200,
-    success: true,
-    data,
-    total: filtered.length,
-    page,
-    pageSize,
-    hasMore: start + data.length < filtered.length,
-    counts: {
-      all: active.length,
-      mine: active.filter((item) => item.assigneeId === req.user!.id).length,
-      unassigned: active.filter((item) => item.type === 'dispute' && !item.assigneeId).length,
-      orderAudit: active.filter((item) => item.type === 'order_audit' && item.status === 'pending_service_review').length,
-      depositRefund: active.filter((item) => item.type === 'order_audit' && (item.payload as DesignOrder).depositRefundStatus === 'pending').length,
-      dispute: active.filter((item) => item.type === 'dispute').length,
-      withdrawalReview: active.filter((item) => item.type === 'withdrawal_review').length,
-      overdue: active.filter(isOverdue).length,
-      completedToday,
-    },
-    timestamp: Date.now(),
-  });
+    res.json({
+      code: 200,
+      success: true,
+      data,
+      total: filtered.length,
+      page,
+      pageSize,
+      hasMore: start + data.length < filtered.length,
+      counts: {
+        all: active.length,
+        mine: active.filter((item) => item.assigneeId === req.user!.id).length,
+        unassigned: active.filter((item) => item.type === 'dispute' && !item.assigneeId).length,
+        orderAudit: active.filter((item) => item.type === 'order_audit' && item.status === 'pending_service_review').length,
+        portfolioReview: active.filter((item) => item.type === 'portfolio_review').length,
+        depositRefund: active.filter((item) => item.type === 'order_audit' && (item.payload as DesignOrder).depositRefundStatus === 'pending').length,
+        dispute: active.filter((item) => item.type === 'dispute').length,
+        withdrawalReview: active.filter((item) => item.type === 'withdrawal_review').length,
+        overdue: active.filter(isOverdue).length,
+        completedToday,
+      },
+      timestamp: Date.now(),
+    });
+  } catch (error) { next(error); }
 });
-
 serviceRouter.get('/tasks/:type/:id', authenticate, requireRoles('customer_service', 'admin'), (req, res) => {
   const type = String(req.params.type);
   if (!['order_audit', 'dispute', 'withdrawal_review'].includes(type)) return res.status(400).json({ code: 400, success: false, message: '任务类型无效' });

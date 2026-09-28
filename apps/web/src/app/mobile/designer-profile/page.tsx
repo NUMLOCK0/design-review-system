@@ -1,2 +1,2 @@
-import { MobileDesignerProfilePage } from '@/components/mobile/mobile-account-pages';
+import { MobileDesignerProfilePage } from '@/components/mobile/mobile-designer-profile';
 export default function MobileDesignerProfileRoute() { return <MobileDesignerProfilePage />; }
