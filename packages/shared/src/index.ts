@@ -291,6 +291,10 @@ export interface DesignOrder {
   title: string;
   category: string; // 主图设计 / 详情页设计 / 活动海报 / 3D建模 / 精修合成
   platform: PlatformType;
+  originalBudget?: number; // 接单审批前的预算快照
+  acceptedApplicationId?: string;
+  agreedExtraAmount?: number;
+  pendingApplicationCount?: number;
   budget: number; // 客户支付预算 (元)
   platformCommissionRate: number; // 尾款平台抽成比例 (例如 0.15 = 15%)
   designerPayout: number; // 设计师实际到手金额：定金全额 + 尾款扣除平台服务费 (元)
@@ -339,6 +343,33 @@ export interface DesignOrder {
   taskId?: string; // 关联的审核任务ID
   createdAt: string;
   updatedAt?: string;
+}
+
+export type OrderApplicationStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn' | 'closed';
+export interface OrderApplication {
+  id: string;
+  orderId: string;
+  orderNo: string;
+  orderTitle: string;
+  designerId: string;
+  designerName: string;
+  invitationId?: string;
+  originalBudget: number;
+  extraAmount: number;
+  quotedTotal: number;
+  designerPayout: number;
+  depositAmount: number;
+  balanceAmount: number;
+  message: string;
+  status: OrderApplicationStatus;
+  version: number;
+  reviewerId?: string;
+  reviewComment?: string;
+  reviewedAt?: string;
+  taskId?: string;
+  createdAt: string;
+  updatedAt: string;
+  designer?: DesignerProfile & { portfolios: DesignerPortfolio[] };
 }
 
 // ================= 设计师邀请与推荐 =================
@@ -465,6 +496,56 @@ export interface AdminAuditLog {
 
 // ================= 站内信 =================
 export type SiteMessageType = 'system' | 'order' | 'review' | 'dispute' | 'announcement';
+
+export type EvaluationDirection = 'advertiser_to_designer' | 'designer_to_advertiser';
+export const EVALUATION_TAGS: Record<EvaluationDirection, string[]> = {
+  advertiser_to_designer: ['设计出色', '沟通顺畅', '交付及时', '修改配合', '理解有偏差', '沟通不及时', '交付延期'],
+  designer_to_advertiser: ['需求清晰', '反馈及时', '沟通顺畅', '尊重专业', '需求变化频繁', '反馈不及时', '沟通困难'],
+};
+export interface OrderEvaluation {
+  id: string;
+  orderId: string;
+  direction: EvaluationDirection;
+  authorId: string;
+  authorName: string;
+  targetId: string;
+  targetName?: string;
+  category: string;
+  score: number;
+  tags: string[];
+  comment: string;
+  visibility: 'visible' | 'hidden';
+  reputationEligible: boolean;
+  createdAt: string;
+  publishedAt?: string;
+  reply?: string;
+  repliedAt?: string;
+}
+export interface OrderEvaluationState {
+  orderId: string;
+  title: string;
+  targetName: string;
+  direction?: EvaluationDirection;
+  status: 'unavailable' | 'open' | 'paused' | 'published' | 'closed';
+  reason?: string;
+  deadlineAt?: string;
+  canSubmit: boolean;
+  submitted: boolean;
+  evaluations: OrderEvaluation[];
+}
+export interface EvaluationSummary { average: number | null; count: number; }
+export interface EvaluationReport {
+  id: string;
+  evaluationId: string;
+  reporterName: string;
+  reason: string;
+  description: string;
+  status: 'open' | 'resolved';
+  decision?: string;
+  resolution?: string;
+  createdAt: string;
+  evaluation: OrderEvaluation;
+}
 
 export interface SiteMessage {
   id: string;

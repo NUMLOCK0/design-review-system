@@ -25,6 +25,12 @@ export function dispatchMessageUpdate(update: MessageRealtimeUpdate) {
 export function getMobileMessageLink(link?: string) {
   if (!link) return '/mobile';
   const [path, query] = link.split('?');
+  const params = new URLSearchParams(query);
+  if (path === '/evaluations' || path.startsWith('/evaluations/')) return `/mobile${link}`;
+  if (path === '/service/evaluations') return '/mobile/service/evaluations';
+  if (path === '/applications') return '/mobile/applications';
+  if (path === '/advertiser/orders' && params.get('tab') === 'applications' && params.get('orderId')) return `/mobile/orders/${encodeURIComponent(params.get('orderId')!)}/applications`;
+  if (path === '/review-tasks' && params.get('taskId')) return `/mobile/tasks/${encodeURIComponent(params.get('taskId')!)}`;
   const route = path.startsWith('/mobile/') ? path : path === '/mobile' ? path
     : path === '/advertiser/disputes' || path === '/service/disputes' ? '/mobile/disputes'
       : path.startsWith('/advertiser/orders') ? path.replace('/advertiser/orders', '/mobile/orders')

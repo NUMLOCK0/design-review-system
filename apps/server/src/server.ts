@@ -1,3 +1,8 @@
+import { orderApplicationsRouter } from './routes/order-applications.js';
+import { orderEvaluationsRouter } from './routes/order-evaluations.js';
+import { startOrderEvaluationWorker } from './services/order-evaluations.js';
+import { ensureOrderEvaluationSchema } from './config/order-evaluation-schema.js';
+import { dbPool } from './config/database.js';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -122,6 +127,8 @@ app.use('/api/auth', authRouter);
 app.use('/api/review-tasks', reviewTasksRouter);
 app.use('/api/review-rules', reviewRulesRouter);
 app.use('/api/upload', uploadRouter);
+app.use('/api', orderApplicationsRouter);
+app.use('/api/order-evaluations', orderEvaluationsRouter);
 app.use('/api/design-orders', designOrdersRouter);
 app.use('/api/system-config', systemConfigRouter);
 app.use('/api/users', usersRouter);
@@ -138,7 +145,7 @@ app.use('/api/service', serviceRouter);
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('[API Error]:', err);
   res.status(err.status || 500).json({
-    code: err.code || 500,
+    code: err.status || err.code || 500,
     success: false,
     message: err.message || '内部服务器错误',
     data: null,
@@ -149,6 +156,10 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function startServer() {
   await initializePersistence({ designOrders, rules, tasks, disputes, messages, serviceLogs, designerWallets, withdrawalRequests });
   await initializeSystemConfig();
+  if (dbPool) {
+    await ensureOrderEvaluationSchema(dbPool);
+    startOrderEvaluationWorker();
+  }
   await ensureOssCors();
   app.listen(PORT, () => {
     console.log(`=======================================================`);

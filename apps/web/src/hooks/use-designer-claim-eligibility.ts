@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { fetchWithAuth } from '@/lib/auth';
 
-export type DesignerClaimEligibility = { canClaim: boolean; profileCompleted: boolean; approvedPortfolioCount: number };
+export type DesignerClaimEligibility = { canClaim: boolean; profilePublished: boolean; acceptingOrders: boolean; profileCompleted: boolean; approvedPortfolioCount: number };
 
 export function useDesignerClaimEligibility(enabled: boolean) {
   const [eligibility, setEligibility] = useState<DesignerClaimEligibility | null>(null);

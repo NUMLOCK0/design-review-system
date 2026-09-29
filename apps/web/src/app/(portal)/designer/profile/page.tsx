@@ -167,7 +167,7 @@ export default function DesignerProfilePage() {
     toast.success('作品已删除');
   };
   const approvedPortfolioCount = portfolios.filter((item) => item.status === 'published' && item.title.trim() && item.coverUrl && item.imageUrls.length > 0).length;
-  const claimReadiness = { loading, error: false, eligibility: { profileCompleted: profile.profileCompleted === true, approvedPortfolioCount, canClaim: profile.profileCompleted === true && profile.publicStatus === 'published' && approvedPortfolioCount > 0 } };
+  const claimReadiness = { loading, error: false, eligibility: { profileCompleted: profile.profileCompleted === true, profilePublished: profile.publicStatus === 'published', acceptingOrders: profile.availabilityStatus !== 'unavailable', approvedPortfolioCount, canClaim: profile.profileCompleted === true && profile.publicStatus === 'published' && profile.availabilityStatus !== 'unavailable' && approvedPortfolioCount > 0 } };
 
 
   if (loading) return <div className="rounded-3xl border border-slate-200 bg-white p-12 text-center text-sm text-slate-400">正在加载个人主页…</div>;

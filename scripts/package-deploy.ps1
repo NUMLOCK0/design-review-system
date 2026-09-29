@@ -11,6 +11,9 @@ $releaseDirectory = if ($OutputDirectory) {
 }
 $zipPath = Join-Path $releaseDirectory 'design-review-system.zip'
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("design-review-system-package-" + [guid]::NewGuid().ToString('N'))
+$tempRoot = [System.IO.Path]::GetFullPath($tempRoot)
+$tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+if (-not $tempRoot.StartsWith($tempBase, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Package temporary path is outside the temporary directory' }
 $stageRoot = Join-Path $tempRoot 'design-review-system'
 
 $excludedDirectories = @(
@@ -73,6 +76,8 @@ try {
   Copy-Item -LiteralPath (Join-Path $projectRoot 'apps/server/dist') -Destination (Join-Path $stageRoot 'apps/server/dist') -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $projectRoot 'apps/web/.next') -Destination (Join-Path $stageRoot 'apps/web/.next') -Recurse -Force
   $webBuildCache = Join-Path $stageRoot 'apps/web/.next/cache'
+  $webBuildCache = [System.IO.Path]::GetFullPath($webBuildCache)
+  if (-not $webBuildCache.StartsWith($tempRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Build cache path is outside the package temporary directory' }
   if (Test-Path -LiteralPath $webBuildCache) {
     Remove-Item -LiteralPath $webBuildCache -Recurse -Force
   }

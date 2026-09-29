@@ -76,7 +76,9 @@ function LoginPageContent({ entryRole }: { entryRole: LoginEntry }) {
       ? requestedPath === '/advertiser' || requestedPath.startsWith('/advertiser/') || ['/mobile', '/mobile/orders', '/mobile/profile', '/mobile/orders/new'].includes(requestedPath)
       : role === 'designer'
         ? ['/order-market', '/review-tasks', '/review-submit', '/wallet', '/designer', '/mobile/orders', '/mobile/tasks', '/mobile/profile', '/mobile/designer-profile'].some((path) => requestedPath === path || requestedPath.startsWith(`${path}/`))
-        : ['/admin', '/service', '/mobile/service'].some((path) => requestedPath === path || requestedPath.startsWith(`${path}/`));
+        : role === 'admin'
+          ? requestedPath === '/admin' || requestedPath.startsWith('/admin/')
+          : ['/service', '/mobile/service', '/mobile/tasks'].some((path) => requestedPath === path || requestedPath.startsWith(`${path}/`));
     const safeRedirect = requested?.startsWith('/') && !requested.startsWith('//') && redirectMatchesRole ? requested : null;
     const destination = safeRedirect || (isMobile ? role === 'designer' ? '/mobile/orders' : role === 'advertiser' ? '/mobile' : getRoleHome(role) : getRoleHome(role));
     window.location.replace(destination);
@@ -148,10 +150,8 @@ function LoginPageContent({ entryRole }: { entryRole: LoginEntry }) {
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.message || '登录失败');
       const session = result.data;
-      const targetRole = isStaff
-        ? (session.user.role === 'admin' || session.user.role === 'customer_service' ? session.user.role : null)
-        : entryRole;
-      if (!targetRole || session.user.role !== targetRole) {
+      const isPlatformUser = session.user.role === 'admin' || session.user.role === 'customer_service';
+      if (!isPlatformUser && (isStaff || session.user.role !== entryRole)) {
         await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => undefined);
         throw new Error(isStaff ? '该账号没有平台工作人员权限' : `该账号没有${isDesigner ? '设计师' : '品牌方'}权限，请使用对应账号或入口`);
       }

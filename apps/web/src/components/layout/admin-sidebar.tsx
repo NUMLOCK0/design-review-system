@@ -36,6 +36,7 @@ const ALL_ADMIN_NAV_ITEMS: Array<{ href: string; label: string; icon: LucideIcon
   { href: '/admin/designer-moderation', label: '设计师主页与作品审核', icon: ShieldCheck, roles: ['admin'] },
   { href: '/admin/users', label: '用户管理', icon: Users, roles: ['admin'] },
   { href: '/admin/audit-logs', label: '操作日志', icon: FileClock, roles: ['admin'] },
+  { href: '/admin/evaluations', label: '合作评价管理', icon: ShieldCheck, roles: ['admin'] },
   { href: '/admin/finance', label: '财务管理', icon: WalletCards, roles: ['admin'] },
 ];
 

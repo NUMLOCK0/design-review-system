@@ -1,4 +1,5 @@
 'use client';
+import { OrderEvaluationEntry } from '@/components/order-evaluations';
 
 import React, { useState, useEffect } from "react";
 import * as Select from '@radix-ui/react-select';
@@ -125,6 +126,14 @@ export default function ReviewTasksPage() {
       setLoadingOrderRequirements(false);
     }
   };
+
+  useEffect(() => {
+    const taskId = new URLSearchParams(window.location.search).get('taskId');
+    if (!taskId) return;
+    fetchWithAuth(`/review-tasks/${encodeURIComponent(taskId)}`).then((response) => response.json()).then((result) => {
+      if (result.success) { setDetailTask(result.data); setShowDetailModal(true); }
+    });
+  }, []);
 
   const handleOpenWorkspace = (taskId: string) => {
     setShowDetailModal(false);
@@ -452,6 +461,7 @@ export default function ReviewTasksPage() {
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1.5">
                           {/* 统一查看详情按钮 */}
+                          {task.orderId && task.acceptedAt && <OrderEvaluationEntry orderId={task.orderId} compact />}
                           <Button
                             size="sm"
                             variant="ghost"
@@ -672,6 +682,7 @@ export default function ReviewTasksPage() {
               </div>
 
               <ModalFooter className="gap-2 mt-2">
+                {detailTask.orderId && detailTask.acceptedAt && <OrderEvaluationEntry orderId={detailTask.orderId} compact />}
                 <Button variant="outline" onClick={() => setShowDetailModal(false)} className="rounded-xl text-xs">
                   关闭
                 </Button>

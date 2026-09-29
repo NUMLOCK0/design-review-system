@@ -43,6 +43,7 @@ const PORTAL_NAV_ITEMS: Record<UserInfo['role'], Array<{ href: string; label: st
   ],
   designer: [
     { href: '/order-market', label: '接单与派单大厅', mobileLabel: '订单大厅', icon: ShoppingBag, badge: '热' },
+    { href: '/applications', label: '我的接单申请', mobileLabel: '申请', icon: Inbox },
     { href: '/review-tasks', label: '我的任务中心', mobileLabel: '任务', icon: CheckSquare },
     { href: '/designer/profile', label: '个人主页与作品集', mobileLabel: '作品集', icon: User },
     { href: '/wallet', label: '收益钱包与结算', mobileLabel: '钱包', icon: ShieldCheck, badge: '资金' },
@@ -51,6 +52,7 @@ const PORTAL_NAV_ITEMS: Record<UserInfo['role'], Array<{ href: string; label: st
     { href: '/service/dashboard', label: '客服工作台', mobileLabel: '工作台', icon: CheckSquare },
     { href: '/service/portfolio-review', label: '作品审核', mobileLabel: '作品审核', icon: ShieldCheck },
     { href: '/service/disputes', label: '纠纷处理中心', mobileLabel: '纠纷', icon: ShieldCheck },
+    { href: '/service/evaluations', label: '评价管理', mobileLabel: '评价', icon: ShieldCheck },
   ],
   admin: [
   ],
@@ -236,6 +238,10 @@ export function PortalNavbar() {
                   </DropdownMenuItem>
                 </>
               )}
+              <DropdownMenuItem className="text-xs gap-2 cursor-pointer" onClick={() => router.push(['admin', 'customer_service'].includes(userRole) ? '/service/evaluations' : '/evaluations')}>
+                <CheckSquare className="h-3.5 w-3.5 role-primary-text" />
+                <span>{['admin', 'customer_service'].includes(userRole) ? '评价管理' : '我的评价'}</span>
+              </DropdownMenuItem>
               {isAdmin && (
                 <>
                   <DropdownMenuSeparator />

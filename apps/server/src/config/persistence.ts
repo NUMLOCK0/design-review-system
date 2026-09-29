@@ -1,3 +1,5 @@
+import type { PoolConnection } from 'mysql2/promise';
+import { ensureOrderApplicationSchema } from './order-application-schema.js';
 import type { DesignOrder, DesignerWallet, OrderDispute, ReviewRule, ReviewTask, ServiceActionLog, SiteMessage, WithdrawalRequest } from '@design-review/shared';
 import type { ProtectedAsset } from '../utils/media-protection.js';
 import { protectedAssets } from '../utils/media-protection.js';
@@ -530,10 +532,10 @@ async function loadMessages(stores: Stores) {
   })));
 }
 
-export async function persistDesignOrder(order: DesignOrder) {
+export async function persistDesignOrder(order: DesignOrder, connection?: PoolConnection) {
   if (!dbPool) return;
   try {
-    await dbPool.query(`INSERT INTO design_orders (
+    await (connection || dbPool).query(`INSERT INTO design_orders (
       id, order_no, title, category, platform, budget, platform_commission_rate, designer_payout, deadline, urgency,
       requirements, requires_psd, image_requirement_groups, reference_images, attachment_url, status, publication_status,
       publication_review_comment, publication_reviewed_at, publication_reviewer_id, publication_reviewer_name,
@@ -541,8 +543,8 @@ export async function persistDesignOrder(order: DesignOrder) {
       claimed_at, completed_at, task_id, is_disputed, dispute_id, service_assignee_id, service_assignee_name,
       service_claimed_at, service_due_at, service_priority, payment_status, deposit_rate, deposit_amount, deposit_out_trade_no,
       deposit_trade_no, deposit_paid_at, balance_amount, balance_out_trade_no, balance_trade_no, balance_paid_at,
-      deposit_refund_status, deposit_refund_trade_no, deposit_refunded_at, created_at, updated_at
-    ) VALUES (${Array(53).fill('?').join(',')})
+      deposit_refund_status, deposit_refund_trade_no, deposit_refunded_at, created_at, updated_at, original_budget, accepted_application_id, agreed_extra_amount
+    ) VALUES (${Array(56).fill('?').join(',')})
     ON DUPLICATE KEY UPDATE title=VALUES(title), category=VALUES(category), platform=VALUES(platform), budget=VALUES(budget),
       platform_commission_rate=VALUES(platform_commission_rate), designer_payout=VALUES(designer_payout), deadline=VALUES(deadline),
       urgency=VALUES(urgency), requirements=VALUES(requirements), requires_psd=VALUES(requires_psd), image_requirement_groups=VALUES(image_requirement_groups),
@@ -555,7 +557,7 @@ export async function persistDesignOrder(order: DesignOrder) {
       service_due_at=VALUES(service_due_at), service_priority=VALUES(service_priority), payment_status=VALUES(payment_status), deposit_rate=VALUES(deposit_rate),
       deposit_amount=VALUES(deposit_amount), deposit_out_trade_no=VALUES(deposit_out_trade_no), deposit_trade_no=VALUES(deposit_trade_no), deposit_paid_at=VALUES(deposit_paid_at),
       balance_amount=VALUES(balance_amount), balance_out_trade_no=VALUES(balance_out_trade_no), balance_trade_no=VALUES(balance_trade_no), balance_paid_at=VALUES(balance_paid_at),
-      deposit_refund_status=VALUES(deposit_refund_status), deposit_refund_trade_no=VALUES(deposit_refund_trade_no), deposit_refunded_at=VALUES(deposit_refunded_at), updated_at=VALUES(updated_at)`, [
+      deposit_refund_status=VALUES(deposit_refund_status), deposit_refund_trade_no=VALUES(deposit_refund_trade_no), deposit_refunded_at=VALUES(deposit_refunded_at), updated_at=VALUES(updated_at), original_budget=VALUES(original_budget), accepted_application_id=VALUES(accepted_application_id), agreed_extra_amount=VALUES(agreed_extra_amount)`, [
       order.id, order.orderNo, order.title, order.category, order.platform, order.budget, order.platformCommissionRate, order.designerPayout,
       order.deadline, order.urgency, order.requirements, order.requiresPsd ? 1 : 0, json(order.imageRequirementGroups), json(order.referenceImages), order.attachmentUrl || null,
       order.status, order.publicationStatus || null, order.publicationReviewComment || null, order.publicationReviewedAt || null,
@@ -566,9 +568,9 @@ export async function persistDesignOrder(order: DesignOrder) {
       order.paymentStatus || null, order.depositRate ?? null, order.depositAmount ?? null, order.depositOutTradeNo || null, order.depositTradeNo || null,
       order.depositPaidAt || null, order.balanceAmount ?? null, order.balanceOutTradeNo || null, order.balanceTradeNo || null, order.balancePaidAt || null,
       order.depositRefundStatus || null, order.depositRefundTradeNo || null, order.depositRefundedAt || null,
-      order.createdAt, order.updatedAt || null
+      order.createdAt, order.updatedAt || null, order.originalBudget ?? order.budget, order.acceptedApplicationId || null, order.agreedExtraAmount ?? 0
     ]);
-  } catch (error) { console.error('[MySQL] 保存设计订单失败:', error); }
+  } catch (error) { if (connection) throw error; console.error('[MySQL] 保存设计订单失败:', error); }
 }
 
 export async function persistPaymentEvent(event: PaymentEventRecord) {
@@ -628,16 +630,16 @@ export async function persistReviewRule(rule: ReviewRule) {
   } catch (error) { console.error('[MySQL] 保存审核流失败:', error); }
 }
 
-export async function persistReviewTask(task: ReviewTask) {
+export async function persistReviewTask(task: ReviewTask, connection?: PoolConnection) {
   if (!dbPool) return;
   try {
-    await dbPool.query(`INSERT INTO review_tasks (id, task_no, product_name, sku, platform, designer_id, designer_name, rule_id, status, current_level, total_images, approved_count, rejected_count, version, urgency, submitted_at, completed_at, order_id, payload_json)
+    await (connection || dbPool).query(`INSERT INTO review_tasks (id, task_no, product_name, sku, platform, designer_id, designer_name, rule_id, status, current_level, total_images, approved_count, rejected_count, version, urgency, submitted_at, completed_at, order_id, payload_json)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE status=VALUES(status), current_level=VALUES(current_level), total_images=VALUES(total_images), approved_count=VALUES(approved_count), rejected_count=VALUES(rejected_count), version=VALUES(version), urgency=VALUES(urgency), submitted_at=VALUES(submitted_at), completed_at=VALUES(completed_at), order_id=VALUES(order_id), payload_json=VALUES(payload_json)`, [
       task.id, task.taskNo, task.productName, task.sku || null, task.platform, task.designerId, task.designerName, task.ruleId || null, task.status,
       task.currentLevel, task.totalImages, task.approvedCount, task.rejectedCount, task.version, task.urgency, mysqlDate(task.submittedAt), mysqlDate(task.completedAt),
       task.orderId || null, json(task)
     ]);
-  } catch (error) { console.error('[MySQL] 保存审核任务失败:', error); }
+  } catch (error) { if (connection) throw error; console.error('[MySQL] 保存审核任务失败:', error); }
 }
 
 export async function persistDispute(dispute: OrderDispute) {
@@ -690,16 +692,14 @@ export async function persistWithdrawalRequest(request: WithdrawalRequest) {
   } catch (error) { console.error('[MySQL] 保存提现申请失败:', error); }
 }
 
-async function loadStores(stores: Stores) {
-  const [orderRows]: any = await dbPool!.query('SELECT * FROM design_orders ORDER BY created_at DESC');
-  stores.designOrders.splice(0, stores.designOrders.length, ...orderRows.map((row: any) => {
+export function designOrderFromRow(row: any): DesignOrder {
     const budget = Number(row.budget);
     const platformCommissionRate = Number(row.platform_commission_rate);
     const depositRate = row.deposit_rate === null || row.deposit_rate === undefined ? 0.3 : Number(row.deposit_rate);
-    const settlement = calculateOrderSettlement(budget, platformCommissionRate, depositRate);
+    const settlement = calculateOrderSettlement(budget, platformCommissionRate, depositRate, row.deposit_amount == null ? undefined : Number(row.deposit_amount));
     return {
     id: row.id, orderNo: row.order_no, title: row.title, category: row.category, platform: row.platform,
-    budget, platformCommissionRate, designerPayout: settlement.designerPayout,
+    budget, originalBudget: Number(row.original_budget ?? row.budget), acceptedApplicationId: row.accepted_application_id || undefined, agreedExtraAmount: Number(row.agreed_extra_amount || 0), platformCommissionRate, designerPayout: settlement.designerPayout,
     deadline: row.deadline, urgency: row.urgency, requirements: row.requirements || '', requiresPsd: Boolean(row.requires_psd), imageRequirementGroups: parseJson(row.image_requirement_groups, []),
     referenceImages: parseJson(row.reference_images, []), attachmentUrl: row.attachment_url || undefined, status: row.status,
     publicationStatus: row.publication_status || undefined, publicationReviewComment: row.publication_review_comment || undefined,
@@ -719,7 +719,11 @@ async function loadStores(stores: Stores) {
     balanceOutTradeNo: row.balance_out_trade_no || undefined, balanceTradeNo: row.balance_trade_no || undefined, balancePaidAt: row.balance_paid_at || undefined,
     createdAt: row.created_at, updatedAt: row.updated_at || undefined
     };
-  }));
+}
+
+async function loadStores(stores: Stores) {
+  const [orderRows]: any = await dbPool!.query('SELECT * FROM design_orders ORDER BY created_at DESC');
+  stores.designOrders.splice(0, stores.designOrders.length, ...orderRows.map(designOrderFromRow));
 
   const [ruleRows]: any = await dbPool!.query('SELECT * FROM review_rules ORDER BY created_at DESC');
   const [levelRows]: any = await dbPool!.query('SELECT * FROM review_rule_levels ORDER BY level ASC');
@@ -827,6 +831,7 @@ export async function initializePersistence(stores: Stores) {
   }
   try {
     await ensureSchema();
+    await ensureOrderApplicationSchema(dbPool!);
     await clearTestData(stores);
     await migrateStoredImageUrls();
     await migrateReferenceLinkItems();

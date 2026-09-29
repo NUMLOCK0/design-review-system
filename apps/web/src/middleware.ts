@@ -15,9 +15,11 @@ export function middleware(request: NextRequest) {
     '/wallet': '/mobile/profile',
     '/designer/profile': '/mobile/profile',
     '/messages': '/mobile/messages',
+    '/evaluations': '/mobile/evaluations',
+    '/service/evaluations': '/mobile/service/evaluations',
   };
 
-  const mobileDestination = isMobileDevice && !pathname.startsWith('/mobile') ? mobileDestinations[pathname] : undefined;
+  const mobileDestination = isMobileDevice && !pathname.startsWith('/mobile') ? mobileDestinations[pathname] || (pathname.startsWith('/evaluations/') ? `/mobile${pathname}` : undefined) : undefined;
   if (mobileDestination) {
     const destination = request.nextUrl.clone();
     destination.pathname = mobileDestination;

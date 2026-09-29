@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import * as Select from '@radix-ui/react-select';
 import { ArrowLeft, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, CircleHelp, Layers, LayoutGrid, MessageCircle, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { calculateImageRequirementsMinimumPrice, calculateOrderMinimumBudget } from '@design-review/shared';
@@ -173,6 +173,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
   editingOrder?: DesignOrder | null;
   fullscreen?: boolean;
 }) {
+  const formId = useId();
   const initialGroups = defaultGroups();
   const user = useCurrentUser();
   const [rules, setRules] = useState<ReviewRule[]>([]);
@@ -458,8 +459,12 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
   };
 
   const title = editingOrder ? '编辑设计订单' : '新增设计订单';
+  const formActions = <>
+    <Button type="button" variant="outline" disabled={step === 1 || submitting} onClick={() => setStep(step - 1)} className="h-10 rounded-xl text-xs"><ChevronLeft className="mr-1 h-3.5 w-3.5" />上一步</Button>
+    <div className="flex gap-2"><Button type="button" variant="outline" disabled={submitting} onClick={() => onOpenChange(false)} className="h-10 rounded-xl text-xs">取消</Button><Button type="submit" form={formId} disabled={submitting} className="order-form-primary h-10 rounded-xl text-xs text-white">{submitting ? '保存中…' : step === 3 ? (editingOrder ? '保存修改' : '提交订单') : <>下一步<ChevronRight className="ml-1 h-3.5 w-3.5" /></>}</Button></div>
+  </>;
   const formBody = (
-        <form onSubmit={(event) => { event.preventDefault(); if (step === 1) goToBid(); else if (step === 2) goToContact(); else void submit(); }} className="min-w-0 space-y-4">
+        <form id={formId} onSubmit={(event) => { event.preventDefault(); if (step === 1) goToBid(); else if (step === 2) goToContact(); else void submit(); }} className="min-w-0 space-y-4">
           {step === 1 && <>
           <div className="space-y-1.5">
             <Label required htmlFor="order-title" className="text-xs text-slate-600">订单标题</Label>
@@ -574,15 +579,12 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
             <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-500"><div className="flex items-center justify-between"><span>需求图片</span><b className="text-slate-800">{imageCount} 张</b></div><div className="mt-3 flex items-center justify-between"><span>订单出价</span><b className="role-primary-text">¥{Number(form.budget || 0).toFixed(2)}</b></div></div>
           </div>}
 
-          <DrawerFooter className="flex-row justify-between gap-2 border-t border-slate-100 p-0 pt-4">
-            <div>{step > 1 && <Button type="button" variant="outline" onClick={() => setStep(step - 1)} className="rounded-xl text-xs"><ChevronLeft className="mr-1 h-3.5 w-3.5" />上一步</Button>}</div>
-            <div className="flex gap-2"><Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl text-xs">取消</Button><Button type="submit" disabled={submitting} className="order-form-primary rounded-xl text-xs text-white">{submitting ? '保存中…' : step === 3 ? (editingOrder ? '保存修改' : '提交订单') : <>下一步<ChevronRight className="ml-1 h-3.5 w-3.5" /></>}</Button></div>
-          </DrawerFooter>
+          {!fullscreen && <DrawerFooter className="flex-row justify-between gap-2 border-t border-slate-100 p-0 pt-4">{formActions}</DrawerFooter>}
         </form>
   );
 
   if (fullscreen) {
-    return <main className="order-form-theme min-h-screen bg-slate-50 px-4 py-5 sm:px-8 lg:px-12">
+    return <main className="order-form-theme min-h-screen bg-slate-50 px-4 pt-5 pb-[calc(104px+env(safe-area-inset-bottom))] sm:px-8 lg:px-12">
       <div className="mx-auto max-w-6xl">
         <div className="mb-5 flex items-center gap-3 border-b border-slate-200 pb-4">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} className="h-9 rounded-xl px-2 text-xs text-slate-500 hover:text-slate-800"><ArrowLeft className="mr-1.5 h-4 w-4" />返回订单管理</Button>
@@ -592,6 +594,9 @@ export function CreateOrderDialog({ open, onOpenChange, onCreated, onUpdated, ed
         <OrderCreationSteps step={step} />
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7 lg:p-9">{formBody}</div>
       </div>
+      <footer aria-label="订单操作" className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur sm:px-8 lg:px-12">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-5 sm:px-7 lg:px-9">{formActions}</div>
+      </footer>
     </main>;
   }
 

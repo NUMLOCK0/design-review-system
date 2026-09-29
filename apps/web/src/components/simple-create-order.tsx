@@ -98,7 +98,7 @@ export function SimpleCreateOrder({ mobile = false }: { mobile?: boolean }) {
     finally { setSaving(false); }
   };
 
-  return <main className={`min-h-dvh bg-slate-50 ${mobile ? 'pb-[calc(88px+env(safe-area-inset-bottom))]' : 'pb-10'}`}>
+  return <main className="min-h-dvh bg-slate-50 pb-[calc(88px+env(safe-area-inset-bottom))]">
     <header className="sticky top-0 z-20 border-b border-slate-100 bg-white/95 px-4 py-3 backdrop-blur"><div className="mx-auto flex max-w-4xl items-center gap-3"><button type="button" onClick={() => router.push(returnPath)} className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-50 text-slate-600" aria-label={mobile ? '返回选择发单方式' : '返回订单列表'}><ArrowLeft className="h-4 w-4" /></button><div><h1 className="text-sm font-bold text-slate-900">简易发单</h1><p className="mt-0.5 text-[11px] text-slate-500">填写核心需求和参考资料，快速创建订单</p></div><span className="ml-auto rounded-full role-primary-soft px-2.5 py-1 text-[10px] font-semibold role-primary-text">简易模式</span></div></header>
     <div className="mx-auto grid max-w-4xl gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div className="space-y-4">

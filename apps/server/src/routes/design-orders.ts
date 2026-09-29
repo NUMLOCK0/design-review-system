@@ -1,16 +1,16 @@
 import { Router } from 'express';
 import { calculateOrderMinimumBudget } from '@design-review/shared';
-import type { DesignOrder, SystemConfig, ApiResponse, ReviewTask, OrderImageRequirementItem } from '@design-review/shared';
+import type { DesignOrder, SystemConfig, ApiResponse, OrderImageRequirementItem } from '@design-review/shared';
 import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { tasks } from './review-tasks.js';
 import { rules } from './review-rules.js';
-import { persistDesignOrder, persistReviewTask } from '../config/persistence.js';
+import { persistDesignOrder } from '../config/persistence.js';
 import { notifyUser } from './messages.js';
 import { dbPool } from '../config/database.js';
 import { getSystemConfig } from './system-config.js';
 import { calculateOrderSettlement } from '../utils/order-finance.js';
 import { recordAdminAudit } from '../services/admin-audit.js';
-import { getDesignerClaimEligibility } from '../services/designer-claim-eligibility.js';
+import { submitOrderApplication, cancelOrderWithApplications } from '../services/order-applications.js';
 
 export const designOrdersRouter = Router();
 
@@ -41,7 +41,7 @@ designOrdersRouter.get('/service/pending', authenticate, requireRoles('customer_
 });
 
 // 品牌方订单视图包含待客服审核、已驳回和已发布订单；接单大厅不会暴露这些内部状态。
-designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'designer', 'admin'), (req, res) => {
+designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'designer', 'admin'), async (req, res, next) => {
   const status = String(req.query.status || 'all');
   const billingStatus = String(req.query.billingStatus || 'all');
   const keyword = String(req.query.keyword || '').trim().toLowerCase();
@@ -77,7 +77,13 @@ designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'design
     return statusMatched && keywordMatched && billingStatusMatched;
   });
   const start = (page - 1) * pageSize;
-  const data = list.slice(start, start + pageSize);
+  const data = list.slice(start, start + pageSize).map((order) => ({ ...order, pendingApplicationCount: 0 }));
+  if (dbPool && data.length && req.user!.role !== 'designer') {
+    try {
+      const [counts]: any = await dbPool.query(`SELECT order_id, COUNT(*) AS count FROM order_applications WHERE status='pending' AND order_id IN (${data.map(() => '?').join(',')}) GROUP BY order_id`, data.map((order) => order.id));
+      for (const order of data) order.pendingApplicationCount = Number(counts.find((row: any) => row.order_id === order.id)?.count || 0);
+    } catch (error) { return next(error); }
+  }
   res.json({ code: 200, success: true, data, total: list.length, page, pageSize, hasMore: start + data.length < list.length, counts: statusCounts, billingCounts, timestamp: Date.now() });
 });
 
@@ -382,6 +388,9 @@ designOrdersRouter.post('/:id/republish', authenticate, requireRoles('advertiser
   const settlement = calculateOrderSettlement(source.budget, source.platformCommissionRate, source.depositRate || getSystemConfig().depositRate);
   const republishedOrder: DesignOrder = {
     ...source,
+    originalBudget: source.budget,
+    acceptedApplicationId: undefined,
+    agreedExtraAmount: 0,
     id,
     orderNo,
     status: 'open',
@@ -427,24 +436,11 @@ designOrdersRouter.post('/:id/republish', authenticate, requireRoles('advertiser
   res.status(201).json({ code: 200, success: true, message: '已生成新的发布订单，请支付定金后提交', data: republishedOrder, timestamp: Date.now() });
 });
 
-designOrdersRouter.post('/:id/cancel', authenticate, requireRoles('advertiser'), (req, res) => {
-  const order = designOrders.find((item) => item.id === req.params.id && item.creatorId === req.user!.id);
-  if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
-  if (!['open', 'pending_service_review'].includes(order.status) || order.publicationStatus === 'rejected') {
-    return res.status(400).json({ code: 400, success: false, message: '当前订单不可关闭' });
-  }
-  const paymentInProgress = order.paymentStatus === 'deposit_pending' && Boolean(order.depositOutTradeNo);
-  const depositPaid = ['deposit_paid', 'balance_pending', 'paid'].includes(order.paymentStatus || '');
-  const isUnclaimedAndPublishedOrAwaitingReview = ['published', 'pending_service_review'].includes(order.publicationStatus || '') && order.status === 'open' && !order.claimedById;
-  if (paymentInProgress || (depositPaid && !isUnclaimedAndPublishedOrAwaitingReview)) {
-    return res.status(400).json({ code: 400, success: false, message: paymentInProgress ? '订单正在支付中，请稍后再关闭' : '已接单或已进入执行流程的订单不可直接取消，请联系客服处理' });
-  }
-  order.status = 'cancelled';
-  if (depositPaid && order.depositAmount && order.depositAmount > 0) order.depositRefundStatus = 'pending';
-  order.updatedAt = new Date().toISOString();
-  void persistDesignOrder(order);
-  if (order.depositRefundStatus === 'pending') notifyUser('u_rev_1', { type: 'order', title: '订单定金待原路退款', content: `品牌方取消了未接单订单「${order.title}」，请按原支付渠道退还定金 ¥${Number(order.depositAmount).toFixed(2)}。`, link: '/service/dashboard?tab=deposit_refund' });
-  res.json({ code: 200, success: true, message: order.depositRefundStatus === 'pending' ? '订单已取消，定金退款已提交客服按原支付渠道处理' : '订单已取消', data: order, timestamp: Date.now() });
+designOrdersRouter.post('/:id/cancel', authenticate, requireRoles('advertiser'), async (req, res, next) => {
+  try {
+    const order = await cancelOrderWithApplications(String(req.params.id), req.user!);
+    res.json({ code: 200, success: true, message: order.depositRefundStatus === 'pending' ? '订单已取消，定金退款已提交客服处理' : '订单已取消', data: order, timestamp: Date.now() });
+  } catch (error) { next(error); }
 });
 
 designOrdersRouter.post('/:id/deposit-refund/confirm', authenticate, requireRoles('customer_service', 'admin'), async (req, res) => {
@@ -536,134 +532,10 @@ designOrdersRouter.post('/:id/publication-review', authenticate, requireRoles('c
   });
 });
 
-// 抢单与邀请接受共用同一个任务创建入口，避免两条路径产生不同的订单状态。
-export function claimDesignOrder(order: DesignOrder, designerId: string, designerName: string) {
-  if (order.creatorId === designerId) {
-    throw new Error('不能接取自己发布的订单');
-  }
-  if (order.status !== 'open' || (order.publicationStatus && order.publicationStatus !== 'published')) {
-    throw new Error('手慢了，该订单已被接取或已下架');
-  }
-
-  const taskId = `task_${Date.now()}`;
-  const taskNo = `REV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`;
-
-  order.status = 'claimed';
-  order.claimedById = designerId;
-  order.claimedByName = designerName;
-  order.claimedAt = new Date().toISOString();
-  order.updatedAt = new Date().toISOString();
-  order.taskId = taskId;
-
-  // 自动在审核任务中心创建关联任务草稿/待提交状态
-  const createdTask: ReviewTask = {
-    id: taskId,
-    taskNo,
-    productName: order.title,
-    sku: `SKU-${order.orderNo.slice(-6)}`,
-    platform: order.platform,
-    designerId,
-    designerName,
-    advertiserId: order.creatorId,
-    advertiserName: order.creatorName,
-    organizationId: order.organizationId,
-    ruleId: order.reviewRuleId,
-    ruleName: order.reviewRuleName,
-    status: 'draft',
-    currentLevel: 1,
-    totalImages: (order.imageRequirementGroups && order.imageRequirementGroups.length > 0)
-      ? order.imageRequirementGroups.reduce((acc, g) => acc + (g.imageItems?.length || g.quantity || 1), 0)
-      : (order.referenceImages?.length || 1),
-    approvedCount: 0,
-    rejectedCount: 0,
-    rejectCount: 0,
-    version: 1,
-    urgency: order.urgency === 'super_urgent' ? 'urgent' : (order.urgency === 'urgent' ? 'high' : 'medium'),
-    requiresPsd: Boolean(order.requiresPsd),
-    orderId: order.id,
-    orderBudget: order.budget,
-    designerPayout: order.designerPayout,
-    groups: (order.imageRequirementGroups && order.imageRequirementGroups.length > 0)
-      ? order.imageRequirementGroups.map((grp, idx) => {
-          const groupId = `grp_${Date.now()}_${idx}`;
-          const itemSources = (grp.imageItems || [])
-            .map((item) => ({ url: item.materialImage, description: item.description || grp.description || grp.name }))
-            .filter((item): item is { url: string; description: string } => typeof item.url === 'string' && Boolean(item.url));
-          const fallbackSources = (grp.referenceImages || []).map((url) => ({ url, description: grp.description || grp.name }));
-          const sources = itemSources.length > 0 ? itemSources : fallbackSources;
-          return {
-            id: groupId,
-            taskId,
-            groupType: grp.groupType,
-            requiredCount: grp.imageItems?.length || grp.quantity || 1,
-            images: sources.map((source, i) => ({
-              id: `img_${Date.now()}_${idx}_${i}`,
-              taskId,
-              groupId,
-              imageUrl: source.url,
-              imageIndex: i + 1,
-              designDescription: source.description,
-              version: 1,
-              status: 'pending' as const,
-              createdAt: new Date().toISOString()
-            }))
-          };
-        })
-      : [
-          {
-            id: `grp_${Date.now()}_0`,
-            taskId,
-            groupType: 'main_1_1',
-            requiredCount: 1,
-            images: (order.referenceImages && order.referenceImages.length > 0)
-              ? order.referenceImages.map((url, i) => ({
-                  id: `img_${Date.now()}_${i}`,
-                  taskId,
-                  groupId: `grp_${Date.now()}_0`,
-                  imageUrl: url,
-                  imageIndex: i + 1,
-                  designDescription: '设计待交付切图',
-                  version: 1,
-                  status: 'pending' as const,
-                  createdAt: new Date().toISOString()
-                }))
-              : []
-          }
-        ],
-    createdAt: new Date().toISOString()
-  };
-
-  tasks.unshift(createdTask);
-  void persistDesignOrder(order);
-  void persistReviewTask(createdTask);
-  notifyUser(order.creatorId, {
-    type: 'order',
-    title: '订单已被设计师接单',
-    content: `${designerName}已接取订单「${order.title}」。`,
-    link: '/advertiser/orders',
-  });
-
-  return { order, task: createdTask };
-}
-
-// 设计师抢单 / 接单 (接单后自动在审核任务中心创建关联任务)
+// 旧客户端也只能提交申请，不能直接创建任务。
 designOrdersRouter.post('/:id/claim', authenticate, requireRoles('designer'), async (req, res, next) => {
-  const order = designOrders.find(o => o.id === req.params.id);
-  if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
-  let eligibility;
-  try { eligibility = await getDesignerClaimEligibility(req.user!.id); }
-  catch (error: any) {
-    if (error?.message === '数据库未连接，暂时无法核验设计师接单资格') return res.status(503).json({ code: 503, success: false, message: error.message });
-    return next(error);
-  }
-  if (!eligibility.canClaim) {
-    const reasons = [!eligibility.profileCompleted ? '完善个人资料' : '', eligibility.approvedPortfolioCount === 0 ? '至少提交一件审核通过的作品' : ''].filter(Boolean);
-    return res.status(403).json({ code: 403, success: false, message: '请先' + reasons.join('、') + '后再接单' });
-  }
   try {
-    const { order: claimedOrder, task } = claimDesignOrder(order, req.user!.id, req.user!.name);
-    res.json({ code: 200, success: true, message: '接单成功！已自动同步至我的任务中心', data: { order: claimedOrder, taskId: task.id, taskNo: task.taskNo }, timestamp: Date.now() });
-  } catch (error: any) {
-    res.status(400).json({ code: 400, success: false, message: error.message || '接单失败' });
-  }
+    const application = await submitOrderApplication(String(req.params.id), req.user!, req.body || {});
+    res.json({ code: 200, success: true, message: '申请已提交，等待品牌方确认', data: application, timestamp: Date.now() });
+  } catch (error) { next(error); }
 });

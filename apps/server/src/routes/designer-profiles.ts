@@ -187,7 +187,7 @@ designerProfilesRouter.delete('/designer-portfolios/:id', authenticate, requireR
   } catch (error) { next(error); }
 });
 
-async function publicDesigner(id: string) {
+export async function publicDesigner(id: string) {
   const [rows]: any = await dbPool!.query(`SELECT u.id, u.name, u.avatar_url, p.*,
     (SELECT COUNT(*) FROM designer_portfolios dp WHERE dp.designer_id=u.id AND dp.status='published') AS portfolio_count
     FROM users u JOIN user_roles ur ON ur.user_id=u.id AND ur.role='designer'

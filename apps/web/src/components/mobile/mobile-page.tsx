@@ -23,9 +23,9 @@ function SectionHeading({ title, href, action = '查看全部' }: { title: strin
 }
 
 function OrderCard({ order }: { order: DesignOrder }) {
-  const visibleStatus = order.publicationStatus || order.status;
+  const visibleStatus = order.status === 'open' ? order.publicationStatus || order.status : order.status;
   const status = statusLabel[visibleStatus] || statusLabel[order.status] || order.status;
-  const isAvailable = order.publicationStatus === 'published' || order.status === 'open';
+  const isAvailable = order.publicationStatus === 'published' && order.status === 'open';
   const imageCount = (order.imageRequirementGroups || []).reduce((total, group) => total + (group.imageItems?.length || group.quantity || 0), 0);
   return <article className="rounded-[20px] border border-slate-100 bg-white p-4 shadow-[0_4px_20px_rgba(15,23,42,.035)]">
     <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="line-clamp-2 text-[14px] font-bold leading-5 text-slate-900">{order.title}</p><p className="mt-1.5 text-[11px] text-slate-400">{order.category || '视觉设计'} · {order.platform || '全平台'}</p></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ${isAvailable ? 'bg-emerald-50 text-emerald-700' : order.status === 'completed' ? 'bg-slate-100 text-slate-500' : 'role-primary-soft role-primary-text'}`}>{status}</span></div>
@@ -34,6 +34,7 @@ function OrderCard({ order }: { order: DesignOrder }) {
       <div className="min-w-0 flex-1"><p className="text-sm font-bold text-slate-900">{money(order.budget)}</p><p className="mt-1 flex items-center gap-2 text-[10px] text-slate-400"><span>{imageCount || '多'} 张图片</span><span>·</span><span className="inline-flex items-center gap-1"><CalendarDays className="h-3 w-3" />{order.deadline ? new Date(order.deadline).toLocaleDateString('zh-CN') : '交期协商'}</span></p></div>
       <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
     </div>
+    {Boolean(order.pendingApplicationCount) && <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">{order.pendingApplicationCount} 位设计师申请 · 待确认</p>}
   </article>;
 }
 
@@ -113,6 +114,12 @@ export function MobilePage({ screen }: { screen: Screen }) {
   }, [user?.id, user?.role, screen, keyword, statusFilter, serviceFilter, categoryFilter, platformFilter, urgencyFilter]);
 
   useEffect(() => { if (user) void load(1); }, [user?.id, user?.role, screen, keyword, statusFilter, serviceFilter, load]);
+  useEffect(() => {
+    if (user?.role !== 'advertiser' || !['home', 'orders'].includes(screen)) return;
+    const refresh = () => void load(1);
+    window.addEventListener('messages-realtime', refresh);
+    return () => window.removeEventListener('messages-realtime', refresh);
+  }, [user?.role, screen, load]);
 
   if (screen === 'home') return <HomeScreen user={user} orders={orders} ordersTotal={ordersTotal} orderCounts={orderCounts} tasks={tasks} serviceItems={serviceItems} serviceTotal={serviceTotal} loading={loading} />;
   if (screen === 'orders') return <section className="space-y-4">
@@ -137,6 +144,7 @@ function HomeScreen({ user, orders, ordersTotal, orderCounts, tasks, serviceItem
     <div className="pt-1"><p className="text-xs font-medium text-slate-400">{new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</p><h1 className="mt-1 text-[23px] font-extrabold tracking-tight">你好，{displayName}</h1></div>
     <section className="relative overflow-hidden rounded-[26px] bg-slate-900 px-5 py-5 text-white shadow-[0_14px_35px_rgba(15,23,42,.18)]"><div className="absolute -right-8 -top-12 h-40 w-40 rounded-full bg-[var(--role-primary)] opacity-70 blur-3xl" /><div className="absolute -bottom-20 right-20 h-36 w-36 rounded-full bg-cyan-400/30 blur-3xl" /><div className="relative"><span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold text-white/80"><Sparkles className="h-3 w-3" />创赢 · {role === 'advertiser' ? '品牌方工作台' : role === 'designer' ? '设计师工作台' : role === 'customer_service' ? '客服工作台' : '管理工作台'}</span><h2 className="mt-4 max-w-[270px] text-[22px] font-bold leading-[1.25] tracking-tight">{title}</h2><p className="mt-2 max-w-[280px] text-xs leading-5 text-white/65">{isDesigner ? '挑选适合的设计需求，专注创作与交付。' : '订单、协作和服务进展都已为你汇总。'}</p><div className="mt-5 flex gap-2"><Link href={isDesigner ? '/mobile/orders' : role === 'advertiser' ? '/mobile/orders/new' : '/mobile/tasks'} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-white px-3.5 text-xs font-bold text-slate-900 active:scale-[.98]">{isDesigner ? '浏览接单' : role === 'advertiser' ? '发布新订单' : '查看待办'}<ArrowUpRight className="h-4 w-4" /></Link>{role === 'advertiser' && <Link href="/mobile/orders" className="inline-flex min-h-10 items-center rounded-xl border border-white/20 px-3.5 text-xs font-semibold text-white">订单管理</Link>}</div></div></section>
     {metrics.length > 0 && <div className={`grid gap-3 ${metrics.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>{metrics.map((metric) => <div key={metric.label} className="rounded-[20px] border border-slate-100 bg-white p-4 shadow-[0_4px_20px_rgba(15,23,42,.035)]"><div className="flex items-center justify-between"><span className="text-[11px] font-medium text-slate-400">{metric.label}</span><metric.icon className="h-4 w-4 role-primary-text" /></div><p className="mt-2 text-[24px] font-extrabold tracking-tight text-slate-900">{loading ? '—' : metric.value}</p></div>)}</div>}
+    {isDesigner && <Link href="/mobile/applications" className="flex min-h-14 items-center justify-between rounded-2xl bg-white p-4 text-sm font-semibold role-primary-text">我的接单申请<ArrowRight className="h-4 w-4" /></Link>}
     {isDesigner && <Link href="/mobile/wallet" className="flex items-center gap-3 rounded-[18px] border border-slate-100 bg-white p-4 shadow-[0_4px_20px_rgba(15,23,42,.035)]"><span className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-amber-50 text-amber-600"><WalletCards className="h-5 w-5" /></span><span className="flex-1"><span className="block text-sm font-bold">收益与交付</span><span className="mt-1 block text-[11px] text-slate-400">查看钱包结算，完成后提现</span></span><ArrowRight className="h-4 w-4 text-slate-300" /></Link>}
     {role === 'admin' ? <Link href="/admin" className="flex items-center justify-between rounded-[20px] bg-white p-4 text-sm font-bold shadow-sm"><span>进入管理后台</span><ChevronRight className="h-4 w-4 text-slate-400" /></Link> : <section><SectionHeading title={role === 'customer_service' ? '最新待办' : isDesigner ? '最新任务' : '最近订单'} href={role === 'customer_service' ? '/mobile/tasks' : isDesigner ? '/mobile/tasks' : '/mobile/orders'} />{loading ? <Loading /> : role === 'customer_service' ? serviceItems.length ? <div className="space-y-3">{serviceItems.slice(0, 3).map((item) => <ServiceWorkCard key={`${item.type}-${item.id}`} item={item} />)}</div> : <Empty title="当前暂无待办" detail="有新的审核或服务任务时会显示在这里" /> : orders.length ? <div className="space-y-3">{orders.slice(0, 3).map((order) => <Link key={order.id} href={`/mobile/orders/${order.id}`} className="block"><OrderCard order={order} /></Link>)}</div> : <Empty title={isDesigner ? '还没有任务' : '还没有订单'} detail={isDesigner ? '去接单大厅发现新机会' : '发布订单后，进展会展示在这里'} />}</section>}
     <Link href="/mobile/messages" className="flex items-center justify-between rounded-[18px] bg-white px-4 py-3.5 text-sm font-semibold shadow-[0_4px_20px_rgba(15,23,42,.035)]"><span className="flex items-center gap-2.5"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-50 text-sky-600"><BellIcon /></span>消息通知</span><ChevronRight className="h-4 w-4 text-slate-300" /></Link>
@@ -156,7 +164,7 @@ function ProfileScreen({ user, claimReadiness }: { user: UserInfo | null; claimR
   const [availability, setAvailability] = useState<'available' | 'busy' | 'unavailable'>('available');
   const [availabilityLoading, setAvailabilityLoading] = useState(user?.role === 'designer');
   const [savingAvailability, setSavingAvailability] = useState(false);
-  const items = user?.role === 'designer' ? [['个人主页与作品集', '/mobile/designer-profile'], ['收益钱包', '/mobile/wallet'], ['订单邀请', '/mobile/invitations']] : user?.role === 'advertiser' ? [['审核流设置', '/mobile/review-flows'], ['财务账单', '/mobile/billing'], ['订单纠纷', '/mobile/disputes']] : user?.role === 'customer_service' ? [['作品审核', '/mobile/service/portfolio-review'], ['纠纷处理', '/mobile/tasks']] : [['管理后台', '/admin']];
+  const items = user?.role === 'designer' ? [['我的接单申请', '/mobile/applications'], ['我的评价', '/mobile/evaluations'], ['个人主页与作品集', '/mobile/designer-profile'], ['收益钱包', '/mobile/wallet'], ['订单邀请', '/mobile/invitations']] : user?.role === 'advertiser' ? [['我的评价', '/mobile/evaluations'], ['审核流设置', '/mobile/review-flows'], ['财务账单', '/mobile/billing'], ['订单纠纷', '/mobile/disputes']] : user?.role === 'customer_service' ? [['作品审核', '/mobile/service/portfolio-review'], ['评价管理', '/mobile/service/evaluations'], ['纠纷处理', '/mobile/tasks']] : [['评价管理', '/mobile/service/evaluations'], ['管理后台', '/admin']];
 
   useEffect(() => {
     if (user?.role !== 'designer') { setAvailabilityLoading(false); return; }

@@ -3,10 +3,10 @@ import crypto from 'crypto';
 import type { DesignerProfile, OrderInvitation } from '@design-review/shared';
 import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { dbPool } from '../config/database.js';
-import { designOrders, claimDesignOrder } from './design-orders.js';
+import { designOrders } from './design-orders.js';
 import { notifyUser } from './messages.js';
 import { tasks } from './review-tasks.js';
-import { getDesignerClaimEligibility } from '../services/designer-claim-eligibility.js';
+import { submitOrderApplication } from '../services/order-applications.js';
 
 export const invitationsRouter = Router();
 const memoryInvitations: OrderInvitation[] = [];
@@ -143,36 +143,8 @@ invitationsRouter.post('/invitations/:id/respond', authenticate, requireRoles('d
     }
     const order = designOrders.find((item) => item.id === invitation.orderId);
     if (!order) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
-    let eligibility;
-    try { eligibility = await getDesignerClaimEligibility(req.user!.id); }
-    catch (error: any) {
-      if (error?.message === '数据库未连接，暂时无法核验设计师接单资格') return res.status(503).json({ code: 503, success: false, message: error.message });
-      return next(error);
-    }
-    if (!eligibility.canClaim) {
-      const reasons = [!eligibility.profileCompleted ? '完善个人资料' : '', eligibility.approvedPortfolioCount === 0 ? '至少提交一件审核通过的作品' : ''].filter(Boolean);
-      return res.status(403).json({ code: 403, success: false, message: '请先' + reasons.join('、') + '后再接受邀请' });
-    }
-    let claimed: ReturnType<typeof claimDesignOrder>;
-    if (dbPool) {
-      const connection = await dbPool.getConnection();
-      try {
-        await connection.beginTransaction();
-        const [rows]: any = await connection.query(`SELECT status, expires_at FROM order_invitations WHERE id=? AND designer_id=? FOR UPDATE`, [invitation.id, req.user!.id]);
-        if (!rows[0] || rows[0].status !== 'sent' || new Date(rows[0].expires_at) < new Date()) throw new Error('该邀请已失效');
-        const [orderRows]: any = await connection.query(`SELECT status, publication_status FROM design_orders WHERE id=? FOR UPDATE`, [order.id]);
-        if (!orderRows[0] || orderRows[0].status !== 'open' || orderRows[0].publication_status !== 'published') throw new Error('订单已被接取或已下架');
-        claimed = claimDesignOrder(order, req.user!.id, req.user!.name);
-        await connection.query(`UPDATE order_invitations SET status='accepted', responded_at=? WHERE id=?`, [now, invitation.id]);
-        await connection.query(`UPDATE order_invitations SET status='cancelled', responded_at=? WHERE order_id=? AND id<>? AND status IN ('queued','sent')`, [now, order.id, invitation.id]);
-        await connection.commit();
-      } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
-    } else {
-      claimed = claimDesignOrder(order, req.user!.id, req.user!.name);
-      invitation.status = 'accepted'; invitation.respondedAt = now;
-      memoryInvitations.filter((item) => item.orderId === order.id && item.id !== invitation.id && activeStatuses.has(item.status)).forEach((item) => { item.status = 'cancelled'; item.respondedAt = now; });
-    }
-    return res.json({ code: 200, success: true, message: '已接受邀请，任务已创建', data: { taskId: claimed!.task.id, order: claimed!.order }, timestamp: Date.now() });
+    const application = await submitOrderApplication(order.id, req.user!, req.body || {}, invitation.id);
+    return res.json({ code: 200, success: true, message: '申请已提交，等待品牌方确认', data: application, timestamp: Date.now() });
   } catch (error: any) { res.status(400).json({ code: 400, success: false, message: error.message || '处理邀请失败' }); }
 });
 

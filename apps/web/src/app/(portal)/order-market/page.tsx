@@ -1,4 +1,6 @@
 'use client';
+import { EvaluationRating } from '@/components/order-evaluations';
+import { OrderApplicationDialog } from '@/components/order-applications';
 
 import React, { useState, useEffect, useRef } from 'react';
 import * as Select from '@radix-ui/react-select';
@@ -65,6 +67,7 @@ const PLATFORMS: { id: PlatformType; name: string }[] = [
 export default function OrderMarketPage() {
   const router = useRouter();
   const user = useCurrentUser();
+  const [applicationOrderId, setApplicationOrderId] = useState<string | null>(null);
   const claimReadiness = useDesignerClaimEligibility(user?.role === 'designer');
   const [orders, setOrders] = useState<DesignOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -361,55 +364,26 @@ export default function OrderMarketPage() {
     }
   };
 
-  const handleClaimOrder = async (orderId: string) => {
-    if (user?.role === 'designer' && !claimReadiness.eligibility?.canClaim) {
-      toast.error('请先完善个人资料并提交审核通过的作品');
-      return;
-    }
-    try {
-      const res = await fetchWithAuth(`/design-orders/${orderId}/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          designerId: user?.id || '',
-          designerName: user?.name || '当前设计师',
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.message || '接单失败');
-      }
-      toast.success(data.message, {
-        description: '正在为您自动跳转至【我的任务中心】...'
-      });
-      fetchOrders();
-      // 接单成功后自动跳转到我的任务中心
-      setTimeout(() => {
-        router.push('/review-tasks');
-      }, 600);
-    } catch (err: any) {
-      toast.error(err.message || '接单失败');
-    }
+  const handleClaimOrder = (orderId: string) => {
+    setApplicationOrderId(orderId);
   };
 
   const filteredOrders = orders;
 
   return (
     <div className="space-y-6">
+      <OrderApplicationDialog orderId={applicationOrderId} onClose={() => setApplicationOrderId(null)} onSubmitted={() => void fetchOrders()} />
       {user?.role === 'designer' && <DesignerClaimEligibilityBanner readiness={claimReadiness} href="/designer/profile" />}
       {/* 顶部标题与派单按钮 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-6 rounded-3xl bg-white/70 border border-white/80 shadow-sm backdrop-blur-md">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-white shadow-md shadow-orange-500/20">
+            <div className="w-8 h-8 rounded-xl role-primary-gradient flex items-center justify-center text-white shadow-md shadow-[color-mix(in_srgb,var(--role-primary)_20%,transparent)]">
               <ShoppingBag className="w-4 h-4" />
             </div>
             <h1 className="text-xl font-bold text-slate-800 tracking-tight">
-              设计接单与派单大厅
+              {user?.role === 'advertiser' ? '发单大厅' : '接单大厅'}
             </h1>
-            <Badge variant="outline" className="bg-amber-50 text-amber-600 border-amber-200 text-[11px]">
-              每张图片专属描述
-            </Badge>
           </div>
         </div>
 
@@ -418,12 +392,9 @@ export default function OrderMarketPage() {
             <ModalContent className="max-w-3xl bg-white rounded-3xl p-6 max-h-[85vh] overflow-y-auto">
               <ModalHeader>
                 <DialogTitle className="text-base font-bold text-slate-800 flex items-center gap-2">
-                  <PlusCircle className="w-5 h-5 text-blue-600" />
-                  发布多图片需求组定制派单
+                  <PlusCircle className="w-5 h-5 text-[var(--role-primary)]" />
+                  发布订单
                 </DialogTitle>
-                <CardDescription className="text-xs text-slate-500">
-                  支持按规格增加多个图片组，上传的每一张参考图都可以填写针对性的设计要求描述
-                </CardDescription>
               </ModalHeader>
 
               <form onSubmit={handlePublishOrder} className="space-y-4 mt-2">
@@ -432,7 +403,7 @@ export default function OrderMarketPage() {
                   <label className="text-xs font-semibold text-slate-700">需求标题 <span aria-hidden="true" className="text-rose-500">*</span></label>
                   <Input
                     required
-                    placeholder="如：2026秋冬轻奢羽绒服天猫首屏主图全套5张定制"
+                    placeholder="需求标题"
                     value={formData.title}
                     onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                     className="text-xs rounded-xl h-9"
@@ -442,12 +413,12 @@ export default function OrderMarketPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-700">设计类目</label>
-                    <Select.Root value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{CATEGORIES.filter((category) => category !== '全部').map((category) => <Select.Item key={category} value={category} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{category}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
+                    <Select.Root value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-[var(--role-primary-border)] focus:ring-2 focus:ring-[var(--role-primary-border)]"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{CATEGORIES.filter((category) => category !== '全部').map((category) => <Select.Item key={category} value={category} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>{category}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-700">投放电商平台</label>
-                    <Select.Root value={formData.platform} onValueChange={(value) => setFormData({ ...formData, platform: value as PlatformType })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{PLATFORMS.map((platform) => <Select.Item key={platform.id} value={platform.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{platform.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
+                    <Select.Root value={formData.platform} onValueChange={(value) => setFormData({ ...formData, platform: value as PlatformType })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-[var(--role-primary-border)] focus:ring-2 focus:ring-[var(--role-primary-border)]"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport>{PLATFORMS.map((platform) => <Select.Item key={platform.id} value={platform.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>{platform.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
                 </div>
 
@@ -469,12 +440,12 @@ export default function OrderMarketPage() {
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-700">交付周期</label>
-                    <Select.Root value={formData.deadlineDays} onValueChange={(value) => setFormData({ ...formData, deadlineDays: value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="1" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>24 小时极速交付</Select.ItemText></Select.Item><Select.Item value="2" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>2 天交付</Select.ItemText></Select.Item><Select.Item value="3" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>3 天标准交付</Select.ItemText></Select.Item><Select.Item value="5" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>5 天深度打磨</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
+                    <Select.Root value={formData.deadlineDays} onValueChange={(value) => setFormData({ ...formData, deadlineDays: value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-[var(--role-primary-border)] focus:ring-2 focus:ring-[var(--role-primary-border)]"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="1" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>24 小时极速交付</Select.ItemText></Select.Item><Select.Item value="2" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>2 天交付</Select.ItemText></Select.Item><Select.Item value="3" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>3 天标准交付</Select.ItemText></Select.Item><Select.Item value="5" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>5 天深度打磨</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-700">加急程度</label>
-                    <Select.Root value={formData.urgency} onValueChange={(value) => setFormData({ ...formData, urgency: value as any })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="normal" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>标准单</Select.ItemText></Select.Item><Select.Item value="urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>加急单</Select.ItemText></Select.Item><Select.Item value="super_urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>特急单 (置顶)</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
+                    <Select.Root value={formData.urgency} onValueChange={(value) => setFormData({ ...formData, urgency: value as any })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-[var(--role-primary-border)] focus:ring-2 focus:ring-[var(--role-primary-border)]"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="normal" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>标准单</Select.ItemText></Select.Item><Select.Item value="urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>加急单</Select.ItemText></Select.Item><Select.Item value="super_urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>特急单 (置顶)</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
                   </div>
                 </div>
 
@@ -482,7 +453,7 @@ export default function OrderMarketPage() {
                 <div className="space-y-3 pt-2">
                   <div className="flex items-center justify-between pb-1 border-b border-slate-100">
                     <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Layers className="w-4 h-4 text-blue-600" />
+                      <Layers className="w-4 h-4 text-[var(--role-primary)]" />
                       图片需求组清单 ({formData.imageRequirementGroups.length} 组)
                     </label>
                     <Button
@@ -490,7 +461,7 @@ export default function OrderMarketPage() {
                       variant="outline"
                       size="sm"
                       onClick={handleAddImageGroup}
-                      className="text-[11px] h-7 rounded-xl border-dashed border-blue-300 text-blue-600 hover:bg-blue-50"
+                      className="text-[11px] h-7 rounded-xl border-dashed border-[var(--role-primary-border)] text-[var(--role-primary)] hover:bg-[var(--role-primary-soft)] hover:text-[var(--role-primary)] hover:border-[var(--role-primary-border)] focus-visible:ring-[var(--role-primary-border)]"
                     >
                       <Plus className="w-3.5 h-3.5 mr-1" />
                       增加图片组
@@ -512,7 +483,7 @@ export default function OrderMarketPage() {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2 flex-1">
-                              <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[10px] flex items-center justify-center">
+                              <span className="w-5 h-5 rounded-full bg-[var(--role-primary)] text-white font-bold text-[10px] flex items-center justify-center">
                                 {gIdx + 1}
                               </span>
                               <Input
@@ -522,14 +493,14 @@ export default function OrderMarketPage() {
                                   updated[gIdx].name = e.target.value;
                                   setFormData({ ...formData, imageRequirementGroups: updated });
                                 }}
-                                placeholder="组名称 (如：1:1白底图)"
+                                placeholder="组名称"
                                 className="text-xs rounded-xl h-8 bg-white font-semibold max-w-xs"
                               />
                               <Select.Root value={group.groupType} onValueChange={(value) => {
                                   const updated = [...formData.imageRequirementGroups];
                                   updated[gIdx].groupType = value as ImageGroupType;
                                   setFormData({ ...formData, imageRequirementGroups: updated });
-                                }}><Select.Trigger className="flex h-8 w-36 items-center justify-between rounded-xl border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-3.5 w-3.5 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="main_1_1" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>1:1 方形主图</Select.ItemText></Select.Item><Select.Item value="main_3_4" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>3:4 竖版长图</Select.ItemText></Select.Item><Select.Item value="detail" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>商详长图切片</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
+                                }}><Select.Trigger className="flex h-8 w-36 items-center justify-between rounded-xl border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-[var(--role-primary-border)] focus:ring-2 focus:ring-[var(--role-primary-border)]"><Select.Value /><Select.Icon><ChevronDown className="h-3.5 w-3.5 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="main_1_1" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>1:1 方形主图</Select.ItemText></Select.Item><Select.Item value="main_3_4" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>3:4 竖版长图</Select.ItemText></Select.Item><Select.Item value="detail" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>商详长图切片</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
                             </div>
 
                             <div className="flex items-center gap-2">
@@ -568,7 +539,7 @@ export default function OrderMarketPage() {
                           <div className="space-y-2 pt-1">
                             <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600">
                               <span>参考样例图与单图描述清单</span>
-                              <label className="text-blue-600 hover:underline flex items-center gap-1 cursor-pointer font-bold">
+                              <label className="text-[var(--role-primary)] hover:underline flex items-center gap-1 cursor-pointer font-bold">
                                 {uploadingGroupIndex === gIdx ? (
                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                 ) : (
@@ -586,7 +557,7 @@ export default function OrderMarketPage() {
 
                             {imageItems.length === 0 ? (
                               <div className="p-3 bg-white/60 rounded-xl border border-dashed border-slate-200 text-center text-[11px] text-slate-400">
-                                暂无参考图，点击上方“上传参考图”为本组添加样例
+                                暂无参考图
                               </div>
                             ) : (
                               <div className="space-y-2">
@@ -615,7 +586,7 @@ export default function OrderMarketPage() {
                                         </Button>
                                       </div>
                                       <Input
-                                        placeholder="如：借鉴此图的金属反光质感 / 学习左侧卖点文字排版层级..."
+                                        placeholder="参考图说明"
                                         value={item.description || ''}
                                         onChange={(e) => handleUpdateImageDescription(gIdx, imgIdx, e.target.value)}
                                         className="text-xs h-8 bg-slate-50/80 rounded-lg border-slate-200"
@@ -636,7 +607,7 @@ export default function OrderMarketPage() {
                             <div className="space-y-1">
                               {group.referenceLinks.map((link, lIdx) => (
                                 <div key={lIdx} className="flex items-center justify-between gap-2 p-1.5 px-2 bg-white rounded-xl border border-slate-200 text-xs">
-                                  <div className="flex items-center gap-1.5 truncate text-blue-600">
+                                  <div className="flex items-center gap-1.5 truncate text-[var(--role-primary)]">
                                     <ExternalLink className="w-3 h-3 shrink-0" />
                                     <a href={link} target="_blank" rel="noreferrer" className="truncate hover:underline text-[11px]">
                                       {link}
@@ -657,7 +628,7 @@ export default function OrderMarketPage() {
                               <div className="flex items-center gap-2">
                                 <Input
                                   id={`link_input_${gIdx}`}
-                                  placeholder="输入参考链接如 https://dribbble.com/..."
+                                  placeholder="参考链接"
                                   className="text-xs h-7 rounded-xl bg-white"
                                   onKeyDown={(e) => {
                                     if (e.key === 'Enter') {
@@ -694,10 +665,9 @@ export default function OrderMarketPage() {
 
                 {/* 4. 整体文案诉求与设计说明 */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-700">整体文案诉求与设计说明</label>
+                  <label className="text-xs font-semibold text-slate-700">设计要求</label>
                   <Textarea
                     rows={2}
-                    placeholder="简述风格基调、促销利益点文案、品牌调性..."
                     value={formData.requirements}
                     onChange={(e) => setFormData({ ...formData, requirements: e.target.value })}
                     className="text-xs rounded-xl"
@@ -708,8 +678,8 @@ export default function OrderMarketPage() {
                   <Button type="button" variant="outline" onClick={() => setIsPublishOpen(false)} className="rounded-xl text-xs">
                     取消
                   </Button>
-                  <Button type="submit" disabled={submitting} className="rounded-xl text-xs bg-blue-600 hover:bg-blue-700 text-white">
-                    {submitting ? '发布中...' : '确认派发多组需求'}
+                  <Button type="submit" disabled={submitting} className="rounded-xl text-xs role-primary-bg text-white">
+                    {submitting ? '发布中...' : '发布订单'}
                   </Button>
                 </ModalFooter>
               </form>
@@ -725,9 +695,9 @@ export default function OrderMarketPage() {
             <button
               key={cat}
               onClick={() => setActiveCategory(cat)}
-              className={`px-4 py-2 rounded-2xl text-xs font-semibold transition ${
+              className={`px-4 py-2 rounded-2xl text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--role-primary-border)] ${
                 activeCategory === cat
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  ? 'bg-[var(--role-primary)] text-white shadow-md shadow-[color-mix(in_srgb,var(--role-primary)_20%,transparent)]'
                   : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200/70'
               }`}
             >
@@ -735,7 +705,7 @@ export default function OrderMarketPage() {
             </button>
           ))}
         </div>
-        <div className="text-xs text-slate-500 font-medium">已加载 <b className="text-blue-600">{filteredOrders.length}</b> 个需求</div>
+        <div className="text-xs text-slate-500 font-medium"><b className="text-[var(--role-primary)]">{filteredOrders.length}</b> 个需求</div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/70 bg-white/80 p-3 shadow-sm">
@@ -745,13 +715,13 @@ export default function OrderMarketPage() {
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && setSearchKeyword(keyword.trim())}
-            placeholder="搜索订单号、标题、需求说明或发布方"
+            placeholder="搜索订单"
             className="h-9 rounded-xl pl-9 text-xs"
           />
         </div>
-        <Select.Root value={activePlatform} onValueChange={setActivePlatform}><Select.Trigger className="flex h-9 w-32 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>全部平台</Select.ItemText></Select.Item>{PLATFORMS.map((platform) => <Select.Item key={platform.id} value={platform.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{platform.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
-        <Select.Root value={activeUrgency} onValueChange={setActiveUrgency}><Select.Trigger className="flex h-9 w-32 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>全部时效</Select.ItemText></Select.Item><Select.Item value="normal" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>标准单</Select.ItemText></Select.Item><Select.Item value="urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>加急单</Select.ItemText></Select.Item><Select.Item value="super_urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>特急单</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
-        <Button onClick={() => setSearchKeyword(keyword.trim())} className="h-9 rounded-xl bg-slate-800 px-4 text-xs text-white hover:bg-slate-700">查询</Button>
+        <Select.Root value={activePlatform} onValueChange={setActivePlatform}><Select.Trigger className="flex h-9 w-32 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-[var(--role-primary-border)] focus:ring-2 focus:ring-[var(--role-primary-border)]"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>全部平台</Select.ItemText></Select.Item>{PLATFORMS.map((platform) => <Select.Item key={platform.id} value={platform.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>{platform.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
+        <Select.Root value={activeUrgency} onValueChange={setActiveUrgency}><Select.Trigger className="flex h-9 w-32 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-[var(--role-primary-border)] focus:ring-2 focus:ring-[var(--role-primary-border)]"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="all" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>全部时效</Select.ItemText></Select.Item><Select.Item value="normal" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>标准单</Select.ItemText></Select.Item><Select.Item value="urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>加急单</Select.ItemText></Select.Item><Select.Item value="super_urgent" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>特急单</Select.ItemText></Select.Item></Select.Viewport></Select.Content></Select.Portal></Select.Root>
+        <Button onClick={() => setSearchKeyword(keyword.trim())} className="h-9 rounded-xl role-primary-bg px-4 text-xs text-white">查询</Button>
       </div>
 
       {/* 接单卡片列表 */}
@@ -789,7 +759,7 @@ export default function OrderMarketPage() {
                         <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-200">
                           {order.category}
                         </Badge>
-                        <Badge variant="secondary" className="text-[10px] bg-blue-50 text-blue-600 border-blue-100">
+                        <Badge variant="secondary" className="text-[10px] bg-[var(--role-primary-soft)] text-[var(--role-primary)] border-[var(--role-primary-border)]">
                           {groupsCount}组图片
                         </Badge>
                       </div>
@@ -804,7 +774,7 @@ export default function OrderMarketPage() {
                         </span>
                       )}
                     </div>
-                    <h3 className="font-bold text-xs text-slate-800 line-clamp-2 group-hover:text-blue-600 transition">
+                    <h3 className="font-bold text-xs text-slate-800 line-clamp-2 group-hover:text-[var(--role-primary)] transition">
                       {order.title}
                     </h3>
                   </div>
@@ -840,18 +810,18 @@ export default function OrderMarketPage() {
                   )}
 
                   {/* 需求文案 */}
-                  <div className="px-2.5 pb-1.5">
+                  {order.requirements && <div className="px-2.5 pb-1.5">
                     <p className="text-[11px] text-slate-500 line-clamp-2 leading-snug bg-slate-50/70 p-1.5 rounded-lg">
-                      {order.requirements || '发布方已设定单图专属描述，请接单后查阅图例及外链。'}
+                      {order.requirements}
                     </p>
-                  </div>
+                  </div>}
                 </div>
 
                   {/* 卡片底部操作与金额 */}
                 <div className="p-2.5 pt-1.5 border-t border-slate-100 bg-slate-50/40">
                   <div className="flex items-center justify-between mb-2 text-xs">
                     <div>
-                      <div className="text-[10px] text-slate-400">订单价格</div>
+                      <div className="text-[10px] text-slate-400">预计到手收入</div>
                     <div className="font-extrabold text-sm text-emerald-600 font-mono">
                         ¥{order.designerPayout || order.budget}
                       </div>
@@ -867,10 +837,10 @@ export default function OrderMarketPage() {
                   <Button
                     disabled={user?.role === 'designer' && (claimReadiness.loading || !claimReadiness.eligibility?.canClaim)}
                     onClick={(e) => { e.stopPropagation(); handleClaimOrder(order.id); }}
-                    className="w-full rounded-xl text-xs h-8 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md shadow-blue-500/20 gap-1.5 font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-full rounded-xl text-xs h-8 role-primary-bg text-white shadow-sm gap-1.5 font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Coins className="w-4 h-4" />
-                    立即抢单接取
+                    申请接单
                     <ArrowUpRight className="w-3.5 h-3.5 ml-auto" />
                   </Button>
                 </div>
@@ -880,7 +850,7 @@ export default function OrderMarketPage() {
         />
       )}
       <div ref={loadMoreRef} className="h-12 py-3 text-center text-xs text-slate-400">
-        {loadingMore ? '正在加载更多...' : hasMore ? '下拉加载更多' : filteredOrders.length > 0 ? '已加载全部需求' : ''}
+        {loadingMore ? '正在加载更多...' : !hasMore && filteredOrders.length > 0 ? '已加载全部需求' : ''}
       </div>
 
       <Modal open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>
@@ -890,6 +860,7 @@ export default function OrderMarketPage() {
               <ModalHeader>
                 <DialogTitle className="text-base text-slate-800">{selectedOrder.title}</DialogTitle>
                 <CardDescription className="text-xs">{selectedOrder.orderNo} · {selectedOrder.creatorName}</CardDescription>
+                <EvaluationRating userId={selectedOrder.creatorId} />
               </ModalHeader>
               <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
                 <div>设计类目：<b>{selectedOrder.category}</b></div>
@@ -898,7 +869,7 @@ export default function OrderMarketPage() {
                 <div>交付时间：<b>{new Date(selectedOrder.deadline).toLocaleString('zh-CN')}</b></div>
                 <div>PSD 源文件：<b className={selectedOrder.requiresPsd ? 'text-rose-600' : 'text-slate-600'}>{selectedOrder.requiresPsd ? '需要交付' : '不需要'}</b></div>
               </div>
-              <div className="rounded-2xl bg-slate-50 p-3 text-xs leading-6 text-slate-600 whitespace-pre-wrap">{selectedOrder.requirements || '暂无补充说明'}</div>
+              {selectedOrder.requirements && <div className="rounded-2xl bg-slate-50 p-3 text-xs leading-6 text-slate-600 whitespace-pre-wrap">{selectedOrder.requirements}</div>}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-slate-800">图片需求组清单</h3>
@@ -907,20 +878,20 @@ export default function OrderMarketPage() {
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">作品审核流</label>
-                  <Select.Root value={formData.reviewRuleId || 'unselected'} onValueChange={(value) => setFormData({ ...formData, reviewRuleId: value === 'unselected' ? '' : value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-500/15"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="unselected" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>暂不绑定（后续补充）</Select.ItemText></Select.Item>{reviewRules.map((rule) => <Select.Item key={rule.id} value={rule.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-slate-100"><Select.ItemText>{rule.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
+                  <Select.Root value={formData.reviewRuleId || 'unselected'} onValueChange={(value) => setFormData({ ...formData, reviewRuleId: value === 'unselected' ? '' : value })}><Select.Trigger className="flex h-9 w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-800 outline-none focus:border-[var(--role-primary-border)] focus:ring-2 focus:ring-[var(--role-primary-border)]"><Select.Value /><Select.Icon><ChevronDown className="h-4 w-4 text-slate-400" /></Select.Icon></Select.Trigger><Select.Portal><Select.Content position="popper" className="z-50 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-md"><Select.Viewport><Select.Item value="unselected" className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>未绑定</Select.ItemText></Select.Item>{reviewRules.map((rule) => <Select.Item key={rule.id} value={rule.id} className="cursor-pointer rounded-lg px-2 py-1.5 text-xs outline-none hover:bg-[var(--role-primary-soft)] data-[highlighted]:bg-[var(--role-primary-soft)] data-[state=checked]:text-[var(--role-primary)]"><Select.ItemText>{rule.name}</Select.ItemText></Select.Item>)}</Select.Viewport></Select.Content></Select.Portal></Select.Root>
                 </div>
                 {(selectedOrder.imageRequirementGroups || []).length > 0 ? <Tabs key={selectedOrder.id} defaultValue="order-group-0" className="min-w-0">
                   <TabsList className="flex h-9 w-full justify-start gap-1 overflow-x-auto rounded-xl bg-slate-50 p-1">
-                    {selectedOrder.imageRequirementGroups!.map((group, index) => <TabsTrigger key={group.id || index} value={`order-group-${index}`} className="h-7 max-w-56 flex-none rounded-lg px-3 text-xs text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm">{group.name || `第 ${index + 1} 组`}<span className="ml-1 text-[10px] text-slate-400">{group.imageItems?.length || group.quantity || 0} 张</span></TabsTrigger>)}
+                    {selectedOrder.imageRequirementGroups!.map((group, index) => <TabsTrigger key={group.id || index} value={`order-group-${index}`} className="h-7 max-w-56 flex-none rounded-lg px-3 text-xs text-slate-500 data-[state=active]:bg-white data-[state=active]:text-[var(--role-primary-dark)] data-[state=active]:shadow-sm focus-visible:border-[var(--role-primary-border)] focus-visible:ring-[var(--role-primary-border)] focus-visible:outline-[var(--role-primary)]">{group.name || `第 ${index + 1} 组`}<span className="ml-1 text-[10px] text-slate-400">{group.imageItems?.length || group.quantity || 0} 张</span></TabsTrigger>)}
                   </TabsList>
                   {selectedOrder.imageRequirementGroups!.map((group, index) => {
                     const imageItems = group.imageItems?.length ? group.imageItems : (group.materialImages || []).map((materialImage, imageIndex) => ({ id: `${group.id}-${imageIndex}`, materialImage, description: imageIndex === 0 ? group.description : '', referenceImages: imageIndex === 0 ? group.referenceImages || [] : [], referenceLinks: imageIndex === 0 ? group.referenceLinks || [] : [], referenceLinkItems: undefined, referenceLinkDescription: undefined }));
-                    return <TabsContent key={group.id || index} value={`order-group-${index}`} className="mt-2"><div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><div className="flex items-start justify-between gap-3"><div><div className="text-xs font-semibold text-slate-800">{index + 1}. {group.name}</div><div className="mt-1 text-[11px] text-slate-500">{group.quantity} 张 · {group.dimensions || '标准尺寸'} · {group.groupType}</div></div><span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] text-blue-600">需求组</span></div>{group.description && <p className="mt-2 text-[11px] leading-5 text-slate-500">{group.description}</p>}{imageItems.length > 0 && <div className="mt-3 space-y-2"><p className="text-[11px] font-semibold text-slate-600">每张图片需求</p>{imageItems.map((item, imageIndex) => <div key={item.id || imageIndex} className="rounded-xl bg-slate-50/70 p-2.5"><div className="mb-2 flex items-center justify-between"><span className="text-[11px] font-semibold text-slate-700">第 {imageIndex + 1} 张</span><span className="text-[10px] text-slate-400">{group.dimensions || group.groupType}</span></div><div className="grid gap-2 sm:grid-cols-2">{item.materialImage && <button type="button" onClick={() => setPreviewImage({ url: item.materialImage!, label: `${group.name}素材原图${imageIndex + 1}` })} className="text-left"><p className="mb-1 text-[10px] font-medium text-slate-500">素材原图</p><AuthenticatedImage src={item.materialImage} alt={`${group.name}素材原图${imageIndex + 1}`} className="aspect-square w-full rounded-lg border border-slate-200 object-cover" /></button>}{item.description && <div className="sm:col-span-2"><p className="mb-1 text-[10px] font-medium text-slate-500">设计要点</p><p className="whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-[11px] leading-5 text-slate-600">{item.description}</p></div>}<ReferenceLinkItemsDetail item={item} compact onPreview={(url, label) => setPreviewImage({ url, label })} /></div></div>)}</div>}</div></TabsContent>;
+                    return <TabsContent key={group.id || index} value={`order-group-${index}`} className="mt-2"><div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"><div className="flex items-start justify-between gap-3"><div><div className="text-xs font-semibold text-slate-800">{index + 1}. {group.name}</div><div className="mt-1 text-[11px] text-slate-500">{group.quantity} 张 · {group.dimensions || '标准尺寸'} · {group.groupType}</div></div><span className="rounded-full bg-[var(--role-primary-soft)] px-2 py-0.5 text-[10px] text-[var(--role-primary)]">需求组</span></div>{group.description && <p className="mt-2 text-[11px] leading-5 text-slate-500">{group.description}</p>}{imageItems.length > 0 && <div className="mt-3 space-y-2"><p className="text-[11px] font-semibold text-slate-600">每张图片需求</p>{imageItems.map((item, imageIndex) => <div key={item.id || imageIndex} className="rounded-xl bg-slate-50/70 p-2.5"><div className="mb-2 flex items-center justify-between"><span className="text-[11px] font-semibold text-slate-700">第 {imageIndex + 1} 张</span><span className="text-[10px] text-slate-400">{group.dimensions || group.groupType}</span></div><div className="grid gap-2 sm:grid-cols-2">{item.materialImage && <button type="button" onClick={() => setPreviewImage({ url: item.materialImage!, label: `${group.name}素材原图${imageIndex + 1}` })} className="text-left"><p className="mb-1 text-[10px] font-medium text-slate-500">素材原图</p><AuthenticatedImage src={item.materialImage} alt={`${group.name}素材原图${imageIndex + 1}`} className="aspect-square w-full rounded-lg border border-slate-200 object-cover" /></button>}{item.description && <div className="sm:col-span-2"><p className="mb-1 text-[10px] font-medium text-slate-500">设计要点</p><p className="whitespace-pre-wrap break-words rounded-lg bg-white p-2 text-[11px] leading-5 text-slate-600">{item.description}</p></div>}<ReferenceLinkItemsDetail item={item} compact onPreview={(url, label) => setPreviewImage({ url, label })} /></div></div>)}</div>}</div></TabsContent>;
                   })}
                 </Tabs> : <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-slate-400">暂无图片需求详情</div>}
               </div>
               <ModalFooter>
-                <Button disabled={user?.role === 'designer' && (claimReadiness.loading || !claimReadiness.eligibility?.canClaim)} onClick={() => { setSelectedOrder(null); handleClaimOrder(selectedOrder.id); }} className="rounded-xl bg-blue-600 text-xs text-white disabled:opacity-50">立即抢单接取</Button>
+                <Button disabled={user?.role === 'designer' && (claimReadiness.loading || !claimReadiness.eligibility?.canClaim)} onClick={() => { setSelectedOrder(null); handleClaimOrder(selectedOrder.id); }} className="rounded-xl role-primary-bg text-xs text-white disabled:opacity-50">申请接单</Button>
               </ModalFooter>
             </>
           )}

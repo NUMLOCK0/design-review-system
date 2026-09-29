@@ -1,4 +1,6 @@
 'use client';
+import { OrderEvaluationEntry } from '@/components/order-evaluations';
+import { BrandOrderApplications } from '@/components/order-applications';
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
@@ -83,6 +85,7 @@ export default function AdvertiserOrdersPage() {
   const [totalOrders, setTotalOrders] = useState(0);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({ all: 0 });
   const [inviteOrder, setInviteOrder] = useState<DesignOrder | null>(null);
+  const [applicationsOrder, setApplicationsOrder] = useState<DesignOrder | null>(null);
   const [detailOrder, setDetailOrder] = useState<DesignOrder | null>(null);
   const [operatingId, setOperatingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -121,6 +124,16 @@ export default function AdvertiserOrdersPage() {
     }
   };
 
+  useEffect(() => {
+    const orderId = new URLSearchParams(window.location.search).get('orderId');
+    if (!orderId) return;
+    fetchWithAuth(`/design-orders/${encodeURIComponent(orderId)}`).then((response) => response.json()).then((result) => { if (result.success) setApplicationsOrder(result.data); });
+  }, []);
+  useEffect(() => {
+    const refresh = () => void loadOrders({ reset: true, nextPage: 1 });
+    window.addEventListener('messages-realtime', refresh);
+    return () => window.removeEventListener('messages-realtime', refresh);
+  }, [statusFilter, keyword]);
   useEffect(() => { void loadOrders({ reset: true, nextPage: 1 }); }, [statusFilter, keyword]);
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -324,6 +337,8 @@ export default function AdvertiserOrdersPage() {
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap justify-end gap-1.5 border-t border-slate-100 pt-2">
+                {order.paymentStatus === 'paid' && <OrderEvaluationEntry orderId={order.id} compact />}
+                <Button variant="outline" onClick={() => setApplicationsOrder(order)} className="h-8 rounded-xl text-xs">接单申请{order.pendingApplicationCount ? ` (${order.pendingApplicationCount})` : ''}</Button>
                 <Button variant="outline" onClick={() => setDetailOrder(order)} className="h-8 rounded-xl text-xs">查看详情</Button>
                 {canEdit && <Link href={`/advertiser/orders/new?edit=${encodeURIComponent(order.id)}`}><Button variant="outline" className="h-8 rounded-xl text-xs">编辑订单</Button></Link>}
                 {canPayDeposit && <Button onClick={() => startPayment(order, 'deposit')} disabled={operatingId === order.id} className="h-8 rounded-xl bg-orange-500 text-xs text-white hover:bg-orange-600">支付定金 ¥{order.depositAmount?.toFixed(2)}</Button>}
@@ -342,10 +357,12 @@ export default function AdvertiserOrdersPage() {
         <div ref={loadMoreRef} className="h-1" />
       </div>
 
+      <Drawer direction="right" open={Boolean(applicationsOrder)} onOpenChange={(open) => !open && setApplicationsOrder(null)}><DrawerContent className="h-full max-h-full w-full max-w-[calc(100vw-1rem)] overflow-hidden rounded-l-3xl bg-white [--drawer-width:720px]"><DrawerHeader className="border-b border-slate-100 p-5"><DrawerTitle>{applicationsOrder?.title} · 接单申请</DrawerTitle><DrawerDescription>查看设计师作品与报价，确认后正式接单</DrawerDescription></DrawerHeader><div className="min-h-0 flex-1 overflow-y-auto p-4">{applicationsOrder && <BrandOrderApplications order={applicationsOrder} onUpdated={() => { void loadOrders(); fetchWithAuth(`/design-orders/${applicationsOrder.id}`).then((response) => response.json()).then((result) => { if (result.success) setApplicationsOrder(result.data); }); }} />}</div></DrawerContent></Drawer>
       <Modal open={Boolean(detailOrder)} onOpenChange={(open) => !open && setDetailOrder(null)}>
         <ModalContent className="max-h-[85vh] max-w-3xl overflow-y-auto rounded-3xl bg-white">
           <ModalHeader><DialogTitle>{detailOrder?.title}</DialogTitle><DialogDescription>{detailOrder?.orderNo} · {detailOrder?.category}</DialogDescription></ModalHeader>
           {detailOrder && <OrderRequirementsDetail order={detailOrder} />}
+          {detailOrder?.paymentStatus === 'paid' && <div className="mt-4"><OrderEvaluationEntry orderId={detailOrder.id} /></div>}
         </ModalContent>
       </Modal>
 

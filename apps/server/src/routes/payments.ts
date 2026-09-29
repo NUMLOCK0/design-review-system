@@ -1,3 +1,5 @@
+import { settlePaidOrderIncome } from '../services/order-wallet-income.js';
+import { syncOrderEvaluation } from '../services/order-evaluations.js';
 import { Router } from 'express';
 import { authenticate, requireRoles, type AuthUserPayload } from '../middleware/auth.middleware.js';
 import { activatePublishedOrder, designOrders } from './design-orders.js';
@@ -50,7 +52,7 @@ async function finishPayment(fields: Record<string, unknown>) {
     await persistPaymentEvent({ ...paymentEvent, status: 'failed' });
     return { ok: false as const, message: '支付金额校验失败' };
   }
-  if (isDeposit && order.paymentStatus !== 'deposit_paid' && order.paymentStatus !== 'paid') {
+  if (isDeposit && !['deposit_paid', 'balance_pending', 'paid'].includes(order.paymentStatus || '')) {
     order.paymentStatus = 'deposit_paid';
     order.depositTradeNo = String(fields.trade_no || '');
     order.depositPaidAt = new Date().toISOString();
@@ -83,6 +85,10 @@ async function finishPayment(fields: Record<string, unknown>) {
     await persistPaymentEvent({ ...paymentEvent, status: 'success' });
   } else {
     await persistPaymentEvent({ ...paymentEvent, status: 'duplicate' });
+  }
+  if (order.paymentStatus === 'paid') {
+    await settlePaidOrderIncome(order.id);
+    await syncOrderEvaluation(order.id);
   }
   return { ok: true as const, order };
 }

@@ -28,6 +28,13 @@ function publishMessageUpdate(recipientId: string, update: Omit<MessageUpdate, '
   for (const response of subscribers) sendMessageUpdate(response, payload);
 }
 
+// Evaluation notifications are inserted in the same transaction as their business state.
+export function publishStoredMessage(message: SiteMessage) {
+  if (!messages.some((item) => item.id === message.id)) messages.unshift(message);
+  publishMessageUpdate(message.recipientId, { kind: 'new', type: message.type, messageId: message.id });
+  pushWecomMessage({ type: message.type, title: message.title, content: message.content, link: message.link, createdAt: message.createdAt });
+}
+
 export function notifyUser(recipientId: string | undefined, input: { type: SiteMessageType; title: string; content: string; link?: string; senderName?: string }) {
   if (!recipientId) return;
   const message: SiteMessage = {
@@ -42,9 +49,10 @@ export function notifyUser(recipientId: string | undefined, input: { type: SiteM
     createdAt: new Date().toISOString(),
   };
   messages.unshift(message);
-  void persistSiteMessage(message);
-  publishMessageUpdate(recipientId, { kind: 'new', type: message.type, messageId: message.id });
-  pushWecomMessage({ type: message.type, title: message.title, content: message.content, link: message.link, createdAt: message.createdAt });
+  return persistSiteMessage(message).then(() => {
+    publishMessageUpdate(recipientId, { kind: 'new', type: message.type, messageId: message.id });
+    pushWecomMessage({ type: message.type, title: message.title, content: message.content, link: message.link, createdAt: message.createdAt });
+  });
 }
 
 messagesRouter.get('/events', authenticate, (req, res) => {

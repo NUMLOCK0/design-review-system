@@ -31,6 +31,7 @@ const moduleLabels: Record<string, string> = {
   order_audit: '订单审核',
   review_rules: '审核规则',
   designer_moderation: '设计师审核',
+  order_evaluations: '合作评价',
   withdrawals: '提现审核',
   service_tasks: '客服工作台'
 };
@@ -46,7 +47,8 @@ const actionLabels: Record<string, string> = {
   approve_publication: '通过发布审核',
   reject_publication: '驳回发布审核',
   portfolio_status_change: '作品状态调整',
-  profile_status_change: '主页状态调整'
+  profile_status_change: '主页状态调整',
+  hide: '隐藏评价', restore: '恢复评价', keep: '保留评价'
 };
 
 const modules = [{ value: '', label: '全部模块' }, ...Object.entries(moduleLabels).map(([value, label]) => ({ value, label }))];

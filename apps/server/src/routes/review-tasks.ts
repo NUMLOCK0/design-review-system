@@ -1,3 +1,5 @@
+import { returnAssignedOrderTask } from '../services/order-applications.js';
+import { syncOrderEvaluation } from '../services/order-evaluations.js';
 import { Router } from 'express';
 import type { ReviewTask, ReviewImageGroup, ReviewImage, AnnotationItem } from '@design-review/shared';
 import { authenticate, requireRoles, type AuthUserPayload } from '../middleware/auth.middleware.js';
@@ -158,8 +160,8 @@ reviewTasksRouter.post('/', authenticate, requireRoles('designer'), async (req, 
     sourceFileName: body.sourceFileName,
     sourceFileSize: body.sourceFileSize,
     orderId: orderId || undefined,
-    orderBudget: body.orderBudget,
-    designerPayout: body.designerPayout,
+    orderBudget: order.budget,
+    designerPayout: order.designerPayout,
     submittedAt: body.isDraft ? undefined : new Date().toISOString(),
     groups,
     updatedAt: new Date().toISOString()
@@ -417,55 +419,19 @@ reviewTasksRouter.post('/:id/acceptance', authenticate, requireRoles('advertiser
     task.acceptedById = req.user!.id;
     task.acceptedByName = req.user!.name;
     task.updatedAt = task.acceptedAt;
-    void persistReviewTask(task);
+    await persistReviewTask(task);
     notifyUser(task.designerId, { type: 'review', title: '订单已确认验收', content: `品牌方已确认验收「${task.productName}」，原图与源文件已向品牌方开放下载。`, link: '/review-tasks' });
   }
+  await syncOrderEvaluation(order.id);
   res.json({ code: 200, success: true, message: '验收已确认，现可下载无水印原图与源文件', data: task });
 });
 
 // 9. 设计师退回接单 (从 draft 状态放弃接单，订单重新流回接单广场)
-reviewTasksRouter.post('/:id/return', authenticate, requireRoles('designer'), (req, res) => {
-  const { id } = req.params;
-  const taskIndex = tasks.findIndex(t => t.id === id);
-  if (taskIndex === -1) return res.status(404).json({ code: 404, success: false, message: '任务不存在' });
-
-  const task = tasks[taskIndex];
-  if (task.designerId !== req.user!.id) return res.status(403).json({ code: 403, success: false, message: '无权退回该审核任务' });
-  if (task.status !== 'draft' && task.status !== 'needs_revision') {
-    return res.status(400).json({ code: 400, success: false, message: '当前任务已进入不可撤销审核阶段，无法直接退单' });
-  }
-
-  // 变更任务状态为已退单
-  task.status = 'returned';
-  task.updatedAt = new Date().toISOString();
-
-  // 若关联了原接单需求，将原订单重新释放回开放接单状态 open
-  if (task.orderId) {
-    // 动态查找并恢复订单
-    try {
-      import('./design-orders.js').then(({ designOrders }) => {
-        const order = designOrders?.find((o: any) => o.id === task.orderId);
-        if (order) {
-          order.status = 'open';
-          order.claimedById = undefined;
-          order.claimedByName = undefined;
-          order.claimedAt = undefined;
-          order.taskId = undefined;
-          order.updatedAt = new Date().toISOString();
-          void persistDesignOrder(order);
-        }
-      }).catch(console.error);
-    } catch {}
-  }
-
-  void persistReviewTask(task);
-
-  res.json({
-    code: 200,
-    success: true,
-    message: '已成功退回接单！需求已重新释放回接单大厅，任务已关闭',
-    data: task
-  });
+reviewTasksRouter.post('/:id/return', authenticate, requireRoles('designer'), async (req, res, next) => {
+  try {
+    const task = await returnAssignedOrderTask(String(req.params.id), req.user!);
+    res.json({ code: 200, success: true, message: '任务已退回，订单恢复原预算并重新开放申请', data: task });
+  } catch (error) { next(error); }
 });
 
 
