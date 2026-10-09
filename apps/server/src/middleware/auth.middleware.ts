@@ -11,13 +11,17 @@ if (process.env.NODE_ENV === 'production' && configuredJwtSecret.length < 32) {
 export const JWT_SECRET = configuredJwtSecret || 'local-development-secret-change-me';
 export const AUTH_COOKIE_NAME = 'auth_token';
 
+// The development script can read a .env with NODE_ENV=production. HTTP localhost
+// still needs a non-Secure cookie; deployed start commands keep Secure enabled.
+const secureCookie = () => process.env.NODE_ENV === 'production' && process.env.npm_lifecycle_event !== 'dev';
+
 export function setAuthCookie(res: Response, token: string) {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  const secure = secureCookie() ? '; Secure' : '';
   res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${secure}`);
 }
 
 export function clearAuthCookie(res: Response) {
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  const secure = secureCookie() ? '; Secure' : '';
   res.setHeader('Set-Cookie', `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
 }
 

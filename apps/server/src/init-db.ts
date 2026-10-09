@@ -4,14 +4,7 @@ dotenv.config();
 
 const mysqlUrl = process.env.MYSQL_URL;
 
-if (!mysqlUrl) {
-  console.error('❌ 未找到 MYSQL_URL 配置，请检查 apps/server/.env 文件');
-  process.exit(1);
-}
-
-console.log('🔗 正在连接 MySQL 数据库...');
-
-const ddlStatements = [
+export const ddlStatements = [
   // 1. 用户表
   `CREATE TABLE IF NOT EXISTS users (
     id VARCHAR(64) PRIMARY KEY,
@@ -182,6 +175,7 @@ async function main() {
   let connection;
   try {
     if (!mysqlUrl) throw new Error('缺少 MYSQL_URL 环境变量');
+    console.log('🔗 正在连接 MySQL 数据库...');
     connection = await mysql.createConnection(mysqlUrl);
     console.log('✅ 成功连接至 MySQL 服务器!');
 
@@ -228,4 +222,4 @@ async function main() {
   }
 }
 
-main();
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('/init-db.ts')) void main();

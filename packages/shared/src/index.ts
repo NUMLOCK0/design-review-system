@@ -1,4 +1,7 @@
 // ================= 用户与权限 =================
+export * from './form-config';
+export * from './order-form-presets';
+export * from './collaboration';
 export type UserRole = 'advertiser' | 'designer' | 'customer_service' | 'admin';
 
 export interface User {
@@ -111,6 +114,7 @@ export interface ReviewImage {
   taskId: string;
   groupId: string;
   imageUrl: string;
+  requirementVersionId?: string;
   originalAssetId?: string; // 无水印原图资产，仅在品牌方确认验收后可下载
   thumbnailUrl?: string;
   imageIndex: number;
@@ -151,6 +155,7 @@ export interface ReviewImageGroup {
 export interface ReviewTask {
   id: string;
   taskNo: string;
+  requirementVersionId?: string;
   productName: string;
   sku?: string;
   platform: PlatformType;
@@ -668,5 +673,3 @@ export interface SystemConfig {
   imageTemplates: ImageTemplate[]; // 创建订单时可一键添加的图片分组模板
   updatedAt: string;
 }
-
-

@@ -39,17 +39,20 @@ const PORTAL_NAV_ITEMS: Record<UserInfo['role'], Array<{ href: string; label: st
     // { href: '/advertiser/designers', label: '推荐设计师', icon: Sparkles, disabled: true },
     { href: '/advertiser/dashboard', label: '品牌方工作台', mobileLabel: '工作台', icon: CheckSquare },
     { href: '/advertiser/orders', label: '订单管理', mobileLabel: '订单', icon: ShoppingBag },
+    { href: '/chat', label: '协作消息', mobileLabel: '协作', icon: Bell },
     { href: '/review-tasks', label: '作品审核台', mobileLabel: '审核', icon: CheckSquare },
   ],
   designer: [
     { href: '/order-market', label: '接单与派单大厅', mobileLabel: '订单大厅', icon: ShoppingBag, badge: '热' },
     { href: '/applications', label: '我的接单申请', mobileLabel: '申请', icon: Inbox },
     { href: '/review-tasks', label: '我的任务中心', mobileLabel: '任务', icon: CheckSquare },
+    { href: '/chat', label: '协作消息', mobileLabel: '协作', icon: Bell },
     { href: '/designer/profile', label: '个人主页与作品集', mobileLabel: '作品集', icon: User },
     { href: '/wallet', label: '收益钱包与结算', mobileLabel: '钱包', icon: ShieldCheck, badge: '资金' },
   ],
   customer_service: [
     { href: '/service/dashboard', label: '客服工作台', mobileLabel: '工作台', icon: CheckSquare },
+    { href: '/service/collaboration', label: '协作消息', mobileLabel: '协作', icon: Bell },
     { href: '/service/portfolio-review', label: '作品审核', mobileLabel: '作品审核', icon: ShieldCheck },
     { href: '/service/disputes', label: '纠纷处理中心', mobileLabel: '纠纷', icon: ShieldCheck },
     { href: '/service/evaluations', label: '评价管理', mobileLabel: '评价', icon: ShieldCheck },
@@ -99,6 +102,7 @@ export function PortalNavbar() {
   const userName = user?.name || '未登录';
   const userRole = user?.role || 'designer';
   const isAdmin = userRole === 'admin';
+  const isServiceChat = /^\/service\/collaboration\/[^/]+$/.test(pathname);
   const navItems = PORTAL_NAV_ITEMS[userRole];
   const pageLoginPath = getRoleLoginPathForPath(pathname);
   const loginHref = pathname.startsWith('/login') || pageLoginPath === '/login' ? '/login' : `${pageLoginPath}?redirect=${encodeURIComponent(pathname)}`;
@@ -270,7 +274,7 @@ export function PortalNavbar() {
         </div>
       </div>
     </header>
-    {navItems.length > 0 && <nav aria-label="手机端主导航" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur-md md:hidden" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 8px)' }}>
+    {navItems.length > 0 && !isServiceChat && <nav aria-label="手机端主导航" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur-md md:hidden" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 8px)' }}>
       <div className="mx-auto grid max-w-xl" style={{ gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))` }}>
         {navItems.map((item) => {
           const Icon = item.icon;

@@ -17,7 +17,7 @@ export function OrderModeDropdown({ children }: { children: ReactNode }) {
       <DropdownMenuItem asChild className="cursor-pointer rounded-xl p-0 focus:bg-rose-50">
         <Link href="/advertiser/orders/new/simple" className="flex items-start gap-3 whitespace-normal px-3 py-3">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600"><Sparkles className="h-4 w-4" /></span>
-          <span className="min-w-0"><span className="block text-sm font-semibold text-slate-800">简易发单</span><span className="mt-1 block text-xs leading-5 text-slate-500">填写设计风格、参考链接和基本交付要求，快速发布需求。</span></span>
+          <span className="min-w-0"><span className="block text-sm font-semibold text-slate-800">引导式发单</span><span className="mt-1 block text-xs leading-5 text-slate-500">分步骤填写核心需求，可保存草稿后续继续。</span></span>
         </Link>
       </DropdownMenuItem>
       <DropdownMenuItem asChild className="cursor-pointer rounded-xl p-0 focus:bg-slate-50">

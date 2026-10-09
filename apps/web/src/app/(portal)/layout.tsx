@@ -1,6 +1,7 @@
 import { PortalNavbar } from "@/components/layout/portal-navbar";
 import { RoleTheme } from "@/components/layout/role-theme";
 import { CustomerServiceLauncher } from "@/components/customer-service-launcher";
+import { PortalMain } from "@/components/layout/portal-main";
 
 export default function PortalLayout({
   children,
@@ -11,9 +12,9 @@ export default function PortalLayout({
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col">
       <RoleTheme />
       <PortalNavbar />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-3 pb-28 pt-4 sm:p-6 md:pb-6 lg:p-8">
+      <PortalMain>
         {children}
-      </main>
+      </PortalMain>
       <CustomerServiceLauncher placement="desktop" />
     </div>
   );

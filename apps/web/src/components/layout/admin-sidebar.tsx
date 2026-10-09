@@ -41,7 +41,7 @@ const ALL_ADMIN_NAV_ITEMS: Array<{ href: string; label: string; icon: LucideIcon
 ];
 
 const OPERATIONS_NAV_ITEMS = [
-  { href: '/admin/settings/commission', label: '商业抽成' }, { href: '/admin/settings/operations', label: '运营规则' }, { href: '/admin/settings/publication', label: '发布与质检' }, { href: '/admin/settings/announcement', label: '前台公告' }, { href: '/admin/settings/templates', label: '图片模板' }, { href: '/admin/settings/agreements', label: '协议配置' }, { href: '/admin/settings/customer-service', label: '客服二维码' },
+  { href: '/admin/settings/commission', label: '商业抽成' }, { href: '/admin/settings/operations', label: '运营规则' }, { href: '/admin/settings/publication', label: '发布与质检' }, { href: '/admin/settings/announcement', label: '前台公告' }, { href: '/admin/settings/templates', label: '图片模板' }, { href: '/admin/settings/forms', label: '表单配置' }, { href: '/admin/settings/agreements', label: '协议配置' }, { href: '/admin/settings/customer-service', label: '客服二维码' },
 ];
 
 export function AdminSidebar() {

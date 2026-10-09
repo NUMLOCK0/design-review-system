@@ -12,6 +12,7 @@ if (mysqlUrl) {
   try {
     pool = mysql.createPool({
       uri: mysqlUrl,
+      connectTimeout: 30000,
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,

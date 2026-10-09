@@ -1,37 +1,27 @@
 {
   "pages": [
-    {
-      "path": "pages/index/index",
-      "style": {
-        "navigationBarTitleText": "审核待办中心",
-        "enablePullDownRefresh": true
-      }
-    },
-    {
-      "path": "pages/detail/detail",
-      "style": {
-        "navigationBarTitleText": "设计稿移动审批",
-        "navigationBarBackgroundColor": "#153A3C",
-        "navigationBarTextStyle": "white"
-      }
-    }
+    { "path": "pages/index/index", "style": { "navigationBarTitleText": "品牌协作", "enablePullDownRefresh": true } },
+    { "path": "pages/login/login", "style": { "navigationBarTitleText": "品牌方登录" } },
+    { "path": "pages/chat/chat", "style": { "navigationStyle": "custom", "navigationBarTitleText": "项目沟通", "disableScroll": true } },
+    { "path": "pages/sessions/index", "style": { "navigationBarTitleText": "沟通会话" } },
+    { "path": "pages/sessions/chat", "style": { "navigationStyle": "custom", "navigationBarTitleText": "沟通会话", "disableScroll": true, "enableShareAppMessage": true } },
+    { "path": "pages/invite/join", "style": { "navigationBarTitleText": "加入会话" } },
+    { "path": "pages/forms/detail", "style": { "navigationBarTitleText": "填写需求表单" } },
+    { "path": "pages/forms/templates", "style": { "navigationBarTitleText": "需求模板" } },
+    { "path": "pages/requirements/index", "style": { "navigationBarTitleText": "表单与需求", "enablePullDownRefresh": true } },
+    { "path": "pages/requirements/detail", "style": { "navigationBarTitleText": "需求确认与详情" } },
+    { "path": "pages/reviews/index", "style": { "navigationBarTitleText": "设计成果", "enablePullDownRefresh": true } },
+    { "path": "pages/detail/detail", "style": { "navigationBarTitleText": "设计稿审核" } },
+    { "path": "pages/account/index", "style": { "navigationBarTitleText": "我的账户" } }
   ],
-  "globalStyle": {
-    "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "设计审核系统",
-    "navigationBarBackgroundColor": "#F4FBFA",
-    "backgroundColor": "#F4FBFA"
-  },
+  "globalStyle": { "navigationBarTextStyle": "black", "navigationBarTitleText": "COZI 品牌协作", "navigationBarBackgroundColor": "#E8EFF8", "backgroundColor": "#E8EFF8" },
   "tabBar": {
-    "color": "#94a3b8",
-    "selectedColor": "#2D8C87",
-    "backgroundColor": "#ffffff",
-    "borderStyle": "black",
+    "color": "#64748B", "selectedColor": "#2563EB", "backgroundColor": "#ffffff", "borderStyle": "white",
     "list": [
-      {
-        "pagePath": "pages/index/index",
-        "text": "任务待办"
-      }
+      { "pagePath": "pages/index/index", "text": "工作台" },
+      { "pagePath": "pages/sessions/index", "text": "会话" },
+      { "pagePath": "pages/reviews/index", "text": "设计稿" },
+      { "pagePath": "pages/account/index", "text": "我的" }
     ]
   }
 }

@@ -682,6 +682,7 @@ export default function ReviewTasksPage() {
               </div>
 
               <ModalFooter className="gap-2 mt-2">
+                {detailTask.orderId && (user?.role === 'designer' || user?.role === 'advertiser') && <Link href={`/chat/orders/${encodeURIComponent(detailTask.orderId)}`}><Button variant="outline" className="rounded-xl text-xs">订单沟通</Button></Link>}
                 {detailTask.orderId && detailTask.acceptedAt && <OrderEvaluationEntry orderId={detailTask.orderId} compact />}
                 <Button variant="outline" onClick={() => setShowDetailModal(false)} className="rounded-xl text-xs">
                   关闭

@@ -7,6 +7,7 @@ node_modules/
 dist/
 build/
 .next/
+.next-dev/
 .next-cache-stale/
 out/
 /release/
@@ -24,6 +25,7 @@ apps/server/uploads/
 .env.production.local
 *.env
 !apps/web/.env.example
+!apps/uni-app/.env.example
 /deploy/ssh-config
 
 # Logs
@@ -48,5 +50,6 @@ Thumbs.db
 # Temporary / Cache files
 .turbo/
 .cache/
+*.tsbuildinfo
 temp/
 tmp/

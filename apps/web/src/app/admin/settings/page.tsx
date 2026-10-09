@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { BellRing, FileText, ImageIcon, MessageCircle, Settings2, SlidersHorizontal } from 'lucide-react';
+import { BellRing, FileText, ImageIcon, MessageCircle, Settings2, SlidersHorizontal, ClipboardList } from 'lucide-react';
 
 const items = [
   { href: '/admin/settings/commission', title: '商业抽成配置', desc: '维护各设计类目的尾款服务费率。', icon: SlidersHorizontal, tone: 'bg-indigo-50 text-indigo-600' },
@@ -7,6 +7,7 @@ const items = [
   { href: '/admin/settings/publication', title: '发布与质检规则', desc: '订单审核开关与作品审核标准。', icon: SlidersHorizontal, tone: 'bg-amber-50 text-amber-600' },
   { href: '/admin/settings/announcement', title: '前台公告', desc: '配置设计师接单大厅的运营公告。', icon: BellRing, tone: 'bg-emerald-50 text-emerald-600' },
   { href: '/admin/settings/templates', title: '图片模板配置', desc: '维护订单图片分组、比例和张数模板。', icon: ImageIcon, tone: 'bg-fuchsia-50 text-fuchsia-600' },
+  { href: '/admin/settings/forms', title: '表单配置', desc: '拖拽配置发单表单、字段规则与发布版本。', icon: ClipboardList, tone: 'bg-blue-50 text-blue-600' },
   { href: '/admin/settings/agreements', title: '用户协议与隐私协议', desc: '维护登录页展示的协议正文。', icon: FileText, tone: 'bg-rose-50 text-rose-600' },
   { href: '/admin/settings/customer-service', title: '客服二维码配置', desc: '维护客服资料并选择订单页展示的客服。', icon: MessageCircle, tone: 'bg-cyan-50 text-cyan-600' },
 ];

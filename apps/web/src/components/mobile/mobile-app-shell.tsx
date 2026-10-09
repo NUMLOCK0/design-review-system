@@ -74,7 +74,8 @@ export function MobileAppShell({ children }: { children: React.ReactNode }) {
   const isSecondaryMobilePage = pathname === '/mobile/evaluations' || pathname.startsWith('/mobile/evaluations/') || pathname === '/mobile/service/evaluations' || pathname === '/mobile/applications' || pathname.startsWith('/mobile/designers/') || /\/mobile\/orders\/[^/]+\/applications/.test(pathname) || isReviewFlowsPage || pathname.startsWith('/mobile/tasks/') || pathname === '/mobile/review-submit' || pathname === '/mobile/designer-profile' || pathname === '/mobile/billing' || pathname === '/mobile/messages' || pathname.startsWith('/mobile/messages/') || pathname === '/mobile/disputes' || pathname === '/mobile/service/portfolio-review';
   const pageTitle = pathname === '/mobile' ? '工作台' : pathname.includes('orders') ? (user?.role === 'designer' ? '接单大厅' : '订单管理') : pathname.includes('tasks') ? (user?.role === 'customer_service' ? '客服待办' : '我的任务') : pathname.includes('messages') ? '站内信' : accountRoute ? '个人中心' : '移动工作台';
   const isStandaloneOrderForm = pathname.startsWith('/mobile/orders/new');
-  const isStandalonePage = isStandaloneOrderForm || isSecondaryMobilePage;
+  const isOrderChatPage = /^\/mobile\/orders\/[^/]+\/chat$/.test(pathname);
+  const isStandalonePage = isStandaloneOrderForm || isSecondaryMobilePage || isOrderChatPage;
   const isAdvertiserMessageTab = user?.role === 'advertiser' && pathname === '/mobile/messages';
   const isAdvertiserMainTab = user?.role === 'advertiser' && ['/mobile', '/mobile/orders', '/mobile/messages', '/mobile/profile'].includes(pathname);
 
@@ -99,7 +100,7 @@ export function MobileAppShell({ children }: { children: React.ReactNode }) {
         <Plus className="h-5 w-5" strokeWidth={2.5} />发布
       </Link>
     </div>}
-    {!isStandaloneOrderForm && (!isSecondaryMobilePage || isAdvertiserMessageTab) && <nav aria-label="移动端主导航" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 pb-[max(env(safe-area-inset-bottom),8px)] shadow-[0_-8px_28px_rgba(15,23,42,.06)] backdrop-blur">
+    {!isStandaloneOrderForm && !isOrderChatPage && (!isSecondaryMobilePage || isAdvertiserMessageTab) && <nav aria-label="移动端主导航" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 pb-[max(env(safe-area-inset-bottom),8px)] shadow-[0_-8px_28px_rgba(15,23,42,.06)] backdrop-blur">
       <div className="mx-auto grid h-[62px] max-w-xl grid-cols-4 px-2">
         {nav.map((item) => {
           const Icon = item.icon;

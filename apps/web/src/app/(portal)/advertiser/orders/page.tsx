@@ -340,6 +340,7 @@ export default function AdvertiserOrdersPage() {
                 {order.paymentStatus === 'paid' && <OrderEvaluationEntry orderId={order.id} compact />}
                 <Button variant="outline" onClick={() => setApplicationsOrder(order)} className="h-8 rounded-xl text-xs">接单申请{order.pendingApplicationCount ? ` (${order.pendingApplicationCount})` : ''}</Button>
                 <Button variant="outline" onClick={() => setDetailOrder(order)} className="h-8 rounded-xl text-xs">查看详情</Button>
+                {order.claimedById && <Link href={`/chat/orders/${encodeURIComponent(order.id)}`}><Button variant="outline" className="h-8 rounded-xl text-xs">订单沟通</Button></Link>}
                 {canEdit && <Link href={`/advertiser/orders/new?edit=${encodeURIComponent(order.id)}`}><Button variant="outline" className="h-8 rounded-xl text-xs">编辑订单</Button></Link>}
                 {canPayDeposit && <Button onClick={() => startPayment(order, 'deposit')} disabled={operatingId === order.id} className="h-8 rounded-xl bg-orange-500 text-xs text-white hover:bg-orange-600">支付定金 ¥{order.depositAmount?.toFixed(2)}</Button>}
                 {order.publicationStatus === 'rejected' && <ConfirmAction title="确认重新提交订单？" description="重新提交后订单会再次进入客服审核，当前修改内容将正式生效。" confirmText="确认重新提交" onConfirm={() => operate(order, 'resubmit')} disabled={operatingId === order.id} tone="warning"><Button disabled={operatingId === order.id} className="h-8 rounded-xl bg-amber-500 text-xs text-white hover:bg-amber-600">重新提交</Button></ConfirmAction>}

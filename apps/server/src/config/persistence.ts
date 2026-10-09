@@ -50,12 +50,22 @@ const parseJson = <T>(value: unknown, fallback: T): T => {
 };
 const dateValue = (value: unknown) => value instanceof Date ? value.toISOString() : String(value || new Date().toISOString());
 
+const knownColumns = new Map<string, Set<string>>();
+
 async function addColumn(table: string, column: string, definition: string) {
+  let columns = knownColumns.get(table);
+  if (!columns) {
+    const [rows]: any = await dbPool!.query(`SHOW COLUMNS FROM \`${table}\``);
+    columns = new Set(rows.map((row: any) => String(row.Field)));
+    knownColumns.set(table, columns);
+  }
+  if (columns.has(column)) return;
   try {
     await dbPool!.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
   } catch (error: any) {
     if (error?.code !== 'ER_DUP_FIELDNAME') throw error;
   }
+  columns.add(column);
 }
 
 async function normalizeCollations() {
@@ -67,16 +77,18 @@ async function normalizeCollations() {
     'order_invitations', 'designer_wallets', 'withdrawal_requests', 'payment_events', 'pending_oss_uploads'
   ];
   const [rows]: any = await dbPool!.query(
-    `SELECT TABLE_NAME FROM information_schema.TABLES
+    `SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.TABLES
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${tableNames.map(() => '?').join(',')})`,
     tableNames
   );
   for (const row of rows) {
+    if (row.TABLE_COLLATION === 'utf8mb4_unicode_ci') continue;
     await dbPool!.query(`ALTER TABLE \`${row.TABLE_NAME}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
   }
 }
 
-async function ensureSchema() {
+export async function ensurePersistenceSchema(options: { preserveExistingData?: boolean } = {}) {
+  knownColumns.clear();
   await dbPool!.query(`CREATE TABLE IF NOT EXISTS design_orders (
     id VARCHAR(64) PRIMARY KEY,
     order_no VARCHAR(64) UNIQUE NOT NULL,
@@ -159,7 +171,7 @@ async function ensureSchema() {
   await addColumn('design_orders', 'deposit_refund_status', 'VARCHAR(24)');
   await addColumn('design_orders', 'deposit_refund_trade_no', 'VARCHAR(128)');
   await addColumn('design_orders', 'deposit_refunded_at', 'VARCHAR(64)');
-  await dbPool!.query(`UPDATE design_orders SET payment_status='deposit_paid', deposit_rate=0.3,
+  if (!options.preserveExistingData) await dbPool!.query(`UPDATE design_orders SET payment_status='deposit_paid', deposit_rate=0.3,
     deposit_amount=ROUND(budget * 0.3, 2), balance_amount=budget - ROUND(budget * 0.3, 2)
     WHERE id LIKE 'seed_order_%' AND payment_status IS NULL`);
   await addColumn('order_disputes', 'service_claimed_at', 'VARCHAR(64)');
@@ -244,12 +256,18 @@ async function ensureSchema() {
     PRIMARY KEY (user_id),
     INDEX idx_user_roles_role (role, user_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`);
-  await dbPool!.query(`UPDATE users SET role = 'customer_service', department = '客服与争议处理部' WHERE role = 'reviewer'`);
-  // users.role is the canonical role; normalize legacy multi-role rows to exactly one row per user.
-  await dbPool!.query('DELETE FROM user_roles');
-  await dbPool!.query(`INSERT INTO user_roles (user_id, role, created_at)
-    SELECT id, role, COALESCE(CAST(created_at AS CHAR), NOW()) FROM users
-    WHERE role IN ('advertiser', 'designer', 'customer_service', 'admin')`);
+  if (!options.preserveExistingData) {
+    await dbPool!.query(`UPDATE users SET role = 'customer_service', department = '客服与争议处理部' WHERE role = 'reviewer'`);
+    // users.role is the canonical role; normalize legacy multi-role rows to exactly one row per user.
+    await dbPool!.query('DELETE FROM user_roles');
+    await dbPool!.query(`INSERT INTO user_roles (user_id, role, created_at)
+      SELECT id, role, COALESCE(CAST(created_at AS CHAR), NOW()) FROM users
+      WHERE role IN ('advertiser', 'designer', 'customer_service', 'admin')`);
+  } else {
+    await dbPool!.query(`INSERT IGNORE INTO user_roles (user_id, role, created_at)
+      SELECT id, role, COALESCE(CAST(created_at AS CHAR), NOW()) FROM users
+      WHERE role IN ('advertiser', 'designer', 'customer_service', 'admin')`);
+  }
   const [roleIndexes]: any = await dbPool!.query("SHOW INDEX FROM user_roles WHERE Key_name = 'PRIMARY'");
   if (roleIndexes.length !== 1 || roleIndexes[0].Column_name !== 'user_id') {
     await dbPool!.query('ALTER TABLE user_roles DROP PRIMARY KEY, ADD PRIMARY KEY (user_id)');
@@ -263,11 +281,13 @@ async function ensureSchema() {
   // 兼容旧版初始化脚本，统一字符串字段排序规则，避免 JOIN 时出现 Illegal mix of collations。
   await normalizeCollations();
   // 清理旧版本明确的测试审核流，真实用户会在首次进入审核流时获得自己的默认流。
-  await dbPool!.query(`DELETE FROM review_rule_levels WHERE rule_id IN ('rule_001', 'rule_002')`);
-  await dbPool!.query(`DELETE FROM review_rules WHERE id IN ('rule_001', 'rule_002')`);
-  await dbPool!.query(`DELETE FROM site_messages WHERE id IN ('msg_welcome_adv', 'msg_welcome_des')`);
-  // 仅清理演示账号的业务资料，账号及其角色关系必须保留。
-  await dbPool!.query(`DELETE FROM designer_profiles WHERE user_id IN ('u_des_1', 'u_des_2', 'u_des_3', 'u_des_4', 'u_des_5', 'u_des_6')`);
+  if (!options.preserveExistingData) {
+    await dbPool!.query(`DELETE FROM review_rule_levels WHERE rule_id IN ('rule_001', 'rule_002')`);
+    await dbPool!.query(`DELETE FROM review_rules WHERE id IN ('rule_001', 'rule_002')`);
+    await dbPool!.query(`DELETE FROM site_messages WHERE id IN ('msg_welcome_adv', 'msg_welcome_des')`);
+    // 仅清理演示账号的业务资料，账号及其角色关系必须保留。
+    await dbPool!.query(`DELETE FROM designer_profiles WHERE user_id IN ('u_des_1', 'u_des_2', 'u_des_3', 'u_des_4', 'u_des_5', 'u_des_6')`);
+  }
 }
 
 async function clearTestData(stores: Stores) {
@@ -830,7 +850,13 @@ export async function initializePersistence(stores: Stores) {
     return false;
   }
   try {
-    await ensureSchema();
+    if (process.env.DB_SCHEMA_PREPARED === '1') {
+      await dbPool.query('SELECT 1');
+      await refreshPersistence(stores);
+      console.log('✅ MySQL 业务数据已从已初始化的数据库加载');
+      return true;
+    }
+    await ensurePersistenceSchema();
     await ensureOrderApplicationSchema(dbPool!);
     await clearTestData(stores);
     await migrateStoredImageUrls();

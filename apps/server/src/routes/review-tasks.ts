@@ -3,6 +3,7 @@ import { syncOrderEvaluation } from '../services/order-evaluations.js';
 import { Router } from 'express';
 import type { ReviewTask, ReviewImageGroup, ReviewImage, AnnotationItem } from '@design-review/shared';
 import { authenticate, requireRoles, type AuthUserPayload } from '../middleware/auth.middleware.js';
+import { submissionRequirementVersion } from '../services/collaboration.js';
 import { persistDesignOrder, persistReviewTask } from '../config/persistence.js';
 import { notifyUser } from './messages.js';
 import { rules } from './review-rules.js';
@@ -94,7 +95,7 @@ reviewTasksRouter.get('/:id', authenticate, async (req, res) => {
   if (!canAccessTask(task, req.user!)) return res.status(403).json({ code: 403, success: false, message: '该任务不属于当前处理节点' });
   const { designOrders } = await import('./design-orders.js');
   const order = task.orderId ? designOrders.find((item) => item.id === task.orderId) : undefined;
-  res.json({ code: 200, success: true, data: { ...task, requiresPsd: Boolean(order?.requiresPsd ?? task.requiresPsd), orderImageRequirementGroups: order?.imageRequirementGroups || [] } });
+  res.json({ code: 200, success: true, data: { ...task, canReview: canReviewTask(task, req.user!), requiresPsd: Boolean(order?.requiresPsd ?? task.requiresPsd), orderImageRequirementGroups: order?.imageRequirementGroups || [] } });
 });
 
 // 3. 创建/提审任务。审核任务只能由已接单的设计师创建或更新。
@@ -133,16 +134,19 @@ reviewTasksRouter.post('/', authenticate, requireRoles('designer'), async (req, 
     if (existingTask && !body.isDraft && !['draft', 'needs_revision'].includes(existingTask.status)) {
       return res.status(400).json({ code: 400, success: false, message: '当前任务不在可提交状态' });
     }
+  const requirementVersionId = body.isDraft ? existingTask?.requirementVersionId : await submissionRequirementVersion(orderId);
   const groups = rawGroups.map((group: ReviewImageGroup) => ({
     ...group,
     taskId,
     images: (group.images || []).map((image: ReviewImage) => ({
       ...image,
+      requirementVersionId,
       taskId,
       groupId: group.id
     }))
   }));
   const taskData: Partial<ReviewTask> = {
+    requirementVersionId,
     productName: String(body.productName || '未命名设计任务').trim().slice(0, 120),
     sku: String(body.sku || '').trim().slice(0, 80),
     platform: body.platform || 'universal',
@@ -356,7 +360,8 @@ reviewTasksRouter.post('/:taskId/images/:imageId/annotations', authenticate, req
 });
 
 // 7. 设计师正式提交审核 (从 draft/needs_revision 流转至 pending 待初审)
-reviewTasksRouter.post('/:id/submit', authenticate, requireRoles('designer'), (req, res) => {
+reviewTasksRouter.post('/:id/submit', authenticate, requireRoles('designer'), async (req, res, next) => {
+  try {
   const { id } = req.params;
   const task = tasks.find(t => t.id === id);
   if (!task) return res.status(404).json({ code: 404, success: false, message: '任务不存在' });
@@ -371,6 +376,9 @@ reviewTasksRouter.post('/:id/submit', authenticate, requireRoles('designer'), (r
     return res.status(400).json({ code: 400, success: false, message: '请先完成所有图片分组后再提交审核' });
   }
 
+  const requirementVersionId = task.orderId ? await submissionRequirementVersion(task.orderId) : undefined;
+  task.requirementVersionId = requirementVersionId;
+  allImages.forEach(image => { image.requirementVersionId = requirementVersionId; });
   task.status = 'pending';
   task.submittedAt = new Date().toISOString();
   task.updatedAt = new Date().toISOString();
@@ -398,6 +406,7 @@ reviewTasksRouter.post('/:id/submit', authenticate, requireRoles('designer'), (r
     message: '设计稿已成功提交审核，已派发至审核质检主管！',
     data: task
   });
+  } catch (error) { next(error); }
 });
 
 // 8. 品牌方确认验收：验收后才允许下载无水印原图与源文件。
@@ -433,5 +442,3 @@ reviewTasksRouter.post('/:id/return', authenticate, requireRoles('designer'), as
     res.json({ code: 200, success: true, message: '任务已退回，订单恢复原预算并重新开放申请', data: task });
   } catch (error) { next(error); }
 });
-
-

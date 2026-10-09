@@ -5,11 +5,13 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsup src/server.ts --format cjs,esm",
+    "build": "tsup",
     "start": "node dist/server.js"
   },
   "dependencies": {
     "@design-review/shared": "workspace:*",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "ali-oss": "^6.23.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
@@ -21,6 +23,7 @@
     "nodemailer": "^7.0.6",
     "pg": "^8.13.1",
     "sharp": "^0.35.4",
+    "socket.io": "^4.8.4",
     "tencentcloud-sdk-nodejs": "^4.1.307",
     "zod": "^3.24.1"
   },
@@ -31,8 +34,8 @@
     "@types/express": "^5.0.0",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/multer": "^1.4.12",
-    "@types/nodemailer": "^6.4.16",
     "@types/node": "^22.10.2",
+    "@types/nodemailer": "^6.4.16",
     "@types/pg": "^8.11.10",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",

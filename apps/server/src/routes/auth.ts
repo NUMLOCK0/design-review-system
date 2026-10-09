@@ -108,6 +108,53 @@ const resetPasswordSchema = z.object({
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
+// 微信 code 只在服务端换取 openid；小程序不持有 AppSecret，也不能直接信任客户端传入的身份。
+authRouter.post('/wechat/mini-login', async (req, res, next) => {
+  try {
+    const input = z.object({ code: z.string().trim().min(5).max(256) }).strict().safeParse(req.body);
+    if (!input.success) return res.status(400).json({ code: 400, success: false, message: '微信登录凭证无效' });
+    const { code } = input.data;
+    const appId = String(process.env.WECHAT_MINI_APP_ID || '').trim();
+    const appSecret = String(process.env.WECHAT_MINI_APP_SECRET || '').trim();
+    if (!appId || !appSecret) return res.status(503).json({ code: 503, success: false, message: '微信快捷登录尚未配置，请使用账号密码登录' });
+    if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '微信快捷登录需要数据库连接' });
+    const endpoint = new URL('https://api.weixin.qq.com/sns/jscode2session');
+    endpoint.searchParams.set('appid', appId);
+    endpoint.searchParams.set('secret', appSecret);
+    endpoint.searchParams.set('js_code', code);
+    endpoint.searchParams.set('grant_type', 'authorization_code');
+    const response = await fetch(endpoint, { signal: AbortSignal.timeout(8000) });
+    const result = await response.json() as { openid?: string; errcode?: number };
+    if (!response.ok || !result.openid || result.errcode) return res.status(401).json({ code: 401, success: false, message: '微信登录凭证无效，请重试' });
+    let [identityRows]: any = await dbPool.query('SELECT user_id FROM wechat_mini_identities WHERE app_id=? AND open_id=? LIMIT 1', [appId, result.openid]);
+    if (!identityRows[0]) {
+      const connection = await dbPool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const userId = `u_wx_${crypto.randomUUID()}`;
+        const name = `微信用户${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+        await connection.query('INSERT INTO users (id, name, email, password_hash, role, department, is_active) VALUES (?,?,?,?,?,?,TRUE)', [userId, name, `${userId}@mini.local`, await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10), 'advertiser', '品牌协作']);
+        await connection.query('INSERT INTO user_roles (user_id, role) VALUES (?,?)', [userId, 'advertiser']);
+        await connection.query('INSERT INTO wechat_mini_identities (app_id, open_id, user_id) VALUES (?,?,?)', [appId, result.openid, userId]);
+        await connection.commit();
+        identityRows = [{ user_id: userId }];
+      } catch (error: any) {
+        await connection.rollback();
+        if (error?.code !== 'ER_DUP_ENTRY') throw error;
+        [identityRows] = await dbPool.query('SELECT user_id FROM wechat_mini_identities WHERE app_id=? AND open_id=? LIMIT 1', [appId, result.openid]);
+        if (!identityRows[0]) throw error;
+      } finally { connection.release(); }
+    }
+    const [users]: any = await dbPool.query('SELECT * FROM users WHERE id=? LIMIT 1', [identityRows[0].user_id]);
+    const user = users[0];
+    if (!user?.is_active || user.role !== 'advertiser') return res.status(403).json({ code: 403, success: false, message: '微信账号已停用或身份不符' });
+    const roles: AppRole[] = ['advertiser'];
+    const token = tokenForUser(user, 'advertiser', roles);
+    setAuthCookie(res, token);
+    res.json({ code: 200, success: true, data: { token, user: userView({ ...user, organizationId: user.organization_id, isOrganizationAdmin: user.is_organization_admin }, roles) } });
+  } catch (error) { next(error); }
+});
+
 // 登录入口筛选业务账号，工作人员账号可从所有入口登录。
 async function findLoginUsers(identifier: string, entryRole?: 'advertiser' | 'designer' | 'staff', phoneOnly = false): Promise<any[]> {
   const phone = normalizePhone(identifier);

@@ -23,6 +23,18 @@ import { ensureOssCors } from './config/oss-client.js';
 import { designerProfilesRouter } from './routes/designer-profiles.js';
 import { usersRouter } from './routes/users.js';
 import { adminAuditLogsRouter } from './routes/admin-audit-logs.js';
+import { formTemplatesRouter, initializeFormTemplates } from './routes/form-templates.js';
+import { createServer } from 'node:http';
+import { chatRouter } from './routes/chat.js';
+import { attachChatSocket } from './socket/chat-socket.js';
+import { ensureChatSchema } from './config/chat-schema.js';
+import { ensureCollaborationSchema } from './config/collaboration-schema.js';
+import { collaborationRouter } from './routes/collaboration.js';
+import { startCollaborationWorker } from './services/collaboration.js';
+import { intakeSessionsRouter } from './routes/intake-sessions.js';
+import { ensureIntakeSchema } from './config/intake-schema.js';
+import { orderDraftsRouter } from './routes/order-drafts.js';
+import { ensureOrderDraftSchema } from './config/order-draft-schema.js';
 
 dotenv.config();
 
@@ -31,24 +43,26 @@ const PORT = process.env.PORT || 8080;
 let refreshPromise: Promise<unknown> | null = null;
 let lastRefreshAt = 0;
 
-// 中间件配置：生产环境只允许已配置的前端来源访问 API。
+// 开发命令会读取同一份 .env；即使其中 NODE_ENV=production，开发服务器仍需接收本机前端。
+// 正式 start/build 只使用 WEB_ORIGIN 中明确配置的来源。
 const isProduction = process.env.NODE_ENV === 'production';
+const isDevelopmentServer = process.env.npm_lifecycle_event === 'dev' || !isProduction;
 const configuredOrigins = String(process.env.WEB_ORIGIN || '')
   .split(',')
   .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 const allowedOrigins = [...new Set([
   ...configuredOrigins,
-  ...(!isProduction ? ['http://localhost:3000', 'http://127.0.0.1:3000'] : []),
+  ...(isDevelopmentServer ? ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'] : []),
 ])];
-const isLocalDevelopmentOrigin = (origin: string) => !isProduction &&
-  /^https?:\/\/(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}):3000$/i.test(origin);
+const isLocalDevelopmentOrigin = (origin: string) => isDevelopmentServer &&
+  /^https?:\/\/(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}):(?:3000|5173)$/i.test(origin);
+const isAllowedOrigin = (origin?: string) => !origin || allowedOrigins.includes(origin.replace(/\/+$/, '')) || isLocalDevelopmentOrigin(origin.replace(/\/+$/, ''));
 app.use(cors({
   credentials: true,
   origin: (origin, callback) => {
-    const normalizedOrigin = origin?.replace(/\/+$/, '');
-    if (!origin || allowedOrigins.includes(normalizedOrigin || '') || isLocalDevelopmentOrigin(normalizedOrigin || '')) return callback(null, true);
-    return callback(new Error('CORS origin not allowed'));
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    return callback(Object.assign(new Error('CORS origin not allowed'), { status: 403 }));
   }
 }));
 app.use((_req, res, next) => {
@@ -96,7 +110,7 @@ app.use('/api/payments', rateLimit(60_000, 30));
 // 生产环境以 MySQL 为准，避免 PM2 进程继续使用启动时的旧内存快照。
 app.use('/api', async (_req, _res, next) => {
   // 登录、验证码和健康检查不依赖业务内存快照，跳过全量 MySQL 刷新，避免登录被数据库抖动阻断。
-  if (_req.path === '/health' || _req.path.startsWith('/auth')) return next();
+  if (_req.path === '/health' || _req.path.startsWith('/auth') || _req.path.startsWith('/chat') || _req.path.startsWith('/collaboration') || _req.path.startsWith('/intake-sessions') || _req.path.startsWith('/order-drafts')) return next();
   // 多个页面请求同时进入时共用一次刷新，避免并发查询耗尽连接并触发 ECONNRESET。
   if (Date.now() - lastRefreshAt < 1000) return next();
   try {
@@ -131,12 +145,17 @@ app.use('/api', orderApplicationsRouter);
 app.use('/api/order-evaluations', orderEvaluationsRouter);
 app.use('/api/design-orders', designOrdersRouter);
 app.use('/api/system-config', systemConfigRouter);
+app.use('/api/form-templates', formTemplatesRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/admin/audit-logs', adminAuditLogsRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/disputes', disputesRouter);
 app.use('/api/messages', messagesRouter);
+app.use('/api/chat', chatRouter);
+app.use('/api/intake-sessions', intakeSessionsRouter);
+app.use('/api/order-drafts', orderDraftsRouter);
+app.use('/api/collaboration', collaborationRouter);
 app.use('/api', designerProfilesRouter);
 app.use('/api', invitationsRouter);
 app.use('/api/service', serviceRouter);
@@ -156,12 +175,20 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 async function startServer() {
   await initializePersistence({ designOrders, rules, tasks, disputes, messages, serviceLogs, designerWallets, withdrawalRequests });
   await initializeSystemConfig();
+  await initializeFormTemplates();
   if (dbPool) {
-    await ensureOrderEvaluationSchema(dbPool);
+    await ensureChatSchema(dbPool);
+    await ensureIntakeSchema(dbPool);
+    await ensureOrderDraftSchema(dbPool);
+    await ensureCollaborationSchema(dbPool);
+    startCollaborationWorker();
+    if (process.env.DB_SCHEMA_PREPARED !== '1') await ensureOrderEvaluationSchema(dbPool);
     startOrderEvaluationWorker();
   }
   await ensureOssCors();
-  app.listen(PORT, () => {
+  const httpServer = createServer(app);
+  attachChatSocket(httpServer, isAllowedOrigin);
+  httpServer.listen(PORT, () => {
     console.log(`=======================================================`);
     console.log(` [API Server] 设计审核系统后端服务启动成功!`);
     console.log(` 访问地址: http://localhost:${PORT}`);

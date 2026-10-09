@@ -19,7 +19,7 @@ export function OrderModeChooser({ mobile = false }: { mobile?: boolean }) {
       <nav aria-label="发单方式" className="grid grid-cols-2 gap-3 sm:gap-4">
         <Link href={simple} className="group flex min-h-24 items-center gap-2.5 rounded-2xl border border-[var(--role-primary-border)] bg-white px-3 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--role-primary-border)] sm:gap-4 sm:px-5">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl role-primary-soft role-primary-text sm:h-11 sm:w-11"><Sparkles className="h-5 w-5" /></span>
-          <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-900 sm:text-base">简易发单</span><span className="mt-1 block text-[11px] text-slate-500 sm:text-xs">快速填写重点</span></span>
+          <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-slate-900 sm:text-base">引导式发单</span><span className="mt-1 block text-[11px] text-slate-500 sm:text-xs">分步填写，可保存续填</span></span>
           <ArrowRight className="h-4 w-4 shrink-0 role-primary-text transition-transform group-hover:translate-x-0.5" />
         </Link>
         <Link href={professional} className="group flex min-h-24 items-center gap-2.5 rounded-2xl border border-slate-200 bg-white px-3 py-4 shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--role-primary-border)] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--role-primary-border)] sm:gap-4 sm:px-5">
@@ -33,9 +33,9 @@ export function OrderModeChooser({ mobile = false }: { mobile?: boolean }) {
         <h2 id="mode-help-title" className="text-sm font-bold text-slate-900 sm:text-base">发单方式说明</h2>
         <div className="mt-4 grid gap-5 sm:grid-cols-2 sm:gap-8">
           <article>
-            <h3 className="text-xs font-semibold role-primary-text">简易发单 · 需求明确，想快速发布</h3>
-            <p className="mt-2 text-xs leading-5 text-slate-600">围绕一个主要交付规格填写订单名称、平台、数量、预算和周期，并补充风格或参考链接。适合内容简单、重点明确的设计需求。</p>
-            <p className="mt-2 text-[11px] leading-5 text-slate-400">可填写：设计类型、交付规格、参考风格、需求简述、预算与周期。</p>
+            <h3 className="text-xs font-semibold role-primary-text">引导式发单 · 首次发单或信息尚未整理完整</h3>
+            <p className="mt-2 text-xs leading-5 text-slate-600">按步骤填写项目、交付范围、设计方向和预算。风格与参考资料可以先跳过，草稿会随步骤保存，之后可继续补充。</p>
+            <p className="mt-2 text-[11px] leading-5 text-slate-400">可填写：平台、规格数量、设计风格、需求简述、预算与周期。</p>
           </article>
           <article className="border-t border-slate-200 pt-5 sm:border-l sm:border-t-0 sm:pl-8 sm:pt-0">
             <h3 className="text-xs font-semibold text-slate-800">专业发单 · 多规格或逐图要求较多</h3>

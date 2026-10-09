@@ -82,6 +82,7 @@ export default function OrderMarketPage() {
   const [selectedOrder, setSelectedOrder] = useState<DesignOrder | null>(null);
   const [previewImage, setPreviewImage] = useState<{ url: string; label: string } | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const ordersRequestRef = useRef<AbortController | null>(null);
   const [isPublishOpen, setIsPublishOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [reviewRules, setReviewRules] = useState<ReviewRule[]>([]);
@@ -142,8 +143,13 @@ export default function OrderMarketPage() {
   const [uploadingGroupIndex, setUploadingGroupIndex] = useState<number | null>(null);
 
   const fetchOrders = async (nextPage = 1, append = false) => {
+    if (append && ordersRequestRef.current) return;
+    if (!append) ordersRequestRef.current?.abort();
+    const controller = new AbortController();
+    ordersRequestRef.current = controller;
     try {
       append ? setLoadingMore(true) : setLoading(true);
+      if (!append) setHasMore(true);
       const params = new URLSearchParams({
         page: String(nextPage),
         pageSize: '15',
@@ -152,24 +158,34 @@ export default function OrderMarketPage() {
         urgency: activeUrgency,
         keyword: searchKeyword
       });
-      const res = await fetch(`/api/design-orders?${params}`);
-      const data = await res.json();
-      if (data.success) {
-        setOrders((current) => append ? [...current, ...data.data] : data.data);
-        setPage(nextPage);
-        setHasMore(data.hasMore);
+      const res = await fetchWithAuth(`/design-orders?${params}`, { signal: controller.signal });
+      if (!res.ok) {
+        setHasMore(false);
+        if (res.status !== 401) toast.error(`获取接单广场数据失败（${res.status}）`);
+        return;
       }
+      const data = await res.json();
+      if (!data.success || !Array.isArray(data.data)) throw new Error(data.message || '订单数据无效');
+      setOrders((current) => append ? [...current, ...data.data] : data.data);
+      setPage(nextPage);
+      setHasMore(Boolean(data.hasMore) && data.data.length > 0);
     } catch (e) {
+      if (controller.signal.aborted) return;
       console.error(e);
+      setHasMore(false);
       toast.error('获取接单广场数据失败');
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (ordersRequestRef.current === controller) {
+        ordersRequestRef.current = null;
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchOrders();
+    void fetchOrders();
+    return () => ordersRequestRef.current?.abort();
   }, [activeCategory, activePlatform, activeUrgency, searchKeyword]);
 
   useEffect(() => {

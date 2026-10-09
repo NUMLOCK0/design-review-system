@@ -1,20 +1,35 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { ChevronRight, Copy, Headset, LoaderCircle, MessageCircle, RefreshCw } from 'lucide-react';
 import type { CustomerServiceContact } from '@design-review/shared';
 import { AuthenticatedImage } from '@/components/authenticated-image';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { fetchWithAuth } from '@/lib/auth';
+import { fetchWithAuth, getCurrentUser } from '@/lib/auth';
 import { toast } from 'sonner';
 
 export function CustomerServiceLauncher({ placement }: { placement: 'profile' | 'desktop' }) {
+  const pathname = usePathname();
+  const [isCustomerService, setIsCustomerService] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
   const [contact, setContact] = useState<CustomerServiceContact | null>(null);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const isProfile = placement === 'profile';
+  const canContact = isCustomerService === false && !/^\/(?:mobile\/)?service(?:\/|$)/.test(pathname);
+
+  useEffect(() => {
+    const syncRole = () => {
+      const isService = getCurrentUser()?.role === 'customer_service';
+      setIsCustomerService(isService);
+      if (isService) setOpen(false);
+    };
+    syncRole();
+    window.addEventListener('auth-state-change', syncRole);
+    return () => window.removeEventListener('auth-state-change', syncRole);
+  }, []);
 
   const loadContact = useCallback(async () => {
     setLoading(true);
@@ -33,8 +48,8 @@ export function CustomerServiceLauncher({ placement }: { placement: 'profile' | 
   }, []);
 
   useEffect(() => {
-    if (open && !loaded && !loading && !error) void loadContact();
-  }, [open, loaded, loading, error, loadContact]);
+    if (canContact && open && !loaded && !loading && !error) void loadContact();
+  }, [canContact, open, loaded, loading, error, loadContact]);
 
   const copyWechat = async () => {
     if (!contact?.wechat) return;
@@ -45,6 +60,8 @@ export function CustomerServiceLauncher({ placement }: { placement: 'profile' | 
       toast.error('复制失败，请手动复制微信号');
     }
   };
+
+  if (!canContact) return null;
 
   return <>
     <button type="button" onClick={() => setOpen(true)} className={isProfile
