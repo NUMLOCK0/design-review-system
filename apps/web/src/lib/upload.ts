@@ -18,8 +18,9 @@ async function parseResponse(response: Response) {
   return result;
 }
 
-/** OSS 已配置时浏览器直传；未配置时保留本地开发上传兜底。 */
-export async function uploadFile(file: File, folder: string): Promise<UploadedFileData> {
+/** OSS 已配置时浏览器直传；一般上传保留本地开发兜底，聊天附件可要求必须进入 OSS。 */
+export async function uploadFile(file: File, folder: string, options: { requireOss?: boolean } = {}): Promise<UploadedFileData> {
+  const requireOss = options.requireOss === true;
   const contentType = file.type || 'application/octet-stream';
   const presignResponse = await fetchWithAuth('/upload/presign', {
     method: 'POST',
@@ -27,6 +28,9 @@ export async function uploadFile(file: File, folder: string): Promise<UploadedFi
   });
 
   if (presignResponse.status === 409) {
+    if (requireOss) {
+      throw new Error('聊天图片和视频需要保存到 OSS；请在服务端配置 OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET 和 OSS_BUCKET 后重试');
+    }
     const formData = new FormData();
     formData.append('file', file);
     formData.append('folder', folder);
@@ -48,5 +52,9 @@ export async function uploadFile(file: File, folder: string): Promise<UploadedFi
     method: 'POST',
     body: JSON.stringify({ assetId: presign.data.assetId })
   });
-  return (await parseResponse(completeResponse)).data as UploadedFileData;
+  const uploaded = (await parseResponse(completeResponse)).data as UploadedFileData;
+  if (requireOss && uploaded.storageType !== 'aliyun-oss') {
+    throw new Error('聊天附件未保存到 OSS，请检查服务端存储配置后重试');
+  }
+  return uploaded;
 }

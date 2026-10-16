@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { AuthUserPayload } from '../middleware/auth.middleware.js';
 import { dbPool } from '../config/database.js';
-import { WORKFLOW_MESSAGE_PREFIX } from '@design-review/shared';
+import { FORM_FIELD_KINDS, WORKFLOW_MESSAGE_PREFIX } from '@design-review/shared';
 
 export const sendMessageSchema = z.object({
   orderId: z.string().min(1).max(64),
@@ -10,19 +10,24 @@ export const sendMessageSchema = z.object({
   body: z.string().trim().min(1).max(8000),
 }).strict();
 
-const CARD_PREFIX = 'COZI_CHAT_CARD_V1:';
+export const CARD_PREFIX = 'COZI_CHAT_CARD_V1:';
+const formFieldCardSchema = z.object({ id: z.string().min(1), key: z.string().min(1), kind: z.string().refine(kind => FORM_FIELD_KINDS.some(item => item.kind === kind)), label: z.string().min(1), width: z.number().min(10).max(100) }).passthrough();
 const cardSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('image'), caption: z.string().max(500), attachments: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().regex(/^\/api\/upload\/previews\/asset_[a-f0-9]{32}$/) }).strict()).min(1).max(9).refine(items => new Set(items.map(item => item.url)).size === items.length) }).strict(),
+  z.object({ kind: z.literal('video'), caption: z.string().max(500), attachment: z.object({ name: z.string().trim().min(1).max(120), url: z.string().regex(/^\/api\/upload\/assets\/asset_[a-f0-9]{32}$/) }).strict() }).strict(),
   z.object({ kind: z.literal('proposal'), title: z.string().trim().min(1).max(80), optionA: z.string().trim().min(1).max(80), optionB: z.string().trim().min(1).max(80), detailA: z.string().trim().min(1).max(600), detailB: z.string().trim().min(1).max(600) }).strict(),
   z.object({ kind: z.literal('decision'), proposalMessageId: z.string().uuid(), option: z.enum(['A', 'B']), note: z.string().max(500) }).strict(),
   z.object({ kind: z.literal('requirement_review'), decision: z.enum(['confirmed', 'needs_details']), note: z.string().max(500) }).strict(),
-  z.object({ kind: z.literal('work_card'), templateId: z.string().regex(/^[a-z0-9_-]{1,40}$/), title: z.string().trim().min(1).max(100), fields: z.array(z.object({ label: z.string().trim().min(1).max(80), value: z.string().trim().min(1).max(800) }).strict()).min(1).max(24), attachments: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().regex(/^\/api\/upload\/previews\/[a-zA-Z0-9_-]+$/) }).strict()).max(8).default([]), revisionOf: z.string().uuid().optional() }).strict(),
+  z.object({ kind: z.literal('work_card'), templateId: z.string().regex(/^[a-z0-9_-]{1,40}$/), title: z.string().trim().min(1).max(100), mobileStyle: z.enum(['comfortable', 'compact', 'large']).optional(), fields: z.array(z.object({ label: z.string().trim().min(1).max(80), value: z.string().trim().min(1).max(800), kind: z.literal('image').optional(), options: z.array(z.string().trim().min(1).max(100)).max(20).optional(), schema: formFieldCardSchema.optional() }).strict()).min(1).max(24), attachments: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().regex(/^\/api\/upload\/previews\/[a-zA-Z0-9_-]+$/) }).strict()).max(8).default([]), revisionOf: z.string().uuid().optional() }).strict(),
+  z.object({ kind: z.literal('form_answers'), formMessageId: z.string().uuid(), answers: z.array(z.object({ fieldIndex: z.number().int().min(0).max(23), value: z.string().max(7800) }).strict()).min(1).max(24) }).strict(),
   z.object({ kind: z.literal('snapshot_ack'), snapshotMessageId: z.string().uuid(), decision: z.enum(['confirmed', 'needs_changes']), note: z.string().max(500) }).strict(),
-  z.object({ kind: z.literal('choice'), source: z.enum(['combo', 'style']), title: z.string().trim().min(1).max(100), prompt: z.string().trim().min(1).max(500), options: z.array(z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/), label: z.string().trim().min(1).max(100), detail: z.string().max(500) }).strict()).min(2).max(8) }).strict(),
+  z.object({ kind: z.literal('choice'), source: z.enum(['combo', 'style']), title: z.string().trim().min(1).max(100), prompt: z.string().trim().min(1).max(500), options: z.array(z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/), label: z.string().trim().min(1).max(100), detail: z.string().max(500) }).strict()).min(2).max(8), attachments: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().regex(/^\/api\/upload\/previews\/[a-zA-Z0-9_-]+$/) }).strict()).max(8).optional() }).strict(),
   z.object({ kind: z.literal('choice_answer'), choiceMessageId: z.string().uuid(), optionId: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/), optionLabel: z.string().trim().min(1).max(100), note: z.string().max(500) }).strict(),
+  z.object({ kind: z.literal('annotation'), annotationId: z.string().uuid(), taskId: z.string().min(1).max(64), taskNo: z.string().max(64), imageId: z.string().min(1).max(64), imageVersion: z.number().int().min(1), revision: z.number().int().min(1), productName: z.string().trim().min(1).max(120), imageIndex: z.number().int().min(1), imageUrl: z.string().regex(/^\/api\/upload\/(?:assets|previews)\/asset_[a-f0-9]{32}$/), annotations: z.array(z.object({ id: z.string().uuid(), type: z.literal('pin'), x: z.number().min(0).max(100), y: z.number().min(0).max(100), color: z.string().regex(/^#[a-fA-F0-9]{6}$/), comment: z.string().trim().min(1).max(200), creatorId: z.string().min(1).max(64), creatorName: z.string().min(1).max(128), createdAt: z.string().datetime() }).strict()).min(1).max(12) }).strict(),
   z.object({ kind: z.literal('recall'), targetMessageId: z.string().uuid() }).strict(),
 ]);
 
-function parseCard(body: string) {
+export function parseCard(body: string) {
   if (!body.startsWith(CARD_PREFIX)) return null;
   try { return cardSchema.parse(JSON.parse(body.slice(CARD_PREFIX.length))); }
   catch { failure('协作卡片格式无效', 400); }
@@ -47,6 +52,30 @@ type OrderParticipants = {
 
 function failure(message: string, status: number): never {
   throw Object.assign(new Error(message), { status });
+}
+
+export async function hasConversationImageAccess(connection: any, type: 'order' | 'intake', conversationId: string, userId: string, imageIds: string[]) {
+  const ids = [...new Set(imageIds)];
+  if (ids.some(id => !/^asset_[a-f0-9]{32}$/.test(id))) return false;
+  if (!ids.length) return true;
+  const [assets]: any = await connection.query(`SELECT id,owner_id FROM media_assets WHERE kind='image' AND id IN (${ids.map(() => '?').join(',')})`, ids);
+  const ownerById = new Map<string, string>(assets.map((asset: any) => [String(asset.id), String(asset.owner_id)]));
+  const fromChat = new Set<string>();
+  const sharedIds = ids.filter(id => ownerById.has(id) && ownerById.get(id) !== String(userId));
+  if (sharedIds.length) {
+    const table = type === 'order' ? 'chat_messages' : 'intake_messages';
+    const scopeColumn = type === 'order' ? 'order_id' : 'session_id';
+    const [messages]: any = await connection.query(
+      `SELECT body FROM ${table} WHERE ${scopeColumn}=? AND (${sharedIds.map(() => 'body LIKE ?').join(' OR ')})`,
+      [conversationId, ...sharedIds.map(id => `%${id}%`)]
+    );
+    for (const row of messages) {
+      const body = String(row.body || '');
+      const references = body.matchAll(/\/api\/upload\/previews\/(asset_[a-f0-9]{32})(?=["\s,}\]]|$)/g);
+      for (const match of references) if (sharedIds.includes(match[1])) fromChat.add(match[1]);
+    }
+  }
+  return ids.every(id => ownerById.has(id) && (ownerById.get(id) === String(userId) || fromChat.has(id)));
 }
 
 export function requireChatDatabase() {
@@ -177,6 +206,22 @@ export async function storeChatMessage(raw: unknown, user: AuthUserPayload) {
     }
 
     const card = parseCard(input.body);
+    if (card?.kind === 'annotation') failure('图片批注必须通过批注服务提交', 403);
+    if (card?.kind === 'video' || /^\/api\/upload\/assets\/asset_[a-f0-9]{32}$/.test(input.body)) failure('当前会话不支持发送视频，请发送图片或文字', 400);
+    const legacyImageId = /^\/api\/upload\/previews\/(asset_[a-f0-9]{32})$/.exec(input.body)?.[1];
+    const imageAssetIds = card?.kind === 'image' ? card.attachments.map(item => item.url.slice('/api/upload/previews/'.length)) : legacyImageId ? [legacyImageId] : [];
+    if (imageAssetIds.length) {
+      const [assets]: any = await connection.query(`SELECT id FROM media_assets WHERE owner_id=? AND kind='image' AND id IN (${imageAssetIds.map(() => '?').join(',')})`, [user.id, ...imageAssetIds]);
+      if (assets.length !== imageAssetIds.length) failure('图片不存在或无权发送，请重新选择后上传', 400);
+    }
+    if (card?.kind === 'work_card' && /^biz_\d+$/.test(card.templateId)) {
+      if (user.role !== 'customer_service') failure('只有客服可以发送业务需求卡', 403);
+      const businessImageIds = card.attachments.map(item => item.url.slice('/api/upload/previews/'.length));
+      if (new Set(businessImageIds).size !== businessImageIds.length) failure('业务需求卡中有重复图片，请检查后重试', 400);
+      if (businessImageIds.length) {
+        if (!await hasConversationImageAccess(connection, 'order', input.orderId, user.id, businessImageIds)) failure('业务需求卡图片不在当前会话中或无权使用，请重新选择', 400);
+      }
+    }
     if (card?.kind === 'work_card' && card.templateId === 'contract_snapshot' && !['customer_service', 'admin'].includes(user.role)) failure('只有客服可以生成需求快照', 403);
     if (card?.kind === 'proposal' && order.claimed_by_id !== user.id && !['customer_service', 'admin'].includes(user.role)) failure('只有设计师或客服可以发送提案', 403);
     if (card?.kind === 'choice') {

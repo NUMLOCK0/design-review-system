@@ -3,6 +3,7 @@ import type { SiteMessage, SiteMessageType } from '@design-review/shared';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { persistSiteMessage } from '../config/persistence.js';
 import { pushWecomMessage } from '../services/wecom-bot.js';
+import { publishMiniSiteMessage } from '../socket/chat-socket.js';
 
 export const messagesRouter = Router();
 export const messages: SiteMessage[] = [
@@ -22,9 +23,10 @@ function sendMessageUpdate(response: import('express').Response, update: Message
 }
 
 function publishMessageUpdate(recipientId: string, update: Omit<MessageUpdate, 'unreadCount'>) {
+  const payload: MessageUpdate = { ...update, unreadCount: getUnreadCount(recipientId) };
+  publishMiniSiteMessage(recipientId, payload.unreadCount);
   const subscribers = messageSubscribers.get(recipientId);
   if (!subscribers?.size) return;
-  const payload: MessageUpdate = { ...update, unreadCount: getUnreadCount(recipientId) };
   for (const response of subscribers) sendMessageUpdate(response, payload);
 }
 

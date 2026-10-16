@@ -4,6 +4,9 @@ import { z } from 'zod';
 import { authenticate, JWT_SECRET } from '../middleware/auth.middleware.js';
 import { getChatOrder, listChatConversations, listChatMessages, storeChatMessage, requireChatDatabase, getConversationAssignment, getConversationTransferHistory, getServiceAgents, transferServiceConversation } from '../services/chat.js';
 import { publishChatMessage } from '../socket/chat-socket.js';
+import { getChatUnreadSummary, markChatRead } from '../services/chat-unread.js';
+import { generateAiStyleDirections } from '../services/ai-style.js';
+import { createOrderImageAnnotation, listOrderDeliverableImages } from '../services/chat-annotations.js';
 
 export const chatRouter = Router();
 chatRouter.use(authenticate);
@@ -12,6 +15,42 @@ chatRouter.post('/socket-ticket', (req, res) => {
   const user = req.user!;
   const ticket = jwt.sign({ id: user.id, purpose: 'chat-socket' }, JWT_SECRET, { expiresIn: '60s' });
   res.json({ code: 200, success: true, data: { ticket, expiresIn: 60 } });
+});
+
+chatRouter.get('/unread-summary', async (req, res, next) => {
+  try { res.json({ code: 200, success: true, data: await getChatUnreadSummary(req.user!) }); }
+  catch (error) { next(error); }
+});
+
+chatRouter.post('/read', async (req, res, next) => {
+  try {
+    const body = z.object({
+      kind: z.enum(['order', 'intake']),
+      conversationId: z.string().min(1).max(64),
+      lastReadSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    }).strict().parse(req.body);
+    res.json({ code: 200, success: true, data: await markChatRead(req.user!, body.kind, body.conversationId, body.lastReadSeq) });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ code: 400, success: false, message: '已读位置无效' });
+    next(error);
+  }
+});
+
+chatRouter.post('/style-directions', async (req, res, next) => {
+  try {
+    const body = z.object({
+      conversationType: z.enum(['order', 'intake']),
+      conversationId: z.string().trim().min(1).max(64),
+      description: z.string().trim().max(2000).default(''),
+      referenceImageIds: z.array(z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/)).max(8).default([]),
+      modelProfileId: z.string().trim().min(1).max(64).optional(),
+    }).strict().parse(req.body);
+    const data = await generateAiStyleDirections(body, req.user!);
+    res.json({ code: 200, success: true, data });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ code: 400, success: false, message: '风格生成参数无效' });
+    next(error);
+  }
 });
 
 chatRouter.get('/conversations', async (req, res, next) => {
@@ -71,6 +110,24 @@ chatRouter.get('/orders/:orderId/finance', async (req, res, next) => {
       depositAmount: rows[0].deposit_amount == null ? null : Number(rows[0].deposit_amount), paymentStatus: String(rows[0].payment_status || 'unknown'),
     } });
   } catch (error) { next(error); }
+});
+
+chatRouter.get('/orders/:orderId/deliverable-images', async (req, res, next) => {
+  try {
+    const images = await listOrderDeliverableImages(req.params.orderId, req.user!);
+    res.json({ code: 200, success: true, data: images });
+  } catch (error) { next(error); }
+});
+
+chatRouter.post('/orders/:orderId/annotations', async (req, res, next) => {
+  try {
+    const result = await createOrderImageAnnotation(req.params.orderId, req.body, req.user!);
+    if (!result.duplicate) publishChatMessage(result.message, result.recipients);
+    res.status(result.duplicate ? 200 : 201).json({ code: 200, success: true, data: result.message });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ code: 400, success: false, message: '批注内容无效，请检查图片与修改说明' });
+    next(error);
+  }
 });
 
 chatRouter.get('/orders/:orderId/messages', async (req, res, next) => {

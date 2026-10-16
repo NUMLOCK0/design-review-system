@@ -31,7 +31,7 @@ function userView(user: any, roles: AppRole[]) {
   return {
     id: user.id,
     name: user.name,
-    email: user.email,
+    email: String(user.email || '').endsWith('@mini.local') ? '' : user.email,
     phone: user.phone,
     role: normalizeRole(user.role),
     roles,
@@ -107,11 +107,17 @@ const resetPasswordSchema = z.object({
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
+const hashMiniBindTicket = (ticket: string) => crypto.createHash('sha256').update(ticket).digest('hex');
+const miniSessionForUser = (user: any) => {
+  const roles: AppRole[] = ['advertiser'];
+  const token = tokenForUser({ ...user, organizationId: user.organization_id, isOrganizationAdmin: user.is_organization_admin }, 'advertiser', roles);
+  return { token, user: userView({ ...user, organizationId: user.organization_id, isOrganizationAdmin: user.is_organization_admin }, roles) };
+};
 
 // 微信 code 只在服务端换取 openid；小程序不持有 AppSecret，也不能直接信任客户端传入的身份。
 authRouter.post('/wechat/mini-login', async (req, res, next) => {
   try {
-    const input = z.object({ code: z.string().trim().min(5).max(256) }).strict().safeParse(req.body);
+    const input = z.object({ code: z.string().trim().min(5).max(256), bindFlow: z.boolean().optional().default(false) }).strict().safeParse(req.body);
     if (!input.success) return res.status(400).json({ code: 400, success: false, message: '微信登录凭证无效' });
     const { code } = input.data;
     const appId = String(process.env.WECHAT_MINI_APP_ID || '').trim();
@@ -126,32 +132,96 @@ authRouter.post('/wechat/mini-login', async (req, res, next) => {
     const response = await fetch(endpoint, { signal: AbortSignal.timeout(8000) });
     const result = await response.json() as { openid?: string; errcode?: number };
     if (!response.ok || !result.openid || result.errcode) return res.status(401).json({ code: 401, success: false, message: '微信登录凭证无效，请重试' });
-    let [identityRows]: any = await dbPool.query('SELECT user_id FROM wechat_mini_identities WHERE app_id=? AND open_id=? LIMIT 1', [appId, result.openid]);
-    if (!identityRows[0]) {
-      const connection = await dbPool.getConnection();
-      try {
-        await connection.beginTransaction();
-        const userId = `u_wx_${crypto.randomUUID()}`;
-        const name = `微信用户${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-        await connection.query('INSERT INTO users (id, name, email, password_hash, role, department, is_active) VALUES (?,?,?,?,?,?,TRUE)', [userId, name, `${userId}@mini.local`, await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10), 'advertiser', '品牌协作']);
-        await connection.query('INSERT INTO user_roles (user_id, role) VALUES (?,?)', [userId, 'advertiser']);
-        await connection.query('INSERT INTO wechat_mini_identities (app_id, open_id, user_id) VALUES (?,?,?)', [appId, result.openid, userId]);
-        await connection.commit();
-        identityRows = [{ user_id: userId }];
-      } catch (error: any) {
-        await connection.rollback();
-        if (error?.code !== 'ER_DUP_ENTRY') throw error;
-        [identityRows] = await dbPool.query('SELECT user_id FROM wechat_mini_identities WHERE app_id=? AND open_id=? LIMIT 1', [appId, result.openid]);
-        if (!identityRows[0]) throw error;
-      } finally { connection.release(); }
+    const [identityRows]: any = await dbPool.query('SELECT user_id FROM wechat_mini_identities WHERE app_id=? AND open_id=? LIMIT 1', [appId, result.openid]);
+    if (identityRows[0]) {
+      const [users]: any = await dbPool.query('SELECT * FROM users WHERE id=? LIMIT 1', [identityRows[0].user_id]);
+      const user = users[0];
+      if (!user?.is_active || user.role !== 'advertiser') return res.status(403).json({ code: 403, success: false, message: '微信账号已停用或身份不符' });
+      const session = miniSessionForUser(user);
+      setAuthCookie(res, session.token);
+      return res.json({ code: 200, success: true, data: { ...session, status: 'logged_in' } });
     }
-    const [users]: any = await dbPool.query('SELECT * FROM users WHERE id=? LIMIT 1', [identityRows[0].user_id]);
-    const user = users[0];
-    if (!user?.is_active || user.role !== 'advertiser') return res.status(403).json({ code: 403, success: false, message: '微信账号已停用或身份不符' });
-    const roles: AppRole[] = ['advertiser'];
-    const token = tokenForUser(user, 'advertiser', roles);
-    setAuthCookie(res, token);
-    res.json({ code: 200, success: true, data: { token, user: userView({ ...user, organizationId: user.organization_id, isOrganizationAdmin: user.is_organization_admin }, roles) } });
+
+    // 旧版小程序不支持账号绑定流程；提示升级，避免旧客户端保存一个空会话。
+    if (!input.data.bindFlow) return res.status(409).json({ code: 409, success: false, message: '请更新微信小程序后再完成首次登录与账号绑定' });
+
+    const ticket = crypto.randomBytes(32).toString('base64url');
+    await dbPool.query('DELETE FROM wechat_mini_bind_tickets WHERE expires_at<=NOW(3)');
+    await dbPool.query('INSERT INTO wechat_mini_bind_tickets (ticket_hash,app_id,open_id,expires_at) VALUES (?,?,?,?)', [hashMiniBindTicket(ticket), appId, result.openid, new Date(Date.now() + 10 * 60 * 1000)]);
+    return res.json({ code: 200, success: true, data: { status: 'bind_required', bindTicket: ticket, expiresInSeconds: 600 } });
+  } catch (error) { next(error); }
+});
+
+// 首次微信登录：验证已有品牌方账号后绑定，身份凭证仅短时保存在服务端哈希票据中。
+authRouter.post('/wechat/mini-bind', async (req, res, next) => {
+  try {
+    const input = z.object({ bindTicket: z.string().min(32).max(128), identifier: z.string().trim().min(1).max(128), password: z.string().min(1).max(256) }).strict().safeParse(req.body);
+    if (!input.success) return res.status(400).json({ code: 400, success: false, message: '请填写有效的账号和密码' });
+    if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '微信账号绑定需要数据库连接' });
+    const candidates = await findLoginUsers(input.data.identifier, 'advertiser');
+    const candidate = candidates.find((item) => item.role === 'advertiser');
+    if (!candidate?.isActive || !await bcrypt.compare(input.data.password, candidate.passwordHash || '')) return res.status(401).json({ code: 401, success: false, message: '品牌方账号或密码错误' });
+
+    const connection = await dbPool.getConnection();
+    let user: any;
+    try {
+      await connection.beginTransaction();
+      const [ticketRows]: any = await connection.query('SELECT app_id,open_id,expires_at FROM wechat_mini_bind_tickets WHERE ticket_hash=? FOR UPDATE', [hashMiniBindTicket(input.data.bindTicket)]);
+      const ticket = ticketRows[0];
+      if (!ticket || new Date(ticket.expires_at).getTime() <= Date.now()) throw Object.assign(new Error('微信验证已过期，请重新登录微信'), { status: 410 });
+      const [linkedIdentities]: any = await connection.query('SELECT user_id FROM wechat_mini_identities WHERE app_id=? AND open_id=? FOR UPDATE', [ticket.app_id, ticket.open_id]);
+      if (linkedIdentities[0]) throw Object.assign(new Error('该微信已绑定其他账号，请使用原绑定账号登录'), { status: 409 });
+      const [userRows]: any = await connection.query('SELECT * FROM users WHERE id=? FOR UPDATE', [candidate.id]);
+      user = userRows[0];
+      if (!user?.is_active || user.role !== 'advertiser') throw Object.assign(new Error('品牌方账号已停用或身份不符'), { status: 403 });
+      if (!await bcrypt.compare(input.data.password, user.password_hash || '')) throw Object.assign(new Error('品牌方账号或密码错误'), { status: 401 });
+      const [userIdentities]: any = await connection.query('SELECT user_id FROM wechat_mini_identities WHERE user_id=? FOR UPDATE', [user.id]);
+      if (userIdentities[0]) throw Object.assign(new Error('该品牌方账号已绑定另一个微信，请先在原微信中解绑'), { status: 409 });
+      await connection.query('INSERT INTO wechat_mini_identities (app_id,open_id,user_id) VALUES (?,?,?)', [ticket.app_id, ticket.open_id, user.id]);
+      await connection.query('DELETE FROM wechat_mini_bind_tickets WHERE ticket_hash=?', [hashMiniBindTicket(input.data.bindTicket)]);
+      await connection.commit();
+    } catch (error: any) {
+      await connection.rollback();
+      if (error?.code === 'ER_DUP_ENTRY') throw Object.assign(new Error('该微信或品牌方账号已绑定其他账号'), { status: 409 });
+      throw error;
+    } finally { connection.release(); }
+    const session = miniSessionForUser(user);
+    setAuthCookie(res, session.token);
+    return res.json({ code: 200, success: true, data: session });
+  } catch (error) { next(error); }
+});
+
+// 没有既有平台账号时，由用户明确选择创建微信专属品牌账号，而不是静默生成重复账号。
+authRouter.post('/wechat/mini-register', async (req, res, next) => {
+  try {
+    const input = z.object({ bindTicket: z.string().min(32).max(128), name: z.string().trim().min(2).max(64) }).strict().safeParse(req.body);
+    if (!input.success) return res.status(400).json({ code: 400, success: false, message: '请输入 2 至 64 个字符的品牌联系人姓名' });
+    if (!dbPool) return res.status(503).json({ code: 503, success: false, message: '微信账号注册需要数据库连接' });
+    const connection = await dbPool.getConnection();
+    let user: any;
+    try {
+      await connection.beginTransaction();
+      const [ticketRows]: any = await connection.query('SELECT app_id,open_id,expires_at FROM wechat_mini_bind_tickets WHERE ticket_hash=? FOR UPDATE', [hashMiniBindTicket(input.data.bindTicket)]);
+      const ticket = ticketRows[0];
+      if (!ticket || new Date(ticket.expires_at).getTime() <= Date.now()) throw Object.assign(new Error('微信验证已过期，请重新登录微信'), { status: 410 });
+      const [linkedIdentities]: any = await connection.query('SELECT user_id FROM wechat_mini_identities WHERE app_id=? AND open_id=? FOR UPDATE', [ticket.app_id, ticket.open_id]);
+      if (linkedIdentities[0]) throw Object.assign(new Error('该微信已绑定账号，请直接登录'), { status: 409 });
+      const userId = `u_wx_${crypto.randomUUID()}`;
+      const email = `${userId}@mini.local`;
+      user = { id: userId, name: input.data.name, email, password_hash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10), phone: null, role: 'advertiser', department: '品牌协作', organization_id: `org_${userId}`, is_organization_admin: true, is_active: true, avatar_url: null };
+      await connection.query('INSERT INTO users (id,name,email,password_hash,role,department,organization_id,is_organization_admin,is_active) VALUES (?,?,?,?,?,?,?,?,TRUE)', [user.id, user.name, user.email, user.password_hash, user.role, user.department, user.organization_id, user.is_organization_admin]);
+      await connection.query('INSERT INTO user_roles (user_id,role) VALUES (?,?)', [user.id, 'advertiser']);
+      await connection.query('INSERT INTO wechat_mini_identities (app_id,open_id,user_id) VALUES (?,?,?)', [ticket.app_id, ticket.open_id, user.id]);
+      await connection.query('DELETE FROM wechat_mini_bind_tickets WHERE ticket_hash=?', [hashMiniBindTicket(input.data.bindTicket)]);
+      await connection.commit();
+    } catch (error: any) {
+      await connection.rollback();
+      if (error?.code === 'ER_DUP_ENTRY') throw Object.assign(new Error('微信账号已完成绑定，请重新登录'), { status: 409 });
+      throw error;
+    } finally { connection.release(); }
+    const session = miniSessionForUser(user);
+    setAuthCookie(res, session.token);
+    return res.status(201).json({ code: 201, success: true, data: session });
   } catch (error) { next(error); }
 });
 
@@ -529,6 +599,7 @@ authRouter.get('/me', authenticate, async (req, res, next) => {
       user = memoryUsers.find(u => u.id === userId) || req.user;
       if (user && !user.roles) user.roles = await loadUserRoles(user.id, user.role);
     }
+    if (user && String(user.email || '').endsWith('@mini.local')) user.email = '';
 
     return res.json({
       code: 200,

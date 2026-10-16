@@ -1,0 +1,20 @@
+[Unit]
+Description=Design Review Web
+After=network-online.target design-review-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=designreview
+Group=designreview
+WorkingDirectory=/opt/design-review-system/apps/web
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/env node /opt/design-review-system/apps/web/node_modules/next/dist/bin/next start -p 3000 -H 127.0.0.1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

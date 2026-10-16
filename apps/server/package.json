@@ -5,8 +5,10 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:image-studio-worker": "tsx watch src/image-studio-worker-main.ts",
     "build": "tsup",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "start:image-studio-worker": "node dist/image-studio-worker-main.js"
   },
   "dependencies": {
     "@design-review/shared": "workspace:*",
@@ -14,9 +16,11 @@
     "ajv-formats": "^3.0.1",
     "ali-oss": "^6.23.0",
     "bcryptjs": "^3.0.3",
+    "bullmq": "^6.3.12",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.12.0",
@@ -25,6 +29,7 @@
     "sharp": "^0.35.4",
     "socket.io": "^4.8.4",
     "tencentcloud-sdk-nodejs": "^4.1.307",
+    "ws": "8.21.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -37,6 +42,7 @@
     "@types/node": "^22.10.2",
     "@types/nodemailer": "^6.4.16",
     "@types/pg": "^8.11.10",
+    "@types/ws": "8.18.2",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.0"

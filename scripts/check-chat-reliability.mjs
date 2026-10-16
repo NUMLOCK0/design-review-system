@@ -63,7 +63,8 @@ try {
     { orderId: id, clientMessageId, body: '可靠性检查 A' },
     (error, result) => error ? reject(error) : resolve(result)));
   assert(ack.ok && ack.message.seq === 1, '发送确认失败');
-  assert((await event).id === ack.message.id, '实时消息与落库消息不一致');
+  const delivered = await event;
+  assert(delivered.type === 'chat:message' && delivered.message?.id === ack.message.id, '实时消息与落库消息不一致');
   const duplicate = await api(`/orders/${id}/messages`, senderToken, { method: 'POST', body: JSON.stringify({ clientMessageId, body: '可靠性检查 A' }) });
   assert(duplicate.status === 200 && duplicate.body.data.id === ack.message.id, '重试未返回原消息');
   const [count] = await pool.query('SELECT COUNT(*) AS n FROM chat_messages WHERE order_id=?', [id]);

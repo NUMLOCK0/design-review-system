@@ -19,7 +19,7 @@ const ok = (data: unknown) => ({ code: 200, success: true, data });
 orderDraftsRouter.get('/current', async (req, res, next) => {
   try {
     if (!dbPool) fail('草稿保存需要数据库连接', 503);
-    const [rows]: any = await dbPool.query('SELECT version, payload_json, updated_at FROM order_creation_drafts WHERE user_id=? LIMIT 1', [req.user!.id]);
+    const [rows]: any = await dbPool!.query('SELECT version, payload_json, updated_at FROM order_creation_drafts WHERE user_id=? LIMIT 1', [req.user!.id]);
     const row = rows[0];
     res.json(ok(row ? { version: Number(row.version), payload: typeof row.payload_json === 'string' ? JSON.parse(row.payload_json) : row.payload_json, updatedAt: row.updated_at } : null));
   } catch (error) { next(error); }
@@ -29,7 +29,7 @@ orderDraftsRouter.put('/current', async (req, res, next) => {
   try {
     if (!dbPool) fail('草稿保存需要数据库连接', 503);
     const body = z.object({ version: z.number().int().nonnegative(), payload: payloadSchema }).strict().parse(req.body);
-    const connection = await dbPool.getConnection();
+    const connection = await dbPool!.getConnection();
     try {
       await connection.beginTransaction();
       const [rows]: any = await connection.query('SELECT version FROM order_creation_drafts WHERE user_id=? FOR UPDATE', [req.user!.id]);
@@ -50,7 +50,7 @@ orderDraftsRouter.delete('/current', async (req, res, next) => {
   try {
     if (!dbPool) fail('草稿服务需要数据库连接', 503);
     const version = z.number().int().nonnegative().parse(req.body?.version);
-    const [result]: any = await dbPool.query('DELETE FROM order_creation_drafts WHERE user_id=? AND version=?', [req.user!.id, version]);
+    const [result]: any = await dbPool!.query('DELETE FROM order_creation_drafts WHERE user_id=? AND version=?', [req.user!.id, version]);
     if (!result.affectedRows) fail('草稿版本已变化，未能清除旧草稿', 409);
     res.json(ok(null));
   } catch (error) { next(error); }

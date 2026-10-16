@@ -1,0 +1,1 @@
+export { ImageStudioWorkflow as ImageStudioWorkspace } from './workspace-flow';

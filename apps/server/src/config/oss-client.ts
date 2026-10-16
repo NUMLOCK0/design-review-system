@@ -58,7 +58,8 @@ if (isOssConfigured) {
 export async function uploadBufferToOss(
   fileBuffer: Buffer,
   filename: string,
-  folderName: string = 'design-images'
+    folderName: string = 'design-images',
+    contentType?: string
 ): Promise<{ url: string; name: string; size: number }> {
   if (!ossClient) {
     throw new Error('OSS 客户端未配置或未就绪');
@@ -69,7 +70,8 @@ export async function uploadBufferToOss(
   const result = await ossClient.put(objectKey, fileBuffer, {
     headers: {
       // OSS 对象保持私有，只能通过受控流程生成签名地址读取。
-      'x-oss-object-acl': 'private'
+        'x-oss-object-acl': 'private',
+        ...(contentType ? { 'Content-Type': contentType } : {})
     }
   });
 
@@ -85,6 +87,16 @@ export async function uploadBufferToOss(
     name: objectKey,
     size: fileBuffer.length
   };
+}
+
+/** Store bytes at a caller-owned, server-generated key. Never accept client supplied object keys. */
+export async function putPrivateBufferAtOssKey(objectKey: string, fileBuffer: Buffer, contentType: string) {
+  if (!ossClient) throw new Error('OSS 客户端未配置或未就绪');
+  if (!objectKey.startsWith('private/')) throw new Error('只允许写入私有 OSS 路径');
+  const result = await ossClient.put(objectKey, fileBuffer, {
+    headers: { 'Content-Type': contentType, 'x-oss-object-acl': 'private' }
+  });
+  return { url: result.url, name: objectKey, size: fileBuffer.length };
 }
 
 export function getSignedOssUrl(objectKey: string, expires = 300) {

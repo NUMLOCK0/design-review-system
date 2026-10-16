@@ -9,7 +9,7 @@
       <view v-if="!workspace.forms.length" class="hint">可等待设计师发送表单，也可以自行选择模板完善需求。</view>
       <button v-if="!closed" class="secondary" :disabled="busy" @tap="chooseTemplate">＋ 选择需求模板</button>
       <view v-if="submitted.length && !closed" class="panel space-top"><view class="subtitle">汇总并发起确认</view><view class="muted space-top">选择本次纳入需求的已提交表单。{{ workspace.designerId ? '品牌方与设计师确认同一版本。' : '当前由品牌方确认，接单后设计师需明确承接。' }}</view><checkbox-group @change="selectForms"><label v-for="form in submitted" :key="form.id" class="source-choice"><checkbox :value="form.id" :checked="selected.includes(form.id)" color="#2563eb" /><text>{{ form.template.name }} · 第 {{ form.revision }} 次提交</text></label></checkbox-group><button class="primary space-top" :disabled="busy || !selected.length" :loading="busy" @tap="createCandidate">发起需求确认</button></view>
-      <view class="section-heading">需求确认</view>
+      <view id="confirmation-section" class="section-heading">需求确认</view>
       <view v-for="candidate in workspace.candidates" :key="candidate.id" class="panel" @tap="openCandidate(candidate.id)"><view class="row"><view class="subtitle">{{ candidate.policy === 'both' ? '双方需求确认' : '品牌方需求确认' }}</view><text class="badge">{{ candidateStatus(candidate.status) }}</text></view><view class="muted space-top">{{ candidate.approvers.map(item => `${item.name}：${decisionText(item.decision)}`).join(' · ') }}</view><view class="link space-top">查看完整内容与差异 →</view></view>
       <view v-if="!workspace.candidates.length" class="muted">提交资料后可汇总并发起需求确认。</view>
       <view class="section-heading">正式需求版本</view>
@@ -19,20 +19,36 @@
   </view>
 </template>
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import { onLoad, onShow, onPullDownRefresh } from '@dcloudio/uni-app';
 import type { CollaborationWorkspace } from '@design-review/shared';
 import { api, requireSession, uuid } from '../../lib/api';
-const orderId = ref(''); const workspace = ref<CollaborationWorkspace | null>(null); const selected = ref<string[]>([]); const error = ref(''); const loading = ref(false); const busy = ref(false);
+const orderId = ref(''); const workspace = ref<CollaborationWorkspace | null>(null); const selected = ref<string[]>([]); const error = ref(''); const loading = ref(false); const busy = ref(false); const focusConfirmations = ref(false);
 const submitted = computed(() => workspace.value?.forms.filter(form => form.status === 'submitted') || []);
 const closed = computed(() => ['completed', 'cancelled'].includes(workspace.value?.status || ''));
-onLoad(options => { orderId.value = String(options?.orderId || ''); });
+onLoad(options => { orderId.value = String(options?.orderId || ''); focusConfirmations.value = String(options?.section || '') === 'confirmations'; });
 onShow(() => { if (requireSession()) void load(); });
 onPullDownRefresh(() => { void load().finally(() => uni.stopPullDownRefresh()); });
 async function load() {
   if (loading.value || !orderId.value) return;
   loading.value = true; error.value = '';
-  try { workspace.value = await api.workspace(orderId.value); selected.value = selected.value.filter(id => submitted.value.some(form => form.id === id)); if (!selected.value.length) selected.value = submitted.value.map(form => form.id); }
+  try {
+    workspace.value = await api.workspace(orderId.value);
+    selected.value = selected.value.filter(id => submitted.value.some(form => form.id === id));
+    if (!selected.value.length) selected.value = submitted.value.map(form => form.id);
+    if (focusConfirmations.value) {
+      focusConfirmations.value = false;
+      nextTick(() => {
+        const query = uni.createSelectorQuery();
+        query.select('#confirmation-section').boundingClientRect();
+        query.selectViewport().scrollOffset();
+        query.exec(result => {
+          const sectionTop = (result?.[0]?.top || 0) + (result?.[1]?.scrollTop || 0);
+          uni.pageScrollTo({ scrollTop: sectionTop, duration: 240 });
+        });
+      });
+    }
+  }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '加载失败'; }
   finally { loading.value = false; }
 }

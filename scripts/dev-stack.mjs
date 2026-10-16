@@ -1,19 +1,24 @@
 #!/usr/bin/env node
 import { spawn, execFileSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const stateDir = join(root, '.cache', 'dev-stack');
+const serverDir = join(root, 'apps', 'server');
+const serverRequire = createRequire(join(serverDir, 'package.json'));
 const webDir = join(root, 'apps', 'web');
 const uniDir = join(root, 'apps', 'uni-app');
 const localApi = 'http://127.0.0.1:8080/api';
 const services = [
-  { name: 'server', cwd: join(root, 'apps', 'server'), cli: 'node_modules/tsx/dist/cli.mjs', args: ['watch', 'src/server.ts'], url: `${localApi}/health`, env: { NODE_ENV: 'development' } },
+  { name: 'server', cwd: serverDir, cli: 'node_modules/tsx/dist/cli.mjs', args: ['watch', 'src/server.ts'], url: `${localApi}/health`, env: { NODE_ENV: 'development' } },
+  { name: 'image-studio-worker', cwd: serverDir, cli: 'node_modules/tsx/dist/cli.mjs', args: ['watch', 'src/image-studio-worker-main.ts'], redisHeartbeat: true, env: { NODE_ENV: 'development' } },
   { name: 'web', cwd: webDir, cli: 'node_modules/next/dist/bin/next', args: ['dev', '-p', '3000'], url: 'http://127.0.0.1:3000/login', env: { NODE_ENV: 'development', API_PROXY_TARGET: 'http://127.0.0.1:8080' } },
-  { name: 'h5', cwd: uniDir, cli: 'node_modules/@dcloudio/vite-plugin-uni/bin/uni.js', args: [], url: 'http://127.0.0.1:5173/', env: { NODE_ENV: 'development', VITE_API_BASE_URL: localApi } },
-  { name: 'mini', cwd: uniDir, cli: 'node_modules/@dcloudio/vite-plugin-uni/bin/uni.js', args: ['-p', 'mp-weixin'], artifact: join(uniDir, 'dist/dev/mp-weixin/app.json'), env: { NODE_ENV: 'development', VITE_API_BASE_URL: localApi } },
+  { name: 'h5', cwd: uniDir, cli: 'node_modules/@dcloudio/vite-plugin-uni/bin/uni.js', args: [], url: 'http://[::1]:5173/', env: { NODE_ENV: 'development', VITE_API_BASE_URL: localApi } },
+  // Let Vite read apps/uni-app/.env.local so a phone can use the computer's LAN address.
+  { name: 'mini', cwd: uniDir, cli: 'node_modules/@dcloudio/vite-plugin-uni/bin/uni.js', args: ['-p', 'mp-weixin'], artifact: join(uniDir, 'dist/dev/mp-weixin/app.json'), env: { NODE_ENV: 'development' } },
 ];
 
 function paths(service) {
@@ -41,8 +46,43 @@ function owned(service) {
 
 async function probe(service, record) {
   if (!record) return false;
+  if (service.redisHeartbeat) {
+    let client;
+    try {
+      const dotenv = serverRequire('dotenv');
+      const redisUrl = process.env.REDIS_URL || dotenv.parse(readFileSync(join(serverDir, '.env'))).REDIS_URL;
+      if (!redisUrl) return false;
+      const Redis = serverRequire('ioredis');
+      client = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 2000, maxRetriesPerRequest: 1, retryStrategy: () => null });
+      client.on('error', () => {});
+      await client.connect();
+      let cursor = '0';
+      for (let page = 0; page < 10; page++) {
+        const [next, keys] = await client.scan(cursor, 'MATCH', 'image-studio:worker:*', 'COUNT', 100);
+        if (keys.length) {
+          const values = await client.mget(...keys);
+          if (values.some((value) => {
+            try {
+              const heartbeat = JSON.parse(value);
+              return heartbeat.at >= record.startedAt - 3000 && heartbeat.at >= Date.now() - 20_000;
+            } catch { return false; }
+          })) return true;
+        }
+        cursor = next;
+        if (cursor === '0') break;
+      }
+    } catch { return false; }
+    finally { client?.disconnect(); }
+    return false;
+  }
   if (service.artifact) {
-    try { return statSync(service.artifact).mtimeMs >= record.startedAt - 2000; } catch { return false; }
+    try {
+      if (statSync(service.artifact).mtimeMs < record.startedAt - 2000) return false;
+      const manifest = JSON.parse(readFileSync(service.artifact, 'utf8'));
+      const outputDir = dirname(service.artifact);
+      return Array.isArray(manifest.pages) && manifest.pages.every((page) =>
+        typeof page === 'string' && existsSync(join(outputDir, `${page}.wxml`)) && existsSync(join(outputDir, `${page}.js`)));
+    } catch { return false; }
   }
   try {
     const response = await fetch(service.url, { signal: AbortSignal.timeout(2500), redirect: 'follow' });
@@ -93,7 +133,7 @@ async function up() {
       console.log(`${service.name} 已运行 (PID ${record.pid})`);
     }
     await waitReady(service, record);
-    console.log(`${service.name} 已就绪${service.url ? `：${service.url}` : `：${service.artifact}`}`);
+    console.log(`${service.name} 已就绪：${service.redisHeartbeat ? 'Redis 队列心跳正常' : service.url || service.artifact}`);
   }
 }
 
@@ -139,12 +179,20 @@ try {
   if (command === 'up') await up();
   else if (command === 'down') await down();
   else if (command === 'status') await status();
+  else if (command === 'restart-mini') {
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    const mini = services.find((service) => service.name === 'mini');
+    await stop(mini);
+    const record = launch(mini);
+    await waitReady(mini, record);
+    console.log(`mini 已就绪：${mini.artifact}`);
+  }
   else if (command === 'restart') {
     await down();
     rmSync(join(webDir, '.next-dev'), { recursive: true, force: true });
     await up();
   } else {
-    console.error('用法：pnpm dev:up | dev:down | dev:status | dev:restart');
+    console.error('用法：pnpm dev:up | dev:down | dev:status | dev:restart | dev:restart:mp');
     process.exitCode = 1;
   }
 } catch (error) {

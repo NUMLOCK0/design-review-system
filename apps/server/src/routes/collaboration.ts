@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { authenticate } from '../middleware/auth.middleware.js';
 import {
   collaborationCommand, createCollaborationForm, createRequirementCandidate, decideRequirement,
-  createPresetCollaborationForm, createComposedCollaborationForm,
+  createPresetCollaborationForm, createComposedCollaborationForm, createManagedComposedCollaborationForm,
   getCollaborationWorkspace, listCollaborationOrders, returnCollaborationForm,
   startRequirementExecution, updateCollaborationForm,
   getDesignWorkflow, saveDesignWorkflow,
@@ -54,10 +54,17 @@ collaborationRouter.post('/orders/:orderId/forms/preset', handler(async (req, re
     (connection, order) => createPresetCollaborationForm(connection, order, req.user!, body.presetId)));
 }));
 collaborationRouter.post('/orders/:orderId/forms/composed', handler(async (req, res) => {
-  const body = z.object({ selections: z.array(z.object({ presetId: z.string().regex(/^tpl_(?:[1-9]|1[0-3])$/), fieldKeys: z.array(z.string().min(1).max(80)).min(1).max(30) }).strict()).min(1).max(13) }).strict().parse(req.body);
-  if (new Set(body.selections.map(item => item.presetId)).size !== body.selections.length) return res.status(400).json({ success: false, code: 400, message: '业务类别不可重复' });
+  const legacySelection = z.object({ presetId: z.string().regex(/^tpl_(?:[1-9]|1[0-3])$/), fieldKeys: z.array(z.string().min(1).max(80)).min(1).max(30) }).strict();
+  const managedSelection = z.object({ templateId: z.string().min(1).max(80), templateVersion: z.number().int().positive(), fieldKeys: z.array(z.string().min(1).max(80)).min(1).max(80) }).strict();
+  const body = z.object({ selections: z.array(z.union([managedSelection, legacySelection])).min(1).max(80) }).strict().parse(req.body);
+  const managed = body.selections.every((item) => 'templateId' in item);
+  if (!managed && body.selections.some((item) => 'templateId' in item)) return res.status(400).json({ success: false, code: 400, message: '不能混用预制表单与后台配置表单' });
+  const ids = body.selections.map((item) => 'templateId' in item ? item.templateId : item.presetId);
+  if (new Set(ids).size !== ids.length) return res.status(400).json({ success: false, code: 400, message: '表单类别不可重复' });
   ok(res, await collaborationCommand(String(req.params.orderId), req.user!, commandKey(req), { action: 'create-composed-form', ...body },
-    (connection, order) => createComposedCollaborationForm(connection, order, req.user!, body.selections)));
+    (connection, order) => managed
+      ? createManagedComposedCollaborationForm(connection, order, req.user!, body.selections as Array<z.infer<typeof managedSelection>>)
+      : createComposedCollaborationForm(connection, order, req.user!, body.selections as Array<z.infer<typeof legacySelection>>)));
 }));
 // WeChat's native request API does not support PATCH; keep POST /draft alongside the Web endpoint.
 for (const route of [{ method: 'patch' as const, suffix: '', submit: false }, { method: 'post' as const, suffix: '/draft', submit: false }, { method: 'post' as const, suffix: '/submit', submit: true }]) {

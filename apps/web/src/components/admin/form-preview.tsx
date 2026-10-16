@@ -36,21 +36,31 @@ function FormDecor({ uischema }: { uischema: UISchemaElement }) {
 
 function FieldControl(props: ControlProps) {
   const { data, handleChange, path, label, required, errors, enabled, visible, uischema, schema } = props;
-  const options = (uischema as { options?: { kind?: FormFieldKind; placeholder?: string; choices?: FormOption[]; presets?: string[]; children?: FormField[]; required?: boolean } }).options || {};
+  const options = (uischema as { options?: { kind?: FormFieldKind; placeholder?: string; choices?: FormOption[]; presets?: string[]; children?: FormField[]; required?: boolean; maxFiles?: number | null } }).options || {};
   const kind = options.kind || 'text';
   const choices = options.choices || [];
+  const maxFiles = options.maxFiles === null ? null : options.maxFiles ?? 1;
   const [uploading, setUploading] = useState(false);
   const openFile = useContext(FileOpener);
   if (!visible) return null;
   const disabled = !enabled;
   const set = (value: unknown) => handleChange(path, value);
   const inputClass = 'h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-50';
-  const upload = async (file?: File) => {
-    if (!file) return;
+  const upload = async (fileList?: FileList | null) => {
+    const selected = Array.from(fileList || []);
+    if (!selected.length) return;
+    const current = Array.isArray(data) ? data.filter((value): value is string => typeof value === 'string') : typeof data === 'string' && data ? [data] : [];
+    if (maxFiles !== null && (maxFiles === 1 ? selected.length > 1 : current.length + selected.length > maxFiles)) {
+      toast.error(`最多上传 ${maxFiles} 个文件`); return;
+    }
     setUploading(true);
     try {
-      const result = await uploadFile(file, kind === 'image' ? 'order-reference-images' : 'order-materials');
-      set(result.url);
+      const added: string[] = [];
+      for (const file of selected) {
+        const result = await uploadFile(file, kind === 'image' ? 'order-reference-images' : 'order-materials');
+        added.push(result.url);
+        set(maxFiles === 1 ? result.url : [...current, ...added]);
+      }
     } catch (error) { toast.error(error instanceof Error ? error.message : '上传失败'); }
     finally { setUploading(false); }
   };
@@ -69,15 +79,22 @@ function FieldControl(props: ControlProps) {
         <button type="button" disabled={disabled || rows.length >= max} onClick={() => set([...rows, {}])} className="rounded-xl border border-dashed border-blue-300 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700 disabled:opacity-40">＋ 添加一项</button>
       </div>;
     }
-    if (kind === 'image' || kind === 'file') return <div className="space-y-2">
-      {!disabled && <label className="flex min-h-20 cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center text-xs text-slate-500 hover:border-blue-400">
-        {uploading ? '上传中…' : data ? '重新上传' : kind === 'image' ? '点击上传图片' : '点击上传文件'}
-        <input type="file" accept={kind === 'image' ? 'image/*' : undefined} disabled={disabled || uploading} className="sr-only" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ''; }} />
-      </label>}
-      {data && <div className="flex items-center gap-2 text-xs"><span className="min-w-0 truncate text-slate-500">文件已上传</span>{!disabled && <button type="button" onClick={() => set(undefined)} className="shrink-0 text-rose-600">移除</button>}</div>}
-      {kind === 'image' && data && <AuthenticatedImage src={String(data)} alt={label} className="max-h-40 rounded-lg object-contain" />}
-      {kind === 'file' && data && openFile && <button type="button" className="text-xs text-emerald-700 underline" onClick={() => { void openFile(String(data)).catch(error => toast.error(error.message)); }}>下载需求资料</button>}
-    </div>;
+    if (kind === 'image' || kind === 'file') {
+      const files = Array.isArray(data) ? data.filter((value): value is string => typeof value === 'string') : typeof data === 'string' && data ? [data] : [];
+      const canAdd = maxFiles === null || files.length < maxFiles || maxFiles === 1;
+      return <div className="space-y-2">
+        {!disabled && canAdd && <label className="flex min-h-20 cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center text-xs text-slate-500 hover:border-blue-400">
+          {uploading ? '上传中…' : maxFiles === 1 && files.length ? '重新上传' : kind === 'image' ? '点击上传图片' : '点击上传文件'}
+          <input type="file" multiple={maxFiles !== 1} accept={kind === 'image' ? 'image/*' : undefined} disabled={disabled || uploading} className="sr-only" onChange={(event) => { void upload(event.target.files); event.target.value = ''; }} />
+        </label>}
+        <p className="text-[11px] text-slate-400">已上传 {files.length} 个{maxFiles === null ? ' · 不限制个数' : ` · 最多 ${maxFiles} 个`}</p>
+        {files.map((url, index) => <div key={`${url}-${index}`} className="flex items-center gap-2 rounded-lg border border-slate-200 p-2 text-xs">
+          {kind === 'image' && <AuthenticatedImage src={url} alt={`${label} ${index + 1}`} className="h-14 w-14 shrink-0 rounded object-cover" />}
+          {kind === 'file' && openFile ? <button type="button" className="min-w-0 flex-1 truncate text-left text-emerald-700 underline" onClick={() => { void openFile(url).catch(error => toast.error(error.message)); }}>查看文件 {index + 1}</button> : <span className="min-w-0 flex-1 truncate text-slate-600">{kind === 'image' ? `图片 ${index + 1}` : `文件 ${index + 1}`}</span>}
+          {!disabled && <button type="button" onClick={() => { const next = files.filter((_, fileIndex) => fileIndex !== index); set(maxFiles === 1 ? next[0] : next); }} className="shrink-0 text-rose-600">移除</button>}
+        </div>)}
+      </div>;
+    }
     if (kind === 'textarea') return <textarea value={String(data ?? '')} disabled={disabled} placeholder={options.placeholder} rows={4} onChange={(event) => set(event.target.value)} className={`${inputClass} h-auto min-h-24 py-2.5`} />;
     if (kind === 'switch') return <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-600"><input type="checkbox" checked={Boolean(data)} disabled={disabled} onChange={(event) => set(event.target.checked)} className="h-4 w-4 accent-blue-600" />{data ? '已开启' : '未开启'}</label>;
     if (kind === 'checkbox') return <div className="flex flex-wrap gap-3">{choices.map((choice) => <label key={choice.value} className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-slate-700"><input type="checkbox" checked={Array.isArray(data) && data.includes(choice.value)} disabled={disabled} onChange={(event) => { const current = Array.isArray(data) ? data as string[] : []; set(event.target.checked ? [...current, choice.value] : current.filter((item) => item !== choice.value)); }} className="h-4 w-4 accent-blue-600" />{choice.label}</label>)}</div>;

@@ -12,16 +12,43 @@
     { "path": "pages/requirements/detail", "style": { "navigationBarTitleText": "需求确认与详情" } },
     { "path": "pages/reviews/index", "style": { "navigationBarTitleText": "设计成果", "enablePullDownRefresh": true } },
     { "path": "pages/detail/detail", "style": { "navigationBarTitleText": "设计稿审核" } },
-    { "path": "pages/account/index", "style": { "navigationBarTitleText": "我的账户" } }
+    { "path": "pages/messages/index", "style": { "navigationBarTitleText": "消息", "enablePullDownRefresh": true } },
+    { "path": "pages/messages/category", "style": { "navigationBarTitleText": "消息列表", "enablePullDownRefresh": true } },
+    { "path": "pages/messages/detail", "style": { "navigationBarTitleText": "消息详情" } },
+    { "path": "pages/orders/index", "style": { "navigationBarTitleText": "我的订单", "enablePullDownRefresh": true } },
+    { "path": "pages/orders/detail", "style": { "navigationBarTitleText": "订单详情", "enablePullDownRefresh": true } },
+    { "path": "pages/orders/edit", "style": { "navigationBarTitleText": "发布订单" } },
+    { "path": "pages/billing/index", "style": { "navigationBarTitleText": "订单账单", "enablePullDownRefresh": true } },
+    { "path": "pages/account/index", "style": { "navigationStyle": "custom", "navigationBarTitleText": "我的账户" } }
   ],
   "globalStyle": { "navigationBarTextStyle": "black", "navigationBarTitleText": "COZI 品牌协作", "navigationBarBackgroundColor": "#E8EFF8", "backgroundColor": "#E8EFF8" },
   "tabBar": {
     "color": "#64748B", "selectedColor": "#2563EB", "backgroundColor": "#ffffff", "borderStyle": "white",
     "list": [
-      { "pagePath": "pages/index/index", "text": "工作台" },
-      { "pagePath": "pages/sessions/index", "text": "会话" },
-      { "pagePath": "pages/reviews/index", "text": "设计稿" },
-      { "pagePath": "pages/account/index", "text": "我的" }
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页",
+        "iconPath": "static/tabbar/workbench.png",
+        "selectedIconPath": "static/tabbar/workbench-active.png"
+      },
+      {
+        "pagePath": "pages/orders/index",
+        "text": "订单",
+        "iconPath": "static/tabbar/orders.png",
+        "selectedIconPath": "static/icons/shop.png"
+      },
+      {
+        "pagePath": "pages/sessions/index",
+        "text": "会话",
+        "iconPath": "static/tabbar/sessions.png",
+        "selectedIconPath": "static/tabbar/sessions-active.png"
+      },
+      {
+        "pagePath": "pages/account/index",
+        "text": "我的",
+        "iconPath": "static/tabbar/account.png",
+        "selectedIconPath": "static/tabbar/account-active.png"
+      }
     ]
   }
 }

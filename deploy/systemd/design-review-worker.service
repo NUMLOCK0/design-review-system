@@ -1,0 +1,21 @@
+[Unit]
+Description=Design Review Image Studio Worker
+After=network-online.target design-review-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=designreview
+Group=designreview
+WorkingDirectory=/opt/design-review-system/apps/server
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/design-review-system/apps/server/.env
+ExecStart=/usr/bin/env node /opt/design-review-system/apps/server/dist/image-studio-worker-main.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { authenticate } from '../middleware/auth.middleware.js';
+import { authenticate, type AuthUserPayload } from '../middleware/auth.middleware.js';
+import { dbPool } from '../config/database.js';
 import {
   createOssObjectKey,
   getObjectFromOss,
@@ -31,12 +32,12 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-const allowedFolders = new Set(['design-images', 'reference-samples', 'annotations', 'source-files', 'order-materials', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio']);
+const allowedFolders = new Set(['design-images', 'reference-samples', 'annotations', 'source-files', 'order-materials', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio', 'image-studio']);
 const imageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 const sourceExtensions = new Set(['.zip', '.rar', '.7z', '.psd', '.ai', '.eps', '.c4d', '.blend', '.pdf']);
 const sourceMimeTypes = new Set(['application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed', 'application/octet-stream', 'application/pdf', 'image/vnd.adobe.photoshop']);
-const imageOnlyFolders = new Set(['design-images', 'reference-samples', 'annotations', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio']);
+const imageOnlyFolders = new Set(['design-images', 'reference-samples', 'annotations', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio', 'image-studio']);
 const maxUploadSize = 100 * 1024 * 1024;
 
 type PendingOssUpload = {
@@ -65,6 +66,27 @@ function isAllowedUpload(folder: string, filename: string, mimetype: string) {
   if (imageOnlyFolders.has(folder)) return imageMimeTypes.has(mimetype) && imageExtensions.has(extension);
   if (folder === 'order-materials' && imageMimeTypes.has(mimetype) && imageExtensions.has(extension)) return true;
   return sourceMimeTypes.has(mimetype) && sourceExtensions.has(extension);
+}
+
+async function isIntakeVideoSharedWith(assetId: string, user: AuthUserPayload) {
+  if (!dbPool) return false;
+  const url = `/api/upload/assets/${assetId}`;
+  const [rows]: any = await dbPool.query(`SELECT m.id FROM intake_messages m
+    JOIN intake_sessions s ON s.id=m.session_id
+    LEFT JOIN service_conversation_assignments a ON a.conversation_type='intake' AND a.conversation_id=s.id
+    WHERE LOCATE(?,m.body)>0 AND (s.creator_id=? OR s.guest_id=? OR ?='admin'
+      OR (?='customer_service' AND (a.assigned_service_id IS NULL OR a.assigned_service_id=?))) LIMIT 1`,
+  [url, user.id, user.id, user.role, user.role, user.id]);
+  return Boolean(rows.length);
+}
+
+async function isOrderVideoSharedWith(assetId: string, user: AuthUserPayload) {
+  if (!dbPool) return false;
+  const [rows]: any = await dbPool.query(`SELECT m.id FROM chat_messages m
+    JOIN design_orders o ON o.id=m.order_id
+    WHERE LOCATE(?,m.body)>0 AND (o.creator_id=? OR o.claimed_by_id=?) LIMIT 1`,
+  [`/api/upload/assets/${assetId}`, user.id, user.id]);
+  return Boolean(rows.length);
 }
 
 function protectedAssetUrl(assetId: string) {
@@ -99,6 +121,13 @@ uploadRouter.post('/', authenticate, upload.single('file'), async (req, res, nex
     }
 
     const requestedFolder = String(req.body.folder || 'design-images');
+    const requireOss = req.body.requireOss === 'true';
+    if (requireOss && !isOssConfigured) {
+      return res.status(503).json({ code: 503, success: false, message: '聊天图片需要保存到 OSS；请在服务端配置 OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET 和 OSS_BUCKET 后重试' });
+    }
+    if (requestedFolder === 'image-studio' && req.user?.role !== 'customer_service') {
+      return res.status(403).json({ code: 403, success: false, message: '生图工作台素材仅对客服开放' });
+    }
     if (!allowedFolders.has(requestedFolder)) {
       return res.status(400).json({ code: 400, success: false, message: '不支持的文件目录' });
     }
@@ -107,6 +136,9 @@ uploadRouter.post('/', authenticate, upload.single('file'), async (req, res, nex
     }
 
     const folder = requestedFolder;
+    if (folder === 'image-studio' && !isOssConfigured) {
+      return res.status(503).json({ code: 503, success: false, message: '生图工作台要求配置私有 OSS 存储' });
+    }
     const assetId = createAssetId();
     const originalName = req.file.originalname;
     const isImage = isImageUpload(req.file.mimetype);
@@ -120,7 +152,12 @@ uploadRouter.post('/', authenticate, upload.single('file'), async (req, res, nex
     let ossPreviewKey: string | undefined;
 
     if (isOssConfigured) {
-      const originalResult = await uploadBufferToOss(req.file.buffer, originalName, `private/${folder}`);
+        const originalResult = await uploadBufferToOss(
+          req.file.buffer,
+          originalName,
+          `private/${folder}`,
+          req.file.mimetype
+        );
       ossOriginalKey = originalResult.name;
       storageType = 'aliyun-oss';
 
@@ -182,6 +219,9 @@ uploadRouter.post('/presign', authenticate, async (req, res, next) => {
     const folder = String(req.body.folder || 'design-images');
     const mimetype = String(req.body.contentType || 'application/octet-stream');
     const size = Number(req.body.size);
+    if (folder === 'image-studio' && req.user?.role !== 'customer_service') {
+      return res.status(403).json({ code: 403, success: false, message: '生图工作台素材仅对客服开放' });
+    }
     if (!filename || !Number.isFinite(size) || size <= 0 || size > maxUploadSize) {
       return res.status(400).json({ code: 400, success: false, message: '文件名或文件大小无效，单文件不能超过 100MB' });
     }
@@ -216,6 +256,9 @@ uploadRouter.post('/complete', authenticate, async (req, res, next) => {
     const pending = pendingOssUploads.get(assetId) || await findPendingOssUpload(assetId);
     if (!pending || pending.ownerId !== req.user!.id) {
       return res.status(400).json({ code: 400, success: false, message: '上传任务不存在或无权确认' });
+    }
+    if (pending.objectKey.startsWith('private/image-studio/') && req.user?.role !== 'customer_service') {
+      return res.status(403).json({ code: 403, success: false, message: '生图工作台素材仅对客服开放' });
     }
     if (pending.expiresAt < Date.now()) {
       pendingOssUploads.delete(assetId);
@@ -295,6 +338,20 @@ uploadRouter.get('/previews/:assetId', authenticate, async (req, res, next) => {
   }
 });
 
+// 视频播放先签发短时 OSS 地址，使浏览器可直接进行 Range 分段读取。
+uploadRouter.get('/videos/:assetId/playback', authenticate, async (req, res, next) => {
+  try {
+    const assetId = String(req.params.assetId);
+    const asset = protectedAssets.get(assetId) || await findMediaAsset(assetId);
+    if (!asset || !asset.mimetype.startsWith('video/')) return res.status(404).json({ code: 404, success: false, message: '视频不存在或已失效' });
+    const shared = asset.ownerId === req.user!.id || ['admin', 'customer_service'].includes(req.user!.role)
+      || await isOrderVideoSharedWith(assetId, req.user!) || await isIntakeVideoSharedWith(assetId, req.user!);
+    if (!shared) return res.status(403).json({ code: 403, success: false, message: '无权播放该视频' });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ code: 200, success: true, data: { url: asset.ossOriginalKey ? getSignedOssUrl(asset.ossOriginalKey, 300) : null } });
+  } catch (err) { next(err); }
+});
+
 // 原图/源文件不提供公开静态地址，只允许文件拥有者或审核/管理员下载。
 uploadRouter.get('/assets/:assetId', authenticate, async (req, res, next) => {
   try {
@@ -316,7 +373,8 @@ uploadRouter.get('/assets/:assetId', authenticate, async (req, res, next) => {
       return res.status(403).json({ code: 403, success: false, message: '原图仅在品牌方确认验收后向订单所属品牌方开放下载' });
     }
     if (asset.ownerId !== req.user!.id && req.user!.role !== 'admin' && req.user!.role !== 'customer_service' && !canDownloadAcceptedDelivery) {
-      return res.status(403).json({ code: 403, success: false, message: '无权读取该文件' });
+      const sharedChatVideo = asset.mimetype.startsWith('video/') && (await isOrderVideoSharedWith(assetId, req.user!) || await isIntakeVideoSharedWith(assetId, req.user!));
+      if (!sharedChatVideo) return res.status(403).json({ code: 403, success: false, message: '无权读取该文件' });
     }
 
     res.setHeader('Content-Type', asset.mimetype);
@@ -344,7 +402,7 @@ uploadRouter.get('/status', (req, res) => {
       bucket: process.env.OSS_BUCKET || '未配置',
       region: process.env.OSS_REGION || 'oss-cn-guangzhou',
       maxUploadSize: '100MB',
-      supportedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'application/zip', 'application/x-zip-compressed', 'image/vnd.adobe.photoshop']
+      supportedMimeTypes: [...imageMimeTypes, ...sourceMimeTypes]
     }
   });
 });

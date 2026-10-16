@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT_ROOT="${1:-/www/wwwroot/design-review-system}"
+PROJECT_ROOT="${1:-/opt/design-review-system}"
 
 fail() {
   echo "部署失败：$*" >&2
@@ -17,6 +17,7 @@ PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd)" || fail "项目目录不
 
 cd "$PROJECT_ROOT"
 [[ -f "$PROJECT_ROOT/apps/server/dist/server.js" ]] || fail "后端构建产物不存在"
+[[ -f "$PROJECT_ROOT/apps/server/dist/image-studio-worker-main.js" ]] || fail "生图 Worker 构建产物不存在"
 [[ -f "$PROJECT_ROOT/apps/web/.next/BUILD_ID" ]] || fail "前端构建产物不存在"
 
 echo "[1/2] 安装运行时依赖（不执行构建）"
@@ -24,6 +25,7 @@ NODE_ENV=production pnpm install --prod --frozen-lockfile
 
 echo "[2/2] 校验上传的前后端构建产物"
 [[ -f "$PROJECT_ROOT/apps/server/dist/server.js" ]] || fail "后端构建产物不存在"
+[[ -f "$PROJECT_ROOT/apps/server/dist/image-studio-worker-main.js" ]] || fail "生图 Worker 构建产物不存在"
 [[ -f "$PROJECT_ROOT/apps/web/.next/BUILD_ID" ]] || fail "前端构建产物不存在"
 
-echo "部署文件就绪，未操作 PM2。请手动重启 server 和 next。"
+echo "部署文件就绪。请按 docs/deployment-production.md 配置环境、数据库、systemd、Nginx 和小程序。"

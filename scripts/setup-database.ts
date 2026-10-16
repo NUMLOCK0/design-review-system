@@ -22,12 +22,12 @@ const accounts: Account[] = [
 
 async function main() {
   const phase = process.argv[2]?.replace(/^--phase=/, '') ?? 'all';
-  if (!['all', 'base', 'persistence', 'applications', 'evaluations', 'forms', 'chat', 'collaboration', 'accounts'].includes(phase)) {
+  if (!['all', 'schema', 'base', 'persistence', 'applications', 'evaluations', 'forms', 'chat', 'collaboration', 'runtime', 'accounts'].includes(phase)) {
     throw new Error('未知的数据库初始化阶段');
   }
-  const run = (name: string) => phase === 'all' || phase === name;
+  const run = (name: string) => phase === 'all' || phase === name || (phase === 'schema' && name !== 'accounts');
   const password = process.env.BOOTSTRAP_PASSWORD;
-  if (!password) throw new Error('请通过 BOOTSTRAP_PASSWORD 环境变量提供初始密码');
+  if (run('accounts') && !password) throw new Error('请通过 BOOTSTRAP_PASSWORD 环境变量提供初始密码');
   if (!process.env.MYSQL_URL) throw new Error(`请在 ${envPath} 配置 MYSQL_URL`);
 
   // Load the pool only after dotenv has read the explicit server .env file.
@@ -72,6 +72,19 @@ async function main() {
     console.log('检查需求协作表…');
     await ensureCollaborationSchema(dbPool);
     }
+    if (run('runtime')) {
+    const { ensureIntakeSchema } = await import('../apps/server/src/config/intake-schema');
+    const { ensureOrderDraftSchema } = await import('../apps/server/src/config/order-draft-schema');
+    const { ensureImageStudioSchema } = await import('../apps/server/src/config/image-studio-schema');
+    const { ensureAiConfigSchema } = await import('../apps/server/src/services/ai-config');
+    const { ensureAiCallLogSchema } = await import('../apps/server/src/services/ai-call-log');
+    console.log('检查邀请会话、订单草稿、生图与 AI 模型表…');
+    await ensureIntakeSchema(dbPool);
+    await ensureOrderDraftSchema(dbPool);
+    await ensureImageStudioSchema(dbPool);
+    await ensureAiConfigSchema();
+    await ensureAiCallLogSchema();
+    }
     if (run('forms')) {
     const { initializeFormTemplates } = await import('../apps/server/src/routes/form-templates');
     console.log('检查表单模板…');
@@ -94,14 +107,14 @@ async function main() {
       for (const account of accounts) {
         const existing = existingByEmail.get(account.email);
         if (existing) {
-          if (existing.role !== account.role || !existing.is_active || !existing.password_hash || !(await bcrypt.compare(password, existing.password_hash))) {
+          if (existing.role !== account.role || !existing.is_active || !existing.password_hash || !(await bcrypt.compare(password!, existing.password_hash))) {
             throw new Error(`${account.email} 已存在，但角色、状态或密码与本次要求不一致；未覆盖现有账号`);
           }
           alreadyPresent++;
           continue;
         }
         const id = `u_${crypto.randomUUID()}`;
-        const passwordHash = await bcrypt.hash(password, 10);
+        const passwordHash = await bcrypt.hash(password!, 10);
         newUsers.push([id, account.name, account.email, passwordHash, account.role, account.department, account.organizationId, account.role === 'advertiser', true]);
         newRoles.push([id, account.role]);
         created++;
@@ -133,7 +146,7 @@ async function main() {
     if (verified.length !== accounts.length) throw new Error(`账号核验失败：预期 ${accounts.length} 个，实际 ${verified.length} 个`);
     for (const account of accounts) {
       const row = verified.find((item: any) => item.email === account.email);
-      if (!row || row.role !== account.role || row.linked_role !== account.role || !row.is_active || !(await bcrypt.compare(password, row.password_hash))) {
+      if (!row || row.role !== account.role || row.linked_role !== account.role || !row.is_active || !(await bcrypt.compare(password!, row.password_hash))) {
         throw new Error(`${account.email} 核验失败`);
       }
     }

@@ -90,7 +90,7 @@ export function formatFieldAnswer(field: FormField | undefined, value: unknown):
     const label = (item: unknown) => field.options!.find(option => option.value === item)?.label || formatAnswer(item);
     return Array.isArray(value) ? value.map(label).join('、') : label(value);
   }
-  if (field.kind === 'image' || field.kind === 'file') return field.kind === 'image' ? '已上传图片' : '已上传文件';
+  if (field.kind === 'image' || field.kind === 'file') return `已上传${field.kind === 'image' ? '图片' : '文件'}${Array.isArray(value) ? ` ${value.length} 个` : ''}`;
   if (field.kind === 'repeat' && Array.isArray(value)) return value.map((row, index) => `第 ${index + 1} 项：${(field.children || []).filter(child => !['section', 'paragraph', 'divider'].includes(child.kind) && isFieldVisible(child, row)).map(child => `${child.label}：${formatFieldAnswer(child, row[child.key])}`).join('；')}`).join('\n');
   return formatAnswer(value);
 }

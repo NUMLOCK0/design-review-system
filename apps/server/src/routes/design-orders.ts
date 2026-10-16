@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { calculateOrderMinimumBudget } from '@design-review/shared';
 import type { DesignOrder, SystemConfig, ApiResponse, OrderImageRequirementItem } from '@design-review/shared';
 import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
@@ -19,6 +19,11 @@ export let designOrders: DesignOrder[] = [];
 
 function getMinimumOrderBudget(groups: OrderImageRequirementItem[] | undefined, config: SystemConfig, requiresPsd = false) {
   return calculateOrderMinimumBudget(groups, config.imageUnitPrices, config.minOrderBudget, requiresPsd, config.psdSurchargeRate, config.imageUnitPrice);
+}
+
+function visibleOrderStatus(order: DesignOrder) {
+  if (order.publicationStatus === 'rejected') return 'rejected';
+  return order.status === 'open' ? order.publicationStatus || order.status : order.status;
 }
 
 export async function activatePublishedOrder(order: DesignOrder) {
@@ -53,9 +58,7 @@ designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'design
       ? designOrders.filter((order) => order.claimedById === req.user!.id)
       : designOrders.filter((order) => order.creatorId === req.user!.id || order.organizationId === req.user!.organizationId);
   const statusCounts = list.reduce<Record<string, number>>((counts, order) => {
-    const currentStatus = order.status === 'cancelled' && order.publicationStatus !== 'rejected'
-      ? 'cancelled'
-      : order.publicationStatus || order.status;
+    const currentStatus = visibleOrderStatus(order);
     counts[currentStatus] = (counts[currentStatus] || 0) + 1;
     counts.all = (counts.all || 0) + 1;
     return counts;
@@ -68,9 +71,7 @@ designOrdersRouter.get('/mine', authenticate, requireRoles('advertiser', 'design
     return counts;
   }, { all: 0 });
   list = list.filter((order) => {
-    const currentStatus = order.status === 'cancelled' && order.publicationStatus !== 'rejected'
-      ? 'cancelled'
-      : order.publicationStatus || order.status;
+    const currentStatus = visibleOrderStatus(order);
     const statusMatched = status === 'all' || currentStatus === status;
     const keywordMatched = !keyword || order.title.toLowerCase().includes(keyword);
     const billingStatusMatched = billingStatus === 'all' || getBillingStatus(order) === billingStatus;
@@ -285,7 +286,7 @@ designOrdersRouter.post('/', authenticate, requireRoles('advertiser'), async (re
 });
 
 // 品牌方订单管理：未被接单的订单可编辑。
-designOrdersRouter.patch('/:id', authenticate, requireRoles('advertiser'), (req, res) => {
+const updateDesignOrder = (req: Request, res: Response) => {
   const order = designOrders.find((item) => item.id === req.params.id);
   const isOwner = order && (order.creatorId === req.user!.id || (Boolean(req.user!.isOrganizationAdmin) && Boolean(req.user!.organizationId) && order.organizationId === req.user!.organizationId));
   if (!order || !isOwner) return res.status(404).json({ code: 404, success: false, message: '订单不存在' });
@@ -355,7 +356,9 @@ designOrdersRouter.patch('/:id', authenticate, requireRoles('advertiser'), (req,
   order.updatedAt = new Date().toISOString();
   void persistDesignOrder(order);
   res.json({ code: 200, success: true, message: wasPublished ? '订单已更新，已重新提交客服审核' : '订单已更新', data: order, timestamp: Date.now() });
-});
+};
+designOrdersRouter.patch('/:id', authenticate, requireRoles('advertiser'), updateDesignOrder);
+designOrdersRouter.put('/:id', authenticate, requireRoles('advertiser'), updateDesignOrder);
 
 designOrdersRouter.post('/:id/resubmit', authenticate, requireRoles('advertiser'), (req, res) => {
   const order = designOrders.find((item) => item.id === req.params.id && item.creatorId === req.user!.id);

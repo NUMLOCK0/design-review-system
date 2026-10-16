@@ -74,7 +74,7 @@ async function normalizeCollations() {
     'review_image_groups', 'review_images', 'review_annotations', 'review_history',
     'design_orders', 'order_disputes', 'service_action_logs', 'admin_audit_logs', 'system_configs',
     'media_assets', 'site_messages', 'designer_profiles', 'designer_portfolios', 'customer_service_contacts',
-    'order_invitations', 'designer_wallets', 'withdrawal_requests', 'payment_events', 'pending_oss_uploads'
+    'order_invitations', 'designer_wallets', 'withdrawal_requests', 'payment_events', 'pending_oss_uploads', 'ai_model_configs'
   ];
   const [rows]: any = await dbPool!.query(
     `SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.TABLES

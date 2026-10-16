@@ -1,14 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { dbPool } from '../config/database.js';
-
-const configuredJwtSecret = String(process.env.JWT_SECRET || '').trim();
-if (process.env.NODE_ENV === 'production' && configuredJwtSecret.length < 32) {
-  throw new Error('生产环境必须配置至少 32 位 JWT_SECRET，禁止使用默认密钥');
-}
+import { JWT_SECRET } from '../config/jwt-secret.js';
 
 // 开发环境允许使用一次性本地密钥；正式环境缺失密钥时直接阻止启动。
-export const JWT_SECRET = configuredJwtSecret || 'local-development-secret-change-me';
+export { JWT_SECRET };
 export const AUTH_COOKIE_NAME = 'auth_token';
 
 // The development script can read a .env with NODE_ENV=production. HTTP localhost

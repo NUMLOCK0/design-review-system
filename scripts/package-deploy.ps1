@@ -33,7 +33,7 @@ function Copy-ProjectTree {
 
   New-Item -ItemType Directory -Path $Destination -Force | Out-Null
   foreach ($item in Get-ChildItem -LiteralPath $Source -Force) {
-    if ($item.PSIsContainer -and $excludedDirectories -contains $item.Name) { continue }
+    if ($item.PSIsContainer -and ($excludedDirectories -contains $item.Name -or $item.Name -like '.next*')) { continue }
     if (-not $item.PSIsContainer -and $excludedFiles -contains $item.Name) { continue }
     if (-not $item.PSIsContainer -and ($item.Name -like '*.log' -or $item.Name -like '*.zip' -or ($item.Name -like '.env.*' -and $item.Name -ne '.env.example') -or $item.Name -like '*.env')) { continue }
 
@@ -65,8 +65,10 @@ try {
   }
 
   $serverBuild = Join-Path $projectRoot 'apps/server/dist/server.js'
+  $workerBuild = Join-Path $projectRoot 'apps/server/dist/image-studio-worker-main.js'
   $webBuild = Join-Path $projectRoot 'apps/web/.next/BUILD_ID'
   if (-not (Test-Path -LiteralPath $serverBuild)) { throw "Backend build output missing: $serverBuild" }
+  if (-not (Test-Path -LiteralPath $workerBuild)) { throw "Worker build output missing: $workerBuild" }
   if (-not (Test-Path -LiteralPath $webBuild)) { throw "Frontend build output missing: $webBuild" }
 
   New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
@@ -80,6 +82,13 @@ try {
   if (-not $webBuildCache.StartsWith($tempRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Build cache path is outside the package temporary directory' }
   if (Test-Path -LiteralPath $webBuildCache) {
     Remove-Item -LiteralPath $webBuildCache -Recurse -Force
+  }
+
+  # ZIP timestamps cannot represent dates before 1980. Git checkouts on Windows
+  # can preserve older dates, so normalize only invalid staged timestamps.
+  $zipMinimumTimestamp = [datetime]::new(1980, 1, 2, 12, 0, 0)
+  foreach ($item in @(Get-Item -LiteralPath $stageRoot) + @(Get-ChildItem -LiteralPath $stageRoot -Recurse -Force)) {
+    if ($item.LastWriteTime -lt $zipMinimumTimestamp) { $item.LastWriteTime = $zipMinimumTimestamp }
   }
 
   Write-Output '[3/4] Packaging source and local build outputs'

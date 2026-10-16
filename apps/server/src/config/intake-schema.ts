@@ -39,4 +39,13 @@ export async function ensureIntakeSchema(pool: Pool) {
     PRIMARY KEY (app_id, open_id),
     UNIQUE KEY uk_wechat_mini_user (user_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS wechat_mini_bind_tickets (
+    ticket_hash CHAR(64) PRIMARY KEY,
+    app_id VARCHAR(64) NOT NULL,
+    open_id VARCHAR(128) NOT NULL,
+    expires_at DATETIME(3) NOT NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    KEY idx_wechat_bind_expiry (expires_at),
+    KEY idx_wechat_bind_identity (app_id, open_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 }

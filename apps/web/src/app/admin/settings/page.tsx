@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { BellRing, FileText, ImageIcon, MessageCircle, Settings2, SlidersHorizontal, ClipboardList } from 'lucide-react';
+import { BellRing, FileText, ImageIcon, MessageCircle, Settings2, SlidersHorizontal, ClipboardList, Bot } from 'lucide-react';
 
 const items = [
   { href: '/admin/settings/commission', title: '商业抽成配置', desc: '维护各设计类目的尾款服务费率。', icon: SlidersHorizontal, tone: 'bg-indigo-50 text-indigo-600' },
@@ -10,6 +10,7 @@ const items = [
   { href: '/admin/settings/forms', title: '表单配置', desc: '拖拽配置发单表单、字段规则与发布版本。', icon: ClipboardList, tone: 'bg-blue-50 text-blue-600' },
   { href: '/admin/settings/agreements', title: '用户协议与隐私协议', desc: '维护登录页展示的协议正文。', icon: FileText, tone: 'bg-rose-50 text-rose-600' },
   { href: '/admin/settings/customer-service', title: '客服二维码配置', desc: '维护客服资料并选择订单页展示的客服。', icon: MessageCircle, tone: 'bg-cyan-50 text-cyan-600' },
+  { href: '/admin/settings/ai', title: 'AI 大模型配置', desc: '保存中转站地址、模型和 Key，随时切换当前服务。', icon: Bot, tone: 'bg-violet-50 text-violet-600' },
 ];
 
 export default function AdminSettingsPage() { return <div className="mx-auto max-w-6xl space-y-4 p-3 sm:space-y-6 sm:p-6 lg:p-8"><div className="rounded-3xl border border-white/80 bg-white/75 p-5 shadow-sm sm:p-7"><p className="text-xs font-semibold role-primary-text">平台运营</p><h1 className="mt-2 text-2xl font-bold text-slate-900">商业化与运营配置</h1><p className="mt-2 text-sm text-slate-500">将不同运营能力拆分为独立页面，便于集中配置与维护。</p></div><div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">{items.map((item) => { const Icon = item.icon; return <Link key={item.href} href={item.href} className="group rounded-3xl border border-slate-100 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--role-primary-border)] hover:shadow-md"><span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${item.tone}`}><Icon className="h-5 w-5" /></span><h2 className="mt-5 text-base font-bold text-slate-800">{item.title}</h2><p className="mt-2 text-xs leading-5 text-slate-500">{item.desc}</p><span className="mt-5 inline-block text-xs font-semibold role-primary-text">进入配置 →</span></Link>; })}</div></div>; }

@@ -861,5 +861,5 @@ export function createOrderPresetDraft(preset: OrderFormPreset): FormTemplate {
       fields.push({ ...createFormField(entry.kind, fields.length + 1), key: entry.key, label: entry.label, required: entry.required, placeholder: entry.placeholder, width: entry.kind === 'textarea' || entry.label.includes('大纲') ? 100 : 50, ...(entry.options ? { options: entry.options.map((option) => ({ label: option, value: option })) } : {}), ...(entry.presets ? { presets: entry.presets } : {}) });
     }
   }
-  return { id: '', name: preset.name, description: preset.description, target: 'order', category: preset.category, tag: preset.tag, presetId: preset.id, fields, version: 0, publishedVersion: 0, status: 'draft', createdAt: now, updatedAt: now };
+  return { id: '', name: preset.name, description: preset.description, target: 'order', category: preset.category, tag: preset.tag, presetId: preset.id, mobileStyle: 'comfortable', fields, version: 0, publishedVersion: 0, status: 'draft', createdAt: now, updatedAt: now };
 }

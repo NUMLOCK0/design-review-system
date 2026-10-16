@@ -1,5 +1,7 @@
 # 电商设计稿审核管理系统 (Design Review System)
 
+生产环境部署请从 [部署手册](docs/deployment-production.md) 开始；其中包含 Linux 服务、Nginx、数据库、Redis、OSS 和微信小程序的发布步骤。
+
 全新一代工业级架构设计，专注于电商团队的视觉设计质检、多轮会审、大图在线批注打标与移动端审批。
 
 ---
@@ -36,7 +38,9 @@ MYSQL_URL=mysql://用户名:密码@数据库主机:3306/数据库名
 ```
 数据库端口需允许从本机连接；后端启动时会初始化所需数据表。
 
-首次部署需要创建全部应用表和 12 个指定的测试账号时，执行 `BOOTSTRAP_PASSWORD=<初始密码> pnpm setup:database`。脚本会读取 `apps/server/.env`，只新增缺失账号，并核对已有账号的角色、状态和密码；发现冲突会退出，不会覆盖账号。数据库连接失败时不会写入任何账号。连接不稳定时可按顺序单独重试 `--phase=base`、`persistence`、`applications`、`evaluations`、`forms`、`chat`、`collaboration`、`accounts`，每个阶段均可重复执行。
+管理员可在 `/admin/settings/ai` 保存多套 OpenAI 兼容的中转站地址、模型名称和 API Key，并切换当前配置。AI 方案总结与风格生成在每次请求时读取当前配置；后台接口不回传 Key。生产环境建议在 `apps/server/.env` 设置稳定的 `AI_CONFIG_ENCRYPTION_KEY`，用于加密数据库中的 Key；请妥善备份，变更后旧 Key 将无法解密。未设置时会从 `JWT_SECRET` 派生加密密钥。尚未在后台添加配置时，仍可使用原有的 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL` 环境变量。
+
+生产首次部署先运行 `pnpm setup:database:schema` 建表，再用 `pnpm setup:admin` 创建指定管理员；具体环境变量和顺序见部署手册。仅需要 12 个指定测试账号的环境才执行 `BOOTSTRAP_PASSWORD=<初始密码> pnpm setup:database`。该脚本只新增缺失账号，并核对已有账号的角色、状态和密码；发现冲突会退出，不会覆盖账号。数据库连接失败时不会写入任何账号。连接不稳定时可按顺序单独重试 `--phase=base`、`persistence`、`applications`、`evaluations`、`forms`、`chat`、`collaboration`、`runtime`、`accounts`，每个阶段均可重复执行。
 
 ### 3. 一键启动各端服务
 本机开发推荐在项目根目录运行 `pnpm dev:up`：后台启动 API、Web、uni-app H5 预览和微信小程序监听构建，关闭终端后仍可继续访问。运行 `pnpm dev:status` 检查状态，`pnpm dev:restart` 清理 Web 开发缓存并重启，`pnpm dev:down` 停止。日志位于 `.cache/dev-stack/`；Web 为 `http://localhost:3000`，H5 预览为 `http://localhost:5173`，微信开发者工具导入 `apps/uni-app/dist/dev/mp-weixin`。代码修改由各开发服务自动监听；生产构建使用独立的 `.next` 目录，不会覆盖开发服务的 `.next-dev` 缓存。
@@ -74,3 +78,5 @@ MYSQL_URL=mysql://用户名:密码@数据库主机:3306/数据库名
 6. **订单聊天**：品牌方与接单设计师实时沟通，消息先落库再确认，断线后自动补拉。详见 [订单聊天说明](docs/order-chat.md)，运行 `pnpm check:chat` 可做临时订单集成检查。
 
 7. **对话式需求协作与品牌方小程序**：发布模板 → 填写/修订 → 双方确认 → 正式需求版本 → 设计师承接 → 设计稿审核。详见 [接入与启动说明](docs/brand-miniapp-collaboration.md)，运行 `pnpm check:collaboration` 验证核心接口。后续可拖拽画布已预留版本、节点、连线与输入绑定契约。
+
+8. **独立生图工作台**：响应式商品视觉创作工具，项目与生成记录持久化至 MySQL，后台图片任务使用 Redis + BullMQ，输入与输出图片保存到私有阿里云 OSS，任务状态经 Socket.IO 推送。商业化规格与部署要求见 [生图工作台规格](docs/image-studio-commercial-spec.md)，剩余功能迁移范围见 [商业化优化方案](docs/image-studio-commercial-optimization-plan.md)。开发时需分别运行 API、Web 和 `pnpm dev:image-studio-worker`；生产部署需单独部署可横向扩展的 Worker，并配置 `REDIS_URL`、MySQL 与 OSS。

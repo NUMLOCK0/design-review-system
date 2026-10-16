@@ -12,6 +12,7 @@ import {
   ShoppingBag,
   Users,
   FileClock,
+  Activity,
   WalletCards,
   Menu
 } from 'lucide-react';
@@ -36,12 +37,13 @@ const ALL_ADMIN_NAV_ITEMS: Array<{ href: string; label: string; icon: LucideIcon
   { href: '/admin/designer-moderation', label: '设计师主页与作品审核', icon: ShieldCheck, roles: ['admin'] },
   { href: '/admin/users', label: '用户管理', icon: Users, roles: ['admin'] },
   { href: '/admin/audit-logs', label: '操作日志', icon: FileClock, roles: ['admin'] },
+  { href: '/admin/ai-call-logs', label: 'AI 调用日志', icon: Activity, roles: ['admin'] },
   { href: '/admin/evaluations', label: '合作评价管理', icon: ShieldCheck, roles: ['admin'] },
   { href: '/admin/finance', label: '财务管理', icon: WalletCards, roles: ['admin'] },
 ];
 
 const OPERATIONS_NAV_ITEMS = [
-  { href: '/admin/settings/commission', label: '商业抽成' }, { href: '/admin/settings/operations', label: '运营规则' }, { href: '/admin/settings/publication', label: '发布与质检' }, { href: '/admin/settings/announcement', label: '前台公告' }, { href: '/admin/settings/templates', label: '图片模板' }, { href: '/admin/settings/forms', label: '表单配置' }, { href: '/admin/settings/agreements', label: '协议配置' }, { href: '/admin/settings/customer-service', label: '客服二维码' },
+  { href: '/admin/settings/commission', label: '商业抽成' }, { href: '/admin/settings/operations', label: '运营规则' }, { href: '/admin/settings/publication', label: '发布与质检' }, { href: '/admin/settings/announcement', label: '前台公告' }, { href: '/admin/settings/templates', label: '图片模板' }, { href: '/admin/settings/forms', label: '表单配置' }, { href: '/admin/settings/agreements', label: '协议配置' }, { href: '/admin/settings/customer-service', label: '客服二维码' }, { href: '/admin/settings/ai', label: 'AI 大模型' },
 ];
 
 export function AdminSidebar() {

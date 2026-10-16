@@ -16,7 +16,8 @@ import {
   ArrowRight,
   Bell,
   ReceiptText,
-  Inbox
+  Inbox,
+  WandSparkles
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -52,6 +53,7 @@ const PORTAL_NAV_ITEMS: Record<UserInfo['role'], Array<{ href: string; label: st
   ],
   customer_service: [
     { href: '/service/dashboard', label: '客服工作台', mobileLabel: '工作台', icon: CheckSquare },
+    { href: '/service/image-studio', label: '生图工作台', mobileLabel: '生图', icon: WandSparkles },
     { href: '/service/collaboration', label: '协作消息', mobileLabel: '协作', icon: Bell },
     { href: '/service/portfolio-review', label: '作品审核', mobileLabel: '作品审核', icon: ShieldCheck },
     { href: '/service/disputes', label: '纠纷处理中心', mobileLabel: '纠纷', icon: ShieldCheck },

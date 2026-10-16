@@ -1,16 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
-// The admin/service layouts verify the backend's JWT on the Web server.
-// Local development shares the backend .env without copying the secret into a tracked file.
-if (process.env.NODE_ENV === 'development' && !process.env.JWT_SECRET) {
-  try {
-    const serverRequire = createRequire(new URL('../server/package.json', import.meta.url));
-    const dotenv = serverRequire('dotenv');
-    const serverEnv = dotenv.parse(readFileSync(new URL('../server/.env', import.meta.url)));
-    if (serverEnv.JWT_SECRET) process.env.JWT_SECRET = serverEnv.JWT_SECRET;
-  } catch { /* A missing local backend env is handled by the existing auth guard. */ }
+// Both API token signing and Web SSR validation must use the same source.
+// Read JWT_SECRET exclusively from apps/server/.env; ignore Web/process copies.
+const serverRequire = createRequire(new URL('../server/package.json', import.meta.url));
+const dotenv = serverRequire('dotenv');
+const serverEnv = dotenv.parse(readFileSync(new URL('../server/.env', import.meta.url)));
+const serverJwtSecret = String(serverEnv.JWT_SECRET || '').trim();
+if (serverJwtSecret.length < 32) {
+  throw new Error('apps/server/.env 必须配置至少 32 位 JWT_SECRET');
 }
+process.env.JWT_SECRET = serverJwtSecret;
 
 const apiProxyTarget = (process.env.API_PROXY_TARGET || (process.env.NODE_ENV === 'development' ? 'http://127.0.0.1:8080' : '')).replace(/\/+$/, '');
 

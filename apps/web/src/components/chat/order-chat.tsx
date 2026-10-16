@@ -1,26 +1,31 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import Link from 'next/link';
-import { io, type Socket } from 'socket.io-client';
-import { ArrowLeft, ArrowRight, Check, FileText, Menu, Search, Send, Share2, X } from 'lucide-react';
+import { io } from 'socket.io-client';
+import { ArrowLeft, ArrowRight, Check, FileText, ImagePlus, Menu, Plus, Search, Send, Share2, X } from 'lucide-react';
 import { fetchWithAuth, getCurrentUser, type UserInfo } from '@/lib/auth';
 import { loadPendingMessages, removePendingMessages, savePendingMessage, type PendingChatMessage } from '@/lib/chat-outbox';
 import { chatPreview, encodeChatCard, parseChatCard, type ChatCard } from '@/lib/chat-cards';
+import { checklistAnswerImages, formatChecklistAnswer } from '@/lib/chat-form-answer';
+import { BusinessCardBox } from '@/components/chat/business-card-box';
 import { ServiceCardComposer } from '@/components/chat/service-card-composer';
 import { AuthenticatedImage } from '@/components/authenticated-image';
+import { AuthenticatedVideo } from '@/components/authenticated-video';
 import { RequirementCollaboration } from '@/components/chat/requirement-collaboration';
 import { ChoiceCardView } from '@/components/chat/choice-card-view';
 import { ServiceChatToolbar } from '@/components/chat/tools/service-chat-toolbar';
 import { ServiceConversationSidebar } from '@/components/chat/service-conversation-sidebar';
+import { IntakeRequirementsDrawer } from '@/components/chat/intake-requirements-drawer';
 import { CreateIntakeConversation } from '@/components/chat/create-intake-conversation';
 import { ServiceTransferControl } from '@/components/chat/service-transfer-control';
 import { setSelectedServiceChat, setSelectedServiceIntake } from '@/lib/service-chat-selection';
-import { parseWorkflowMessage } from '@design-review/shared';
+import { parseWorkflowMessage, type FormField } from '@design-review/shared';
+import { uploadFile, type UploadedFileData } from '@/lib/upload';
 
 type Message = { id: string; orderId: string; seq: number; senderId: string; senderName: string; clientMessageId: string; body: string; createdAt: string };
 type Pending = PendingChatMessage;
-type ChatOrder = { orderId: string; orderNo: string; title: string; category: string; platform: string; budget: number; deadline: string | null; requirements: string; status: string; requiresPsd: boolean; creatorName: string; designerName: string; guestId?: string | null; assignedServiceId?: string | null; assignedServiceName?: string | null; assignedById?: string | null; assignedByName?: string | null; updatedAt?: string | null };
+type ChatOrder = { orderId: string; orderNo: string; title: string; category: string; platform: string; budget: number; deadline: string | null; requirements: string; status: string; requiresPsd: boolean; creatorName: string; creatorId?: string; creatorRole?: string | null; designerName: string; guestId?: string | null; guestRole?: string | null; assignedServiceId?: string | null; assignedServiceName?: string | null; assignedById?: string | null; assignedByName?: string | null; updatedAt?: string | null };
 type Conversation = { orderId: string; orderNo: string; title: string; category: string; status: string; counterpartName: string; lastBody: string; lastMessageAt: string | null };
 type Panel = 'chat' | 'archive' | 'brief' | 'proposal';
 
@@ -58,17 +63,52 @@ function ServiceContractPanel({ order, messages, onBrief }: { order: ChatOrder |
   return <div className="space-y-4"><div className="rounded-2xl bg-blue-50 p-4"><p className="text-[11px] font-bold text-blue-700">需求档案</p><p className="mt-1 text-sm font-bold text-slate-900">{order?.title || '订单协作'}</p><p className="mt-1 text-xs text-slate-500">{order?.orderNo} · {order?.category}</p><button type="button" onClick={onBrief} className="mt-3 text-xs font-semibold text-blue-700">查看原始需求 →</button></div><div className="rounded-2xl border bg-white p-4"><h3 className="text-sm font-bold text-slate-800">卡片与修订记录</h3><p className="mt-1 text-xs text-slate-400">共 {cards.length} 份，按消息时间保存</p><div className="mt-3 max-h-72 space-y-2 overflow-y-auto">{cards.length ? cards.map(({ message, card }) => <div key={message.id} className="rounded-lg bg-slate-50 p-2 text-xs"><p className="font-semibold text-slate-800">{card.title}</p><p className="mt-1 text-slate-400">{card.revisionOf ? '修订版' : '初始版'} · {dateLabel(message.createdAt)}</p></div>) : <p className="text-xs text-slate-400">尚无结构化卡片</p>}</div></div><p className="text-xs leading-5 text-slate-400">卡片用于协作存证。订单价格、支付和验收状态以正式订单流程为准。</p></div>;
 }
 
-function MessageBody({ message, onProposal, decision, onSnapshotDecision, onChoiceAnswer, choiceAnswer, canRespond, canChoose, snapshotDecision, recalled }: { message: Message; onProposal: () => void; decision?: 'A' | 'B'; onSnapshotDecision?: (decision: 'confirmed' | 'needs_changes', note: string) => void; onChoiceAnswer?: (option: { id: string; label: string }, note: string) => Promise<unknown>; choiceAnswer?: { optionId: string; optionLabel: string }; canRespond?: boolean; canChoose?: boolean; snapshotDecision?: 'confirmed' | 'needs_changes'; recalled?: boolean }) {
+function ChecklistAnswerValue({ field, raw }: { field?: { schema?: FormField; kind?: 'image' }; raw: string }) {
+  const images = checklistAnswerImages(field, raw);
+  const [preview, setPreview] = useState<string | null>(null);
+  return <>
+    <span className="whitespace-pre-wrap break-words">{formatChecklistAnswer(field, raw)}</span>
+    {images.length > 0 && <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">{images.map((image, index) => <button key={`${image.url}-${index}`} type="button" onClick={() => setPreview(image.url)} aria-label={`查看${image.label}`} className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left"><AuthenticatedImage src={image.url} alt={image.label} className="h-28 w-full object-cover" /><span className="block truncate px-2 py-1 text-[10px] text-slate-500">{image.label}</span></button>)}</div>}
+    {preview && <div role="dialog" aria-modal="true" aria-label="查看品牌方上传的图片" className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/85 p-4" onClick={() => setPreview(null)}><button type="button" aria-label="关闭图片预览" onClick={() => setPreview(null)} className="absolute right-4 top-4 rounded-full bg-white/20 px-3 py-1 text-2xl text-white">×</button><div onClick={(event) => event.stopPropagation()}><AuthenticatedImage src={preview} alt="品牌方上传的图片" className="max-h-[85dvh] max-w-[90vw] object-contain" /></div></div>}
+  </>;
+}
+
+function MessageBody({ message, onProposal, decision, onSnapshotDecision, onChoiceAnswer, choiceAnswer, canRespond, canChoose, snapshotDecision, recalled, canFillForm, formAnswers, formRevision, onFormAnswers }: { message: Message; onProposal: () => void; decision?: 'A' | 'B'; onSnapshotDecision?: (decision: 'confirmed' | 'needs_changes', note: string) => void; onChoiceAnswer?: (option: { id: string; label: string }, note: string) => Promise<unknown>; choiceAnswer?: { optionId: string; optionLabel: string }; canRespond?: boolean; canChoose?: boolean; snapshotDecision?: 'confirmed' | 'needs_changes'; recalled?: boolean; canFillForm?: boolean; formAnswers?: Array<{ fieldIndex: number; value: string }>; formRevision?: number; onFormAnswers?: (formMessageId: string, answers: Array<{ fieldIndex: number; value: string }>) => Promise<unknown> }) {
   const [snapshotNote, setSnapshotNote] = useState('');
   const workflow = parseWorkflowMessage(message.body);
-  if (workflow) return <div className="rounded-xl border border-emerald-100 bg-white p-4 text-slate-800"><p className="text-[11px] font-semibold role-primary-text">需求协作记录</p><p className="mt-1 text-sm font-bold">{workflow.title}</p><p className="mt-2 text-xs leading-5 text-slate-500">{workflow.description}</p><p className="mt-3 text-[11px] role-primary-text">在上方「需求协作」面板查看与处理</p></div>;
   const card = parseChatCard(message.body);
+  const [formValues, setFormValues] = useState<string[]>(() => card?.kind === 'work_card' ? card.fields.map((_, index) => formAnswers?.find((answer) => answer.fieldIndex === index)?.value || '') : []);
+  const [formSubmitted, setFormSubmitted] = useState(false);
+  const [formSending, setFormSending] = useState(false);
+  const [formEditing, setFormEditing] = useState(false);
+  const formAnswersKey = JSON.stringify(formAnswers || []);
+  const appliedFormAnswersKey = useRef(formAnswersKey);
+  useEffect(() => {
+    if (appliedFormAnswersKey.current === formAnswersKey) return;
+    appliedFormAnswersKey.current = formAnswersKey;
+    const latestAnswers = JSON.parse(formAnswersKey) as Array<{ fieldIndex: number; value: string }>;
+    const latestCard = parseChatCard(message.body);
+    if (latestCard?.kind !== 'work_card' || latestCard.templateId !== 'intake_checklist') return;
+    setFormValues(latestCard.fields.map((_, index) => latestAnswers.find((answer) => answer.fieldIndex === index)?.value || ''));
+    setFormSubmitted(false);
+    setFormEditing(false);
+  }, [formAnswersKey, message.body]);
+  const answersToDisplay = formSubmitted ? formValues.map((value, fieldIndex) => ({ fieldIndex, value })) : formAnswers;
+  if (workflow) return <div className="rounded-xl border border-emerald-100 bg-white p-4 text-slate-800"><p className="text-[11px] font-semibold role-primary-text">需求协作记录</p><p className="mt-1 text-sm font-bold">{workflow.title}</p><p className="mt-2 text-xs leading-5 text-slate-500">{workflow.description}</p><p className="mt-3 text-[11px] role-primary-text">在上方「需求协作」面板查看与处理</p></div>;
   if (recalled) return <p className="text-xs italic opacity-70">消息已撤回</p>;
-  if (!card) return <p className="whitespace-pre-wrap break-words text-sm leading-6">{message.body}</p>;
+  if (!card) {
+    if (/^\/api\/upload\/previews\/asset_[a-f0-9]{32}$/.test(message.body.trim())) return <AuthenticatedImage src={message.body.trim()} alt="会话图片" className="block h-auto max-h-[min(65dvh,560px)] max-w-[min(78vw,420px)] w-auto rounded-xl object-contain" />;
+    if (/^\/api\/upload\/assets\/asset_[a-f0-9]{32}$/.test(message.body.trim())) return <AuthenticatedVideo src={message.body.trim()} className="max-h-80 max-w-full rounded-xl bg-black" />;
+    return <p className="whitespace-pre-wrap break-words text-sm leading-6">{message.body}</p>;
+  }
   if (card.kind === 'recall') return null;
+  if (card.kind === 'image') return <div className="w-fit max-w-[min(78vw,420px)] rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">{card.attachments.length === 1 ? <div className="inline-flex max-w-full overflow-hidden rounded-xl bg-slate-100"><AuthenticatedImage src={card.attachments[0].url} alt={card.attachments[0].name} className="block h-auto max-h-[min(65dvh,560px)] max-w-full w-auto object-contain" /></div> : <div className="grid max-w-full grid-cols-2 gap-2">{card.attachments.map((item) => <div key={item.url} className="flex max-h-64 min-h-16 items-center justify-center overflow-hidden rounded-xl bg-slate-100"><AuthenticatedImage src={item.url} alt={item.name} className="block h-auto max-h-64 max-w-full w-auto object-contain" /></div>)}</div>}{card.caption && <p className="whitespace-pre-wrap break-words px-2 pb-1 pt-2 text-sm leading-6 text-slate-700">{card.caption}</p>}</div>;
+  if (card.kind === 'video') return <div className="max-w-[min(78vw,520px)] rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"><AuthenticatedVideo src={card.attachment.url} className="max-h-80 w-full rounded-xl bg-black" />{card.caption && <p className="whitespace-pre-wrap break-words px-2 pb-1 pt-2 text-sm leading-6 text-slate-700">{card.caption}</p>}</div>;
+  if (card.kind === 'annotation') return <div className="w-full max-w-[min(82vw,520px)] rounded-2xl border border-rose-200 bg-white p-3 text-slate-800 shadow-sm"><div className="mb-2 flex items-start justify-between gap-2"><div><p className="text-[11px] font-bold text-rose-700">图片批注 · 第 {card.revision} 版</p><p className="mt-1 text-xs font-semibold">{card.productName} · 第 {card.imageIndex} 张</p><p className="mt-1 text-[10px] text-slate-400">{card.taskNo || '交稿图片'} · 图片版本 {card.imageVersion}</p></div><span className="shrink-0 rounded-full bg-rose-50 px-2 py-1 text-[10px] text-rose-700">{card.annotations.length} 处</span></div><div className="flex justify-center"><div className="relative inline-block max-w-full"><AuthenticatedImage src={card.imageUrl} alt={`${card.productName}交稿图片`} className="block max-h-[55dvh] max-w-[min(76vw,480px)] rounded-xl object-contain" />{card.annotations.map((item, index) => <span key={item.id} className="absolute flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold text-white shadow" style={{ left: `${item.x}%`, top: `${item.y}%`, backgroundColor: item.color }}>{index + 1}</span>)}</div></div><div className="mt-2 space-y-1 border-t border-slate-100 pt-2">{card.annotations.map((item, index) => <p key={item.id} className="flex gap-2 text-xs leading-5"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-rose-500 text-[10px] font-bold text-white">{index + 1}</span><span className="whitespace-pre-wrap break-words">{item.comment}</span></p>)}</div></div>;
   if (card.kind === 'choice') return <ChoiceCardView card={card} answer={choiceAnswer} canAnswer={Boolean(canChoose)} onAnswer={(option, note) => onChoiceAnswer?.(option, note) || Promise.resolve()} />;
   if (card.kind === 'choice_answer') return <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs text-emerald-800"><p className="font-bold">品牌方已选择：{card.optionLabel}</p>{card.note && <p className="mt-1 whitespace-pre-wrap">{card.note}</p>}</div>;
-  if (card.kind === 'work_card') return <div className="w-full min-w-0 rounded-2xl border border-blue-100 bg-white p-4 text-slate-800 shadow-sm"><p className="text-[11px] font-semibold text-blue-600">{card.templateId === 'contract_snapshot' ? '需求锁定快照' : `协作卡片 · ${card.revisionOf ? '修订版' : '初始版'}`}</p><h3 className="mt-1 text-sm font-bold">{card.title}</h3><dl className="mt-3 space-y-2 border-t pt-3">{card.fields.map((field, index) => <div key={index} className="grid gap-1 text-xs sm:grid-cols-[120px_1fr]"><dt className="font-semibold text-slate-500">{field.label}</dt><dd className="whitespace-pre-wrap break-words text-slate-800">{field.value}</dd></div>)}</dl>{card.attachments.length > 0 && <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{card.attachments.map((item) => <AuthenticatedImage key={item.url} src={item.url} alt={item.name} className="aspect-square w-full rounded-lg object-cover" />)}</div>}{card.templateId === 'contract_snapshot' && <div className="mt-4 border-t pt-3">{snapshotDecision ? <p className="text-xs font-semibold text-emerald-700">您已反馈：{snapshotDecision === 'confirmed' ? '确认' : '需要修改'}</p> : canRespond ? <><textarea value={snapshotNote} onChange={(event) => setSnapshotNote(event.target.value)} maxLength={500} rows={2} placeholder="如需修改，请填写具体内容" className="w-full rounded-lg border p-2 text-xs" /><div className="mt-2 flex gap-2"><button type="button" disabled={!snapshotNote.trim()} onClick={() => onSnapshotDecision?.('needs_changes', snapshotNote.trim())} className="rounded-lg border px-3 py-2 text-xs text-slate-600 disabled:opacity-40">需要修改</button><button type="button" onClick={() => onSnapshotDecision?.('confirmed', snapshotNote.trim())} className="rounded-lg bg-blue-600 px-3 py-2 text-xs text-white">确认快照</button></div></> : <p className="text-xs text-slate-400">等待订单双方确认；此记录不替代正式合同与订单流程。</p>}</div>}</div>;
+  if (card.kind === 'form_answers') return <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-xs text-emerald-800"><p className="font-bold">品牌方已提交需求表单</p><p className="mt-1">可在右侧「协作档案」查看问题与回答。</p></div>;
+  if (card.kind === 'work_card') return <div className="w-full min-w-0 rounded-2xl border border-blue-100 bg-white p-4 text-slate-800 shadow-sm"><p className="text-[11px] font-semibold text-blue-600">{card.templateId === 'contract_snapshot' ? '需求锁定快照' : card.templateId === 'intake_checklist' ? '品牌需求表单' : /^biz_\d+$/.test(card.templateId) ? `业务需求卡 · ${card.revisionOf ? '修订版' : '初始版'}` : `协作卡片 · ${card.revisionOf ? '修订版' : '初始版'}`}</p><h3 className="mt-1 text-sm font-bold">{card.title}</h3><dl className="mt-3 space-y-2 border-t pt-3">{card.fields.map((field, index) => <div key={index} className="grid gap-1 text-xs sm:grid-cols-[120px_1fr]"><dt className="font-semibold text-slate-500">{field.label}</dt><dd className="whitespace-pre-wrap break-words text-slate-800">{card.templateId === 'intake_checklist' ? (field.options?.length ? `可选：${field.options.join('、')}` : '请填写') : field.value}</dd></div>)}</dl>{card.attachments.length > 0 && <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{card.attachments.map((item) => <AuthenticatedImage key={item.url} src={item.url} alt={item.name} className="aspect-square w-full rounded-lg object-cover" />)}</div>}{card.templateId === 'intake_checklist' && <div className="mt-4 border-t pt-3">{canFillForm ? answersToDisplay && !formEditing ? <><p className="mb-2 text-[11px] font-semibold text-emerald-700">已提交 · v{formRevision || 1} · 可修改</p><div className="space-y-2">{answersToDisplay.map((answer) => <div key={answer.fieldIndex} className="text-xs"><span className="font-semibold text-slate-500">{card.fields[answer.fieldIndex]?.label}：</span><ChecklistAnswerValue field={card.fields[answer.fieldIndex]} raw={answer.value} /></div>)}</div><button type="button" onClick={() => { setFormValues(card.fields.map((_, index) => formAnswers?.find((answer) => answer.fieldIndex === index)?.value || formValues[index] || '')); setFormEditing(true); setFormSubmitted(false); }} className="mt-3 rounded-lg border border-blue-200 px-4 py-2 text-xs font-semibold text-blue-700">修改已提交内容</button></> : <><div className="space-y-3">{card.fields.map((field, index) => <label key={index} className="block text-xs"><span className="mb-1 block font-semibold text-slate-600">{field.label}</span>{field.options?.length ? <span className="flex flex-wrap gap-1.5">{field.options.map((option) => <button key={option} type="button" aria-pressed={formValues[index] === option} onClick={() => setFormValues((values) => values.map((value, current) => current === index ? option : value))} className={`rounded-full border px-2.5 py-1.5 ${formValues[index] === option ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}>{option}</button>)}</span> : <input value={formValues[index] || ''} onChange={(event) => setFormValues((values) => values.map((value, current) => current === index ? event.target.value : value))} maxLength={2000} placeholder="填写你的回答" className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-400" />}</label>)}</div><button type="button" disabled={formSending || formValues.some((value) => !value.trim())} onClick={async () => { setFormSending(true); try { await onFormAnswers?.(message.id, formValues.map((value, fieldIndex) => ({ fieldIndex, value: value.trim() }))); setFormSubmitted(true); setFormEditing(false); } finally { setFormSending(false); } }} className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">{formSending ? '保存中…' : answersToDisplay ? '保存修改' : '提交需求'}</button></> : formAnswers ? <div className="space-y-2"><p className="text-[11px] font-semibold text-emerald-700">最新提交 · v{formRevision || 1}</p>{formAnswers.map((answer) => <div key={answer.fieldIndex} className="text-xs"><span className="font-semibold text-slate-500">{card.fields[answer.fieldIndex]?.label}：</span><ChecklistAnswerValue field={card.fields[answer.fieldIndex]} raw={answer.value} /></div>)}</div> : <p className="text-xs text-slate-400">等待品牌方填写表单</p>}</div>}{card.templateId === 'contract_snapshot' && <div className="mt-4 border-t pt-3">{snapshotDecision ? <p className="text-xs font-semibold text-emerald-700">您已反馈：{snapshotDecision === 'confirmed' ? '确认' : '需要修改'}</p> : canRespond ? <><textarea value={snapshotNote} onChange={(event) => setSnapshotNote(event.target.value)} maxLength={500} rows={2} placeholder="如需修改，请填写具体内容" className="w-full rounded-lg border p-2 text-xs" /><div className="mt-2 flex gap-2"><button type="button" disabled={!snapshotNote.trim()} onClick={() => onSnapshotDecision?.('needs_changes', snapshotNote.trim())} className="rounded-lg border px-3 py-2 text-xs text-slate-600 disabled:opacity-40">需要修改</button><button type="button" onClick={() => onSnapshotDecision?.('confirmed', snapshotNote.trim())} className="rounded-lg bg-blue-600 px-3 py-2 text-xs text-white">确认快照</button></div></> : <p className="text-xs text-slate-400">等待订单双方确认；此记录不替代正式合同与订单流程。</p>}</div>}</div>;
   if (card.kind === 'snapshot_ack') return <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-slate-800"><p className="text-xs font-bold text-emerald-700">需求快照反馈：{card.decision === 'confirmed' ? '已确认' : '需要修改'}</p>{card.note && <p className="mt-1 whitespace-pre-wrap text-xs leading-5">{card.note}</p>}</div>;
   if (card.kind === 'proposal') return <div className="w-full min-w-0 rounded-2xl border border-slate-200 bg-white p-4 text-slate-800 shadow-sm"><div className="mb-2 flex items-center justify-between gap-2"><span className="text-[11px] font-semibold role-primary-text">A/B 方案提案</span><span className={`rounded-full px-2 py-1 text-[10px] ${decision ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{decision ? `已选择方案 ${decision}` : '等待选择'}</span></div><h3 className="text-sm font-bold">{card.title}</h3><p className="mt-1 text-xs text-slate-500">两套视觉方向，品牌方可选择并反馈</p><div className="mt-4 grid grid-cols-2 gap-2">{([['A', card.optionA, card.detailA], ['B', card.optionB, card.detailB]] as const).map(([key, title, detail]) => <div key={key} className="rounded-xl border border-slate-200 bg-slate-50 p-3"><span className="text-[10px] font-bold role-primary-text">方案 {key}</span><p className="mt-1 text-xs font-semibold">{title}</p><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{detail}</p></div>)}</div><button type="button" onClick={onProposal} className="mt-3 flex w-full items-center justify-center gap-1 rounded-lg role-primary-soft py-2 text-xs font-semibold role-primary-text">查看方案与决策 <ArrowRight className="h-3 w-3" /></button></div>;
   if (card.kind === 'decision') return <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-slate-800"><p className="text-xs font-bold text-blue-700">品牌方选择方案 {card.option}</p>{card.note && <p className="mt-1 whitespace-pre-wrap text-xs leading-5">{card.note}</p>}</div>;
@@ -90,6 +130,9 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
   const [messages, setMessages] = useState<Message[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
   const [draft, setDraft] = useState('');
+  const [imageDrafts, setImageDrafts] = useState<Array<{ id: string; file: File; previewUrl: string; uploaded?: UploadedFileData }>>([]);
+  const [mediaMenuOpen, setMediaMenuOpen] = useState(false);
+  const [imageSending, setImageSending] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [identityReady, setIdentityReady] = useState(false);
@@ -112,15 +155,20 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
   const [workCardOpen, setWorkCardOpen] = useState(false);
   const [revisionMessage, setRevisionMessage] = useState<Message | null>(null);
   const [proposalDraft, setProposalDraft] = useState({ title: '', optionA: '', optionB: '', detailA: '', detailB: '' });
-  const socketRef = useRef<Socket | null>(null);
   const cursorRef = useRef(0);
+  const lastSyncAtRef = useRef(0);
   const syncingRef = useRef(false);
+  const syncRequestedRef = useRef(false);
   const pendingRef = useRef<Pending[]>([]);
   const sendingRef = useRef(new Set<string>());
+  const flushingRef = useRef(false);
+  const flushAgainRef = useRef(false);
   const failedRef = useRef(new Map<string, string>());
   const savingRef = useRef(false);
   const identityReadyRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const previewUrlsRef = useRef(new Set<string>());
 
   const confirmPending = useCallback(async (ids: string[]) => {
     if (!ids.length) return;
@@ -132,8 +180,15 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
     setPending(remaining);
   }, []);
 
+  const updateConversationPreview = useCallback((message: Message) => {
+    if (intakeMode) return;
+    setConversations((current) => current.map((item) => item.orderId === orderId
+      ? { ...item, lastBody: message.body, lastMessageAt: message.createdAt }
+      : item).sort((a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime()));
+  }, [orderId, intakeMode]);
+
   const sync = useCallback(async () => {
-    if (syncingRef.current) return;
+    if (syncingRef.current) { syncRequestedRef.current = true; return; }
     syncingRef.current = true;
     try {
       let more = true;
@@ -153,36 +208,51 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
         more = page.hasMore && page.messages.length > 0;
       }
       setError('');
+      lastSyncAtRef.current = Date.now();
       if (!intakeMode) void readApi<Conversation[]>('/chat/conversations').then(setConversations).catch(() => undefined);
     } catch (cause) { setError(cause instanceof Error ? cause.message : '消息同步失败'); }
-    finally { syncingRef.current = false; }
+    finally {
+      syncingRef.current = false;
+      if (syncRequestedRef.current) { syncRequestedRef.current = false; window.setTimeout(() => { void sync(); }, 0); }
+    }
   }, [orderId, intakeMode, confirmPending]);
 
-  const sendPending = useCallback(async (item: Pending) => {
-    if (!identityReadyRef.current || item.userId !== user.current?.id || failedRef.current.has(item.clientMessageId)) return;
-    if (sendingRef.current.has(item.clientMessageId)) return;
+  const receiveLiveMessage = useCallback((signal: { kind?: string; conversationId?: string; orderId?: string; seq?: number; message?: Partial<Message> & { sessionId?: string } }) => {
+    if (signal.conversationId !== orderId || signal.kind !== (intakeMode ? 'intake' : 'order')) return;
+    const incoming = signal.message;
+    if (!incoming || typeof incoming.id !== 'string' || typeof incoming.body !== 'string' ||
+      typeof incoming.senderId !== 'string' || typeof incoming.clientMessageId !== 'string' ||
+      !Number.isSafeInteger(incoming.seq) || incoming.seq !== signal.seq ||
+      (intakeMode ? incoming.sessionId !== orderId : incoming.orderId !== orderId) || !identityReadyRef.current) {
+      void sync(); return;
+    }
+    if (incoming.seq! <= cursorRef.current) return;
+    if (incoming.seq !== cursorRef.current + 1) { void sync(); return; }
+    const message = { ...incoming, orderId } as Message;
+    cursorRef.current = message.seq;
+    lastSyncAtRef.current = Date.now();
+    setMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message].sort((a, b) => a.seq - b.seq));
+    updateConversationPreview(message);
+    if (message.senderId === user.current?.id) void confirmPending([message.clientMessageId]);
+    if (!intakeMode && message.body.startsWith('COZI_WORKFLOW_V1:')) void readApi<ChatOrder>(`/chat/orders/${encodeURIComponent(orderId)}`).then(setOrder).catch(() => undefined);
+  }, [orderId, intakeMode, sync, confirmPending, updateConversationPreview]);
+
+  const sendPending = useCallback(async (item: Pending): Promise<boolean> => {
+    if (!identityReadyRef.current || item.userId !== user.current?.id || failedRef.current.has(item.clientMessageId)) return true;
+    if (sendingRef.current.has(item.clientMessageId)) return false;
     sendingRef.current.add(item.clientMessageId);
     try {
-      const socket = socketRef.current;
-      let saved: Message | undefined;
-      if (!intakeMode && socket?.connected) {
-        try {
-          saved = await new Promise<Message>((resolve, reject) => {
-            socket.timeout(8000).emit('chat:send', { orderId, clientMessageId: item.clientMessageId, body: item.body },
-              (timeout: Error | null, result: { ok: boolean; message?: Message; error?: string }) => {
-                if (timeout || !result?.ok || !result.message) reject(timeout || new Error(result?.error || '发送失败'));
-                else resolve(result.message);
-              });
-          });
-        } catch { /* A timeout may mean the commit succeeded. The REST retry uses the same ID. */ }
-      }
-      if (!saved) saved = await readApi<Message & { sessionId?: string }>(intakeMode ? `/intake-sessions/${encodeURIComponent(orderId)}/messages` : `/chat/orders/${encodeURIComponent(orderId)}/messages`, {
+      let saved = await readApi<Message & { sessionId?: string }>(intakeMode ? `/intake-sessions/${encodeURIComponent(orderId)}/messages` : `/chat/orders/${encodeURIComponent(orderId)}/messages`, {
         method: 'POST', body: JSON.stringify({ clientMessageId: item.clientMessageId, body: item.body }),
       });
       saved = { ...saved, orderId };
+      const previousCursor = cursorRef.current;
       setMessages((current) => current.some((message) => message.id === saved!.id) ? current : [...current, saved!].sort((a, b) => a.seq - b.seq));
+      updateConversationPreview(saved);
+      if (saved.seq === previousCursor + 1) { cursorRef.current = saved.seq; lastSyncAtRef.current = Date.now(); }
       await confirmPending([item.clientMessageId]);
-      await sync();
+      if (saved.seq > previousCursor + 1) await sync();
+      return true;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : '消息待发送，稍后自动重试';
       const status = (cause as { status?: number })?.status;
@@ -191,26 +261,42 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
         setFailedPending((current) => ({ ...current, [item.clientMessageId]: message }));
       }
       setError(message);
+      return false;
     }
     finally { sendingRef.current.delete(item.clientMessageId); }
-  }, [orderId, intakeMode, confirmPending, sync]);
+  }, [orderId, intakeMode, confirmPending, sync, updateConversationPreview]);
 
   const flush = useCallback(async () => {
     if (!identityReadyRef.current || !user.current) return;
+    if (flushingRef.current) { flushAgainRef.current = true; return; }
+    flushingRef.current = true;
     try {
-      const loaded = await loadPendingMessages(user.current.id, orderId);
-      pendingRef.current = loaded;
-      setPending(loaded);
-      for (const item of loaded) void sendPending(item);
+      do {
+        flushAgainRef.current = false;
+        const loaded = await loadPendingMessages(user.current.id, orderId);
+        pendingRef.current = loaded;
+        setPending(loaded);
+        for (const item of loaded) {
+          const succeeded = await sendPending(item);
+          if (!succeeded) break;
+        }
+      } while (flushAgainRef.current && identityReadyRef.current && user.current);
     } catch { setError('待发消息存储不可用，请检查浏览器设置'); }
+    finally {
+      flushingRef.current = false;
+      if (flushAgainRef.current && identityReadyRef.current && user.current) {
+        flushAgainRef.current = false;
+        window.setTimeout(() => { void flush(); }, 0);
+      }
+    }
   }, [orderId, sendPending]);
 
   useEffect(() => {
     const loadConversation = intakeMode
-      ? readApi<{ id: string; title: string; creatorName: string; guestName: string | null; guestId: string | null; assignedServiceId?: string | null; assignedServiceName?: string | null; assignedById?: string | null; assignedByName?: string | null; updatedAt?: string | null }>(`/intake-sessions/${encodeURIComponent(orderId)}`).then(session => setOrder({
+      ? readApi<{ id: string; title: string; creatorId: string; creatorName: string; creatorRole?: string | null; guestName: string | null; guestId: string | null; guestRole?: string | null; assignedServiceId?: string | null; assignedServiceName?: string | null; assignedById?: string | null; assignedByName?: string | null; updatedAt?: string | null }>(`/intake-sessions/${encodeURIComponent(orderId)}`).then(session => setOrder({
           orderId, orderNo: '邀请会话', title: session.title, category: '品牌沟通', platform: '微信小程序', budget: 0,
-          deadline: null, requirements: '', status: 'open', requiresPsd: false, creatorName: session.creatorName,
-          designerName: session.guestName || '等待对方加入', guestId: session.guestId, assignedServiceId: session.assignedServiceId, assignedServiceName: session.assignedServiceName,
+          deadline: null, requirements: '', status: 'open', requiresPsd: false, creatorId: session.creatorId, creatorName: session.creatorName, creatorRole: session.creatorRole,
+          designerName: session.guestName || '等待对方加入', guestId: session.guestId, guestRole: session.guestRole, assignedServiceId: session.assignedServiceId, assignedServiceName: session.assignedServiceName,
           assignedById: session.assignedById, assignedByName: session.assignedByName, updatedAt: session.updatedAt,
         }))
       : readApi<ChatOrder>(`/chat/orders/${encodeURIComponent(orderId)}`).then(setOrder);
@@ -224,7 +310,7 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
       await sync();
     }).catch((cause) => setError(cause instanceof Error ? cause.message : '身份确认失败'));
 
-    const socket = intakeMode ? null : io(process.env.NEXT_PUBLIC_SOCKET_URL || (process.env.NODE_ENV === 'development' ? `${window.location.protocol}//${window.location.hostname}:8080` : window.location.origin), {
+    const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || (process.env.NODE_ENV === 'development' ? `${window.location.protocol}//${window.location.hostname}:8080` : window.location.origin), {
       path: '/socket.io', transports: ['websocket'], reconnection: true,
       auth: async (callback) => {
         try {
@@ -233,16 +319,15 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
         } catch { callback({ ticket: '' }); }
       },
     });
-    socketRef.current = socket;
-    socket?.on('connect', () => { setConnected(true); void sync().then(flush); });
-    socket?.on('disconnect', () => setConnected(false));
-    socket?.on('chat:message', () => { void sync(); });
-    const timer = window.setInterval(() => { void sync().then(flush); }, 15000);
+    socket.on('connect', () => { setConnected(true); void sync().then(flush); });
+    socket.on('disconnect', () => setConnected(false));
+    socket.on('chat:message', receiveLiveMessage);
+    const timer = window.setInterval(() => { if (!socket.connected || Date.now() - lastSyncAtRef.current >= 60000) void sync().then(flush); }, 15000);
     const resume = () => { void sync().then(flush); };
     window.addEventListener('online', resume);
     document.addEventListener('visibilitychange', resume);
-    return () => { window.clearInterval(timer); window.removeEventListener('online', resume); document.removeEventListener('visibilitychange', resume); socket?.disconnect(); socketRef.current = null; };
-  }, [orderId, intakeMode, sync, flush]);
+    return () => { window.clearInterval(timer); window.removeEventListener('online', resume); document.removeEventListener('visibilitychange', resume); socket.disconnect(); };
+  }, [orderId, intakeMode, sync, flush, receiveLiveMessage]);
 
   useEffect(() => {
     if (serviceMode && identityReady && currentUser && order?.orderId === orderId) {
@@ -284,10 +369,33 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
   }, [draft, draftLoaded, currentUser?.id, orderId]);
 
   useEffect(() => () => { if (inviteCodeUrl) URL.revokeObjectURL(inviteCodeUrl); }, [inviteCodeUrl]);
+  useEffect(() => () => { for (const url of previewUrlsRef.current) URL.revokeObjectURL(url); previewUrlsRef.current.clear(); }, []);
+
+  const selectImages = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+    const remaining = Math.max(0, 9 - imageDrafts.length);
+    const selected = files.slice(0, remaining).filter(file => ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type) && file.size <= 15 * 1024 * 1024);
+    if (files.length > remaining) setError('一条消息最多发送 9 张图片');
+    else if (selected.length !== files.length) setError('请选择 JPG、PNG、WebP 或 GIF 图片，单张不超过 15MB');
+    const next = selected.map(file => {
+      const previewUrl = URL.createObjectURL(file);
+      previewUrlsRef.current.add(previewUrl);
+      return { id: crypto.randomUUID(), file, previewUrl };
+    });
+    if (next.length) setImageDrafts(current => [...current, ...next]);
+  };
+
+  const removeImage = (id: string) => {
+    const item = imageDrafts.find(image => image.id === id);
+    if (item) { URL.revokeObjectURL(item.previewUrl); previewUrlsRef.current.delete(item.previewUrl); }
+    setImageDrafts(current => current.filter(image => image.id !== id));
+  };
 
   const queueMessage = async (content: string) => {
     const body = content.trim();
-    if (!body || body.length > 5000 || !order || !user.current || !identityReadyRef.current || savingRef.current) return;
+    if (!body || body.length > 8000 || !order || !user.current || !identityReadyRef.current || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     const item: Pending = { userId: user.current.id, orderId, clientMessageId: crypto.randomUUID(), body, createdAt: new Date().toISOString() };
@@ -296,13 +404,37 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
       pendingRef.current = [...pendingRef.current, item];
       setPending(pendingRef.current);
       setError('');
-      void sendPending(item);
+      void flush();
       return true;
     } catch { setError('浏览器无法保存待发消息，消息未发送；请检查存储权限或空间'); }
     finally { savingRef.current = false; setSaving(false); }
   };
 
-  const submit = async () => { if (await queueMessage(draft)) setDraft(''); };
+  const submit = async () => {
+    if (!imageDrafts.length) { if (await queueMessage(draft)) setDraft(''); return; }
+    if (draft.trim().length > 500) { setError('图片说明最多 500 字'); return; }
+    if (imageSending || serviceReplyLocked) return;
+    setImageSending(true);
+    setError('');
+    try {
+      const attachments: Array<{ name: string; url: string }> = [];
+      for (const image of imageDrafts) {
+        let uploaded = image.uploaded;
+        if (!uploaded) {
+          uploaded = await uploadFile(image.file, 'order-reference-images', { requireOss: true });
+          setImageDrafts(current => current.map(item => item.id === image.id ? { ...item, uploaded } : item));
+        }
+        attachments.push({ name: uploaded.filename, url: uploaded.url });
+      }
+      const queued = await queueMessage(encodeChatCard({ kind: 'image', caption: draft.trim(), attachments }));
+      if (queued) {
+        setDraft('');
+        for (const image of imageDrafts) { URL.revokeObjectURL(image.previewUrl); previewUrlsRef.current.delete(image.previewUrl); }
+        setImageDrafts([]);
+      }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : '图片发送失败，请重试'); }
+    finally { setImageSending(false); }
+  };
   const sendCard = (card: ChatCard) => queueMessage(encodeChatCard(card));
   const isDesigner = currentUser?.role === 'designer';
   const ownSnapshotAcks = useMemo(() => {
@@ -321,9 +453,39 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
     }
     return result;
   }, [messages]);
+  const intakeFormAnswers = useMemo(() => {
+    const result = new Map<string, Array<{ fieldIndex: number; value: string }>>();
+    for (const message of messages) {
+      const card = parseChatCard(message.body);
+      if (card?.kind === 'form_answers' && (currentUser?.role !== 'advertiser' || message.senderId === currentUser.id)) result.set(card.formMessageId, card.answers);
+    }
+    return result;
+  }, [messages, currentUser?.id, currentUser?.role]);
+  const intakeFormRevisions = useMemo(() => {
+    const revisionsBySender = new Map<string, number>();
+    const latestSenderByForm = new Map<string, string>();
+    for (const message of messages) {
+      const card = parseChatCard(message.body);
+      if (card?.kind === 'form_answers') {
+        const key = `${card.formMessageId}:${message.senderId}`;
+        revisionsBySender.set(key, (revisionsBySender.get(key) || 0) + 1);
+        latestSenderByForm.set(card.formMessageId, message.senderId);
+      }
+    }
+    const result = new Map<string, number>();
+    for (const [formMessageId, latestSenderId] of latestSenderByForm) {
+      const senderId = currentUser?.role === 'advertiser' ? currentUser.id : latestSenderId;
+      const revisionCount = revisionsBySender.get(`${formMessageId}:${senderId}`);
+      if (revisionCount) result.set(formMessageId, revisionCount);
+    }
+    return result;
+  }, [messages, currentUser?.id, currentUser?.role]);
   const recalledIds = useMemo(() => new Set(messages.map((message) => parseChatCard(message.body)).filter((card): card is Extract<ChatCard, { kind: 'recall' }> => card?.kind === 'recall').map((card) => card.targetMessageId)), [messages]);
   // Recall cards stay in history for synchronization, but the target message is the only visible notice.
-  const visibleMessages = useMemo(() => messages.filter((message) => parseChatCard(message.body)?.kind !== 'recall'), [messages]);
+  const visibleMessages = useMemo(() => messages.filter((message) => {
+    const card = parseChatCard(message.body);
+    return card?.kind !== 'recall' && !(intakeMode && card?.kind === 'form_answers');
+  }), [messages, intakeMode]);
   const visiblePending = useMemo(() => pending.filter((message) => parseChatCard(message.body)?.kind !== 'recall' || failedPending[message.clientMessageId]), [pending, failedPending]);
   const proposals = useMemo(() => messages.filter((message) => parseChatCard(message.body)?.kind === 'proposal'), [messages]);
   const decisions = useMemo(() => {
@@ -375,16 +537,16 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
   const selectedDecision = selectedProposal && [...messages].reverse().map((message) => parseChatCard(message.body)).find((card) => card?.kind === 'decision' && card.proposalMessageId === selectedProposal.id);
 
   return <div className={mobile
-    ? 'flex h-dvh flex-col bg-[#f7f8fc]'
+    ? 'relative flex h-dvh flex-col bg-[#f7f8fc]'
     : serviceMode
-      ? 'chat-workspace-root flex h-[calc(100dvh-57px)] w-full min-h-0 overflow-hidden bg-white sm:h-[calc(100dvh-65px)]'
+      ? 'chat-workspace-root relative flex h-[calc(100dvh-57px)] w-full min-h-0 overflow-hidden bg-white sm:h-[calc(100dvh-65px)]'
       : 'flex h-[calc(100dvh-152px)] min-h-[680px] w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm'}>
     {!mobile && (serviceMode ? <ServiceConversationSidebar activeOrderId={intakeMode ? undefined : orderId} activeIntakeId={intakeMode ? orderId : undefined} mobileOpen={mobileListOpen} onClose={() => setMobileListOpen(false)} /> : <aside className="hidden w-[240px] shrink-0 flex-col border-r border-slate-200 bg-white md:flex xl:w-[270px]"><div className="border-b border-slate-100 p-5"><div className="flex items-center justify-between"><h2 className="text-sm font-bold text-slate-900">订单会话</h2><span className="rounded-full role-primary-soft px-2 py-0.5 text-xs font-semibold role-primary-text">{conversations.length}</span></div><label className="mt-4 flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2.5"><Search className="h-4 w-4 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索订单 / 对方" className="min-w-0 flex-1 bg-transparent text-xs outline-none" /></label></div><div className="min-h-0 flex-1 overflow-y-auto p-2">{filteredConversations.map((item) => <Link key={item.orderId} href={serviceMode ? `/service/collaboration/${encodeURIComponent(item.orderId)}` : `/chat/orders/${encodeURIComponent(item.orderId)}`} className={`mb-1 block rounded-xl p-3 transition hover:bg-slate-50 ${item.orderId === orderId ? 'role-primary-soft' : ''}`}><div className="flex items-center gap-2"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-700">{item.counterpartName?.slice(0, 1) || '订'}</span><span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-800">{item.title}</span></div><p className="mt-2 truncate text-[11px] text-slate-400">{item.orderNo} · {item.counterpartName || '订单协作'}</p><p className="mt-1 truncate text-[11px] role-primary-text">{item.lastBody ? chatPreview(item.lastBody) : statusLabel(item.status)}</p></Link>)}{!filteredConversations.length && <p className="px-4 py-8 text-center text-xs text-slate-400">暂无匹配会话</p>}</div><div className="m-4 rounded-xl bg-slate-50 p-3 text-[11px] leading-5 text-slate-500">消息按订单保存。断线重连后会自动补齐历史记录。</div></aside>)}
     <div className="flex min-w-0 flex-1 flex-col bg-[#f7f8fc]">
       {panel === 'chat' ? <>
-        <header className="flex shrink-0 items-center gap-3 border-b border-slate-100 bg-white px-4 py-3">{serviceMode && <button type="button" aria-label="打开会话列表" onClick={() => setMobileListOpen(true)} className="rounded-lg p-1.5 text-slate-500 md:hidden"><Menu className="h-5 w-5" /></button>}<Link href={serviceMode ? '/service/dashboard' : mobile ? '/mobile/orders' : isDesigner ? '/review-tasks' : '/advertiser/orders'} aria-label="返回订单" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"><ArrowLeft className="h-5 w-5" /></Link><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-900">{order?.title || '订单协作'}</p><p className="truncate text-[11px] text-slate-400">{order?.orderNo || orderId} · {serviceMode ? `接待客服：${order?.assignedServiceName || '待分配'} · ${order?.creatorName} / ${order?.designerName}` : isDesigner ? order?.creatorName : order?.designerName}</p></div>{serviceMode && order && <ServiceTransferControl type={intakeMode ? 'intake' : 'order'} conversationId={orderId} currentUserId={currentUser?.id} assignment={order} onAssigned={(next) => setOrder((current) => current ? { ...current, ...next } : current)} />}{serviceMode && intakeMode && !order?.guestId && <button type="button" disabled={inviteBusy} onClick={() => void createInviteCode()} className="inline-flex items-center gap-1 rounded-full role-primary-soft px-3 py-1.5 text-xs font-semibold role-primary-text disabled:opacity-50"><Share2 className="h-3.5 w-3.5" />{inviteBusy ? '生成中…' : '创建邀请码'}</button>}{serviceMode && !intakeMode && <span className="md:hidden"><CreateIntakeConversation /></span>}{serviceMode && !intakeMode && <button type="button" onClick={() => window.print()} className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">打印 Brief</button>}{!intakeMode && <button type="button" onClick={() => setPanel('archive')} className="rounded-full role-primary-soft px-3 py-1.5 text-xs font-semibold role-primary-text">档案</button>}</header>
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-6" aria-live="polite">{!intakeMode && <><StageProgress status={order?.status} connected={connected} /><RequirementCollaboration key={orderId} orderId={orderId} refreshToken={messages[messages.length - 1]?.seq || 0} /></>}<div className={serviceMode ? 'w-full space-y-5' : 'mx-auto max-w-[680px] space-y-5'}><div className="mx-auto w-fit rounded-full bg-slate-200/70 px-3 py-1 text-[11px] text-slate-500">{intakeMode ? '沟通会话' : '订单协作时间线'}</div>{order && !intakeMode && <BriefCard order={order} review={review} onOpen={() => setPanel('brief')} />}{visibleMessages.map((message) => <article key={message.id} className={`flex ${message.senderId === currentUser?.id ? 'justify-end' : 'justify-start'}`}><div className={`min-w-0 max-w-[88%] ${['proposal', 'choice'].includes(parseChatCard(message.body)?.kind || '') ? 'w-full max-w-[560px]' : ''}`}><p className={`mb-1 text-[11px] text-slate-400 ${message.senderId === currentUser?.id ? 'text-right' : ''}`}>{message.senderName} · {dateLabel(message.createdAt)}</p><div className={parseChatCard(message.body) ? '' : `rounded-2xl px-4 py-3 ${message.senderId === currentUser?.id ? 'role-primary-bg text-white' : 'border border-slate-200 bg-white text-slate-800'}`}><MessageBody message={message} onProposal={() => openProposal(message)} decision={decisions.get(message.id)} choiceAnswer={choiceAnswers.get(message.id)} canChoose={currentUser?.role === 'advertiser' && message.senderId !== currentUser.id} onChoiceAnswer={(option, note) => sendCard({ kind: 'choice_answer', choiceMessageId: message.id, optionId: option.id, optionLabel: option.label, note })} canRespond={currentUser?.role === 'advertiser' || currentUser?.role === 'designer'} snapshotDecision={ownSnapshotAcks.get(message.id)} onSnapshotDecision={(decision, note) => void sendCard({ kind: 'snapshot_ack', snapshotMessageId: message.id, decision, note })} recalled={recalledIds.has(message.id)} /></div>{serviceMode && !intakeMode && parseChatCard(message.body)?.kind === 'work_card' && <button type="button" onClick={() => { setRevisionMessage(message); setWorkCardOpen(true); }} className="mt-1 text-[11px] font-semibold text-blue-600">基于此卡创建修订版</button>}{message.senderId === currentUser?.id && !intakeMode && !parseChatCard(message.body) && !recalledIds.has(message.id) && Date.now() - new Date(message.createdAt).getTime() < 120000 && <button type="button" onClick={() => void sendCard({ kind: 'recall', targetMessageId: message.id })} className="ml-2 mt-1 text-[11px] text-slate-400">撤回</button>}{message.senderId === currentUser?.id && !recalledIds.has(message.id) && <p className="mt-1 text-right text-[10px] text-slate-400">已保存</p>}</div></article>)}{visiblePending.map((message) => <article key={message.clientMessageId} className="flex justify-end"><div className="max-w-[85%] rounded-2xl role-primary-soft px-4 py-3 text-sm role-primary-text"><p className="text-[10px]">{failedPending[message.clientMessageId] ? `发送失败：${failedPending[message.clientMessageId]}` : "待服务器确认 · 自动重试中"}</p><p className="mt-1 whitespace-pre-wrap break-words">{parseChatCard(message.body)?.kind === 'recall' ? '撤回失败' : chatPreview(message.body)}</p><div className="mt-2 flex gap-3 text-[11px]"><button type="button" onClick={() => { failedRef.current.delete(message.clientMessageId); setFailedPending((current) => { const next = { ...current }; delete next[message.clientMessageId]; return next; }); void sendPending(message); }} className="underline">立即重试</button>{failedPending[message.clientMessageId] && <button type="button" onClick={() => void confirmPending([message.clientMessageId])} className="underline">放弃待发</button>}</div></div></article>)}{!visibleMessages.length && !visiblePending.length && <p className="py-4 text-center text-xs text-slate-400">从订单需求开始沟通，消息会保存在当前订单中</p>}<div ref={bottomRef} /></div></div>
-        <footer className="shrink-0 border-t border-slate-100 bg-white p-3 pb-[max(env(safe-area-inset-bottom),12px)] sm:p-4"><div className={serviceMode ? 'w-full' : 'mx-auto max-w-[680px]'}>{error && <p role="alert" className="mb-2 text-xs text-rose-600">{error}</p>}{serviceReplyLocked && <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">会话已转交给 {order?.assignedServiceName}，你可以查看历史记录，但不能继续回复。</p>}{serviceMode && !intakeMode ? serviceReplyLocked ? null : <ServiceChatToolbar orderId={orderId} requirements={order?.requirements || ''} onSend={sendCard} onFormSent={() => void sync()} /> : intakeMode ? <p className="mb-2 text-xs text-slate-400">消息会保存在当前会话中</p> : <div className="mb-2 flex gap-2 overflow-x-auto pb-1 text-xs">{isDesigner ? <><button type="button" onClick={() => setPanel('brief')} className="shrink-0 rounded-full role-primary-soft px-3 py-2 font-semibold role-primary-text">业务需求卡</button><button type="button" onClick={() => setComposerOpen(true)} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">A/B 提案</button><button type="button" onClick={() => setDraft('[需求问题] ')} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">提出问题</button><Link href={mobile ? '/mobile/tasks' : '/review-tasks'} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">交付任务</Link></> : <><button type="button" onClick={() => setDraft('[需求补充] ')} className="shrink-0 rounded-full role-primary-soft px-3 py-2 font-semibold role-primary-text">补充需求</button><button type="button" onClick={() => latestProposal ? openProposal(latestProposal) : setError('设计师尚未提交 A/B 方案')} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">方案决策</button><button type="button" onClick={() => setDraft('[修改反馈] ')} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">修改反馈</button><Link href={mobile ? `/mobile/orders/${encodeURIComponent(orderId)}` : '/advertiser/orders'} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">查看订单</Link></>}</div>}<div className="flex gap-2 rounded-xl border border-slate-200 bg-white p-2 focus-within:role-primary-border"><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} maxLength={5000} rows={mobile ? 2 : 3} disabled={!draftLoaded || serviceReplyLocked} placeholder={serviceReplyLocked ? `会话已转交给${order?.assignedServiceName}` : draftLoaded ? "输入消息…" : "正在恢复草稿…"} className="min-w-0 flex-1 resize-none border-0 bg-transparent p-2 text-sm outline-none" /><button type="button" onClick={() => void submit()} disabled={!draft.trim() || !order || !identityReady || saving || serviceReplyLocked} className="self-end rounded-lg role-primary-gradient p-3 text-white disabled:opacity-40" aria-label="发送消息"><Send className="h-4 w-4" /></button></div><p className="mt-1 hidden text-[10px] text-slate-400 sm:block">Enter 发送 · Shift+Enter 换行 · 服务端保存后显示“已保存”</p></div></footer>
+        <header className="flex shrink-0 items-center gap-3 border-b border-slate-100 bg-white px-4 py-3">{serviceMode && <button type="button" aria-label="打开会话列表" onClick={() => setMobileListOpen(true)} className="rounded-lg p-1.5 text-slate-500 md:hidden"><Menu className="h-5 w-5" /></button>}<Link href={serviceMode ? '/service/dashboard' : mobile ? '/mobile/orders' : isDesigner ? '/review-tasks' : '/advertiser/orders'} aria-label="返回订单" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"><ArrowLeft className="h-5 w-5" /></Link><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-900">{order?.title || '订单协作'}</p><p className="truncate text-[11px] text-slate-400">{order?.orderNo || orderId} · {serviceMode ? `接待客服：${order?.assignedServiceName || '待分配'} · ${order?.creatorName} / ${order?.designerName}` : isDesigner ? order?.creatorName : order?.designerName}</p></div>{serviceMode && order && <ServiceTransferControl type={intakeMode ? 'intake' : 'order'} conversationId={orderId} currentUserId={currentUser?.id} assignment={order} onAssigned={(next) => setOrder((current) => current ? { ...current, ...next } : current)} />}{serviceMode && intakeMode && order && <IntakeRequirementsDrawer conversationId={orderId} messages={messages} brandUserIds={[...(order.creatorRole === 'advertiser' && order.creatorId ? [order.creatorId] : []), ...(order.guestRole === 'advertiser' && order.guestId ? [order.guestId] : [])]} brandName={order.creatorRole === 'advertiser' ? order.creatorName : order.guestRole === 'advertiser' ? order.designerName : undefined} />}{serviceMode && intakeMode && !order?.guestId && <button type="button" disabled={inviteBusy} onClick={() => void createInviteCode()} className="inline-flex items-center gap-1 rounded-full role-primary-soft px-3 py-1.5 text-xs font-semibold role-primary-text disabled:opacity-50"><Share2 className="h-3.5 w-3.5" />{inviteBusy ? '生成中…' : '创建邀请码'}</button>}{serviceMode && !intakeMode && <span className="md:hidden"><CreateIntakeConversation /></span>}{serviceMode && !intakeMode && <button type="button" onClick={() => window.print()} className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">打印 Brief</button>}{!intakeMode && <button type="button" onClick={() => setPanel('archive')} className="rounded-full role-primary-soft px-3 py-1.5 text-xs font-semibold role-primary-text">档案</button>}</header>
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-6" aria-live="polite">{!intakeMode && <><StageProgress status={order?.status} connected={connected} /><RequirementCollaboration key={orderId} orderId={orderId} refreshToken={messages[messages.length - 1]?.seq || 0} /></>}<div className={serviceMode ? 'w-full space-y-5' : 'mx-auto max-w-[680px] space-y-5'}><div className="mx-auto w-fit rounded-full bg-slate-200/70 px-3 py-1 text-[11px] text-slate-500">{intakeMode ? '沟通会话' : '订单协作时间线'}</div>{order && !intakeMode && <BriefCard order={order} review={review} onOpen={() => setPanel('brief')} />}{visibleMessages.map((message) => <article key={message.id} className={`flex ${message.senderId === currentUser?.id ? 'justify-end' : 'justify-start'}`}><div className={`min-w-0 max-w-[88%] ${['proposal', 'choice'].includes(parseChatCard(message.body)?.kind || '') ? 'w-full max-w-[560px]' : ''}`}><p className={`mb-1 text-[11px] text-slate-400 ${message.senderId === currentUser?.id ? 'text-right' : ''}`}>{message.senderName} · {dateLabel(message.createdAt)}</p><div className={parseChatCard(message.body) ? '' : `rounded-2xl px-4 py-3 ${message.senderId === currentUser?.id ? 'role-primary-bg text-white' : 'border border-slate-200 bg-white text-slate-800'}`}><MessageBody message={message} onProposal={() => openProposal(message)} decision={decisions.get(message.id)} choiceAnswer={choiceAnswers.get(message.id)} canChoose={currentUser?.role === 'advertiser' && message.senderId !== currentUser.id} onChoiceAnswer={(option, note) => sendCard({ kind: 'choice_answer', choiceMessageId: message.id, optionId: option.id, optionLabel: option.label, note })} canRespond={currentUser?.role === 'advertiser' || currentUser?.role === 'designer'} snapshotDecision={ownSnapshotAcks.get(message.id)} onSnapshotDecision={(decision, note) => void sendCard({ kind: 'snapshot_ack', snapshotMessageId: message.id, decision, note })} canFillForm={intakeMode && currentUser?.role === 'advertiser' && message.senderId !== currentUser.id} formAnswers={intakeFormAnswers.get(message.id)} formRevision={intakeFormRevisions.get(message.id) || 0} onFormAnswers={(formMessageId, answers) => sendCard({ kind: 'form_answers', formMessageId, answers })} recalled={recalledIds.has(message.id)} /></div>{serviceMode && !serviceReplyLocked && parseChatCard(message.body)?.kind === 'work_card' && <button type="button" onClick={() => { setRevisionMessage(message); setWorkCardOpen(true); }} className="mt-1 text-[11px] font-semibold text-blue-600">基于此卡创建修订版</button>}{message.senderId === currentUser?.id && !intakeMode && !parseChatCard(message.body) && !recalledIds.has(message.id) && Date.now() - new Date(message.createdAt).getTime() < 120000 && <button type="button" onClick={() => void sendCard({ kind: 'recall', targetMessageId: message.id })} className="ml-2 mt-1 text-[11px] text-slate-400">撤回</button>}{message.senderId === currentUser?.id && !recalledIds.has(message.id) && <p className="mt-1 text-right text-[10px] text-slate-400">已保存</p>}</div></article>)}{visiblePending.map((message) => <article key={message.clientMessageId} className="flex justify-end"><div className="max-w-[85%] rounded-2xl role-primary-soft px-4 py-3 text-sm role-primary-text"><p className="text-[10px]">{failedPending[message.clientMessageId] ? `发送失败：${failedPending[message.clientMessageId]}` : "待服务器确认 · 自动重试中"}</p><p className="mt-1 whitespace-pre-wrap break-words">{parseChatCard(message.body)?.kind === 'recall' ? '撤回失败' : chatPreview(message.body)}</p><div className="mt-2 flex gap-3 text-[11px]"><button type="button" onClick={() => { failedRef.current.delete(message.clientMessageId); setFailedPending((current) => { const next = { ...current }; delete next[message.clientMessageId]; return next; }); void flush(); }} className="underline">立即重试</button>{failedPending[message.clientMessageId] && <button type="button" onClick={() => void confirmPending([message.clientMessageId])} className="underline">放弃待发</button>}</div></div></article>)}{!visibleMessages.length && !visiblePending.length && <p className="py-4 text-center text-xs text-slate-400">{intakeMode ? '从当前会话开始沟通，消息会保存在服务器中' : '从订单需求开始沟通，消息会保存在当前订单中'}</p>}<div ref={bottomRef} /></div></div>
+        <footer className="shrink-0 border-t border-slate-100 bg-white p-3 pb-[max(env(safe-area-inset-bottom),12px)] sm:p-4"><div className={serviceMode ? 'w-full' : 'mx-auto max-w-[680px]'}>{error && <p role="alert" className="mb-2 text-xs text-rose-600">{error}</p>}{serviceReplyLocked && <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">会话已转交给 {order?.assignedServiceName}，你可以查看历史记录，但不能继续回复。</p>}{serviceMode ? serviceReplyLocked ? null : <ServiceChatToolbar orderId={orderId} requirements={order?.requirements || ''} messages={messages} onSend={sendCard} onFormSent={() => void sync()} intakeMode={intakeMode} /> : intakeMode ? <p className="mb-2 text-xs text-slate-400">消息会保存在当前会话中</p> : <div className="mb-2 flex gap-2 overflow-x-auto pb-1 text-xs">{isDesigner ? <><button type="button" onClick={() => setPanel('brief')} className="shrink-0 rounded-full role-primary-soft px-3 py-2 font-semibold role-primary-text">业务需求卡</button><button type="button" onClick={() => setComposerOpen(true)} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">A/B 提案</button><button type="button" onClick={() => setDraft('[需求问题] ')} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">提出问题</button><Link href={mobile ? '/mobile/tasks' : '/review-tasks'} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">交付任务</Link></> : <><button type="button" onClick={() => setDraft('[需求补充] ')} className="shrink-0 rounded-full role-primary-soft px-3 py-2 font-semibold role-primary-text">补充需求</button><button type="button" onClick={() => latestProposal ? openProposal(latestProposal) : setError('设计师尚未提交 A/B 方案')} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">方案决策</button><button type="button" onClick={() => setDraft('[修改反馈] ')} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">修改反馈</button><Link href={mobile ? `/mobile/orders/${encodeURIComponent(orderId)}` : '/advertiser/orders'} className="shrink-0 rounded-full bg-slate-100 px-3 py-2 text-slate-600">查看订单</Link></>}</div>}{imageDrafts.length > 0 && <div className="flex gap-2 overflow-x-auto rounded-xl border border-slate-200 bg-white p-2">{imageDrafts.map(image => <div key={image.id} className="relative w-20 shrink-0"><img src={image.previewUrl} alt={image.file.name} className="aspect-square w-20 rounded-lg object-cover" /><button type="button" onClick={() => removeImage(image.id)} aria-label={`移除图片 ${image.file.name}`} disabled={imageSending} className="absolute right-1 top-1 rounded-full bg-slate-950/70 px-1.5 text-xs text-white">×</button><p className="truncate text-[10px] text-slate-500">{image.uploaded ? '已上传 · ' : ''}{image.file.name}</p></div>)}</div>}<div className="flex items-end gap-2 rounded-xl border border-slate-200 bg-white p-2 focus-within:role-primary-border"><input ref={imageInputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple className="hidden" onChange={selectImages} /><div className="relative self-end" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMediaMenuOpen(false); }}><button type="button" onClick={() => setMediaMenuOpen(open => !open)} disabled={!draftLoaded || imageSending || saving || serviceReplyLocked || imageDrafts.length >= 9} aria-label="添加图片" aria-haspopup="menu" aria-expanded={mediaMenuOpen} title="添加图片" className="rounded-lg bg-slate-100 p-3 text-slate-600 disabled:opacity-40"><Plus className="h-4 w-4" /></button>{mediaMenuOpen && <div role="menu" className="absolute bottom-full left-0 z-30 mb-2 w-40 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"><button type="button" role="menuitem" onClick={() => { setMediaMenuOpen(false); imageInputRef.current?.click(); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"><ImagePlus className="h-4 w-4 text-slate-500" />上传图片</button></div>}</div><textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void submit(); } }} maxLength={imageDrafts.length ? 500 : 5000} rows={mobile ? 2 : 3} disabled={!draftLoaded || serviceReplyLocked || imageSending} placeholder={serviceReplyLocked ? `会话已转交给${order?.assignedServiceName}` : imageDrafts.length ? '补充图片说明（最多 500 字）…' : draftLoaded ? "输入消息…" : "正在恢复草稿…"} className="min-w-0 flex-1 resize-none border-0 bg-transparent p-2 text-sm outline-none" /><button type="button" onClick={() => void submit()} disabled={(!draft.trim() && !imageDrafts.length) || !order || !identityReady || saving || imageSending || serviceReplyLocked} className="self-end rounded-lg role-primary-gradient p-3 text-white disabled:opacity-40" aria-label={imageSending ? '媒体上传中' : '发送消息'}>{imageSending ? <span className="text-xs">上传中</span> : <Send className="h-4 w-4" />}</button></div><p className="mt-1 hidden text-[10px] text-slate-400 sm:block">Enter 发送 · Shift+Enter 换行 · 服务端保存后显示“已保存”</p></div></footer>
       </> : <><header className="flex shrink-0 items-center gap-3 border-b border-slate-100 bg-white px-4 py-4"><button type="button" onClick={() => setPanel('chat')} aria-label="返回聊天" className="text-slate-500"><ArrowLeft className="h-5 w-5" /></button><h2 className="flex-1 text-sm font-bold text-slate-900">{panel === 'archive' ? '协作档案' : panel === 'brief' ? '确认需求范围' : '选择主图方案'}</h2><button type="button" onClick={() => setPanel('chat')} aria-label="关闭" className="text-slate-400"><X className="h-4 w-4" /></button></header><div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"><div className={serviceMode ? 'w-full space-y-4' : 'mx-auto max-w-[680px] space-y-4'}>{error && <p role="alert" className="text-xs text-rose-600">{error}</p>}{panel === 'archive' ? <ArchivePanel order={order} messageCount={messages.length} proposalCount={proposals.length} onBrief={() => setPanel('brief')} /> : panel === 'brief' ? <>{order && <><BriefCard order={order} review={review} onOpen={() => undefined} /><div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-xs font-semibold text-slate-700">完整需求说明</p><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">{order.requirements || '订单未填写详细需求。'}</p></div></>}{isDesigner && <div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-sm font-semibold">需求核对</p><textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} rows={3} maxLength={500} placeholder="如需补充，请写明问题或缺少的素材" className="mt-3 w-full resize-none rounded-xl border border-slate-200 p-3 text-sm outline-none focus:role-primary-border" /><div className="mt-3 flex gap-2"><button type="button" onClick={() => void sendReview('needs_details')} disabled={saving || !identityReady} className="min-h-11 flex-1 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 disabled:opacity-40">请求补充</button><button type="button" onClick={() => void sendReview('confirmed')} disabled={saving || !identityReady} className="min-h-11 flex-1 rounded-xl role-primary-gradient text-xs font-semibold text-white disabled:opacity-40">确认需求范围</button></div><p className="mt-2 text-[11px] text-slate-400">操作会作为聊天记录发送，不会修改订单审核状态。</p></div>}</> : selectedCard?.kind === 'proposal' ? <><div className="rounded-2xl border border-slate-200 bg-white p-4"><p className="text-xs font-semibold role-primary-text">A/B 方案提案</p><h3 className="mt-1 text-base font-bold text-slate-900">{selectedCard.title}</h3><p className="mt-1 text-xs text-slate-400">设计师提交 · {dateLabel(selectedProposal?.createdAt)}</p></div>{([['A', selectedCard.optionA, selectedCard.detailA], ['B', selectedCard.optionB, selectedCard.detailB]] as const).map(([key, title, detail]) => <button key={key} type="button" onClick={() => setSelectedOption(key)} className={`w-full rounded-2xl border bg-white p-4 text-left ${selectedOption === key ? 'role-primary-border ring-2 ring-[var(--role-primary-border)]' : 'border-slate-200'}`}><div className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-full role-primary-soft text-xs font-bold role-primary-text">{key}</span><span className="font-semibold text-slate-900">{title}</span>{selectedOption === key && <Check className="ml-auto h-4 w-4 role-primary-text" />}</div><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{detail}</p></button>)}{selectedDecision?.kind === 'decision' ? <p className="rounded-xl bg-emerald-50 p-3 text-xs font-medium text-emerald-700">已在聊天中选择方案 {selectedDecision.option}</p> : currentUser?.role === 'advertiser' && <><textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} rows={2} maxLength={500} placeholder="可选：补充选择理由或调整建议" className="w-full resize-none rounded-xl border border-slate-200 p-3 text-sm outline-none focus:role-primary-border" /><button type="button" onClick={() => void sendDecision()} disabled={saving || !identityReady} className="min-h-11 w-full rounded-xl role-primary-gradient text-sm font-semibold text-white disabled:opacity-40">确认选择方案 {selectedOption}</button><p className="text-[11px] text-slate-400">选择将保存为聊天记录，订单正式流程仍在订单页面处理。</p></>}</> : <p className="text-sm text-slate-500">方案不存在或尚未保存。</p>}</div></div></>}
     </div>
     {!mobile && !intakeMode && <aside className="hidden w-[260px] shrink-0 overflow-y-auto border-l border-slate-200 bg-white p-5 xl:block"><h2 className="border-b border-slate-100 pb-4 text-sm font-bold text-slate-900">{serviceMode ? '协作档案' : isDesigner ? '项目执行面板' : '订单决策面板'}</h2><div className="mt-4 rounded-2xl role-primary-soft p-4"><p className="text-[11px] text-slate-500">{isDesigner ? '待我处理' : '当前协作'}</p><p className="mt-1 text-sm font-bold role-primary-text">{isDesigner ? review?.kind === 'requirement_review' && review.decision === 'confirmed' ? '推进设计与交付' : '核对交付范围' : latestProposal ? '选择视觉方案' : '补充需求与反馈'}</p><p className="mt-2 text-xs text-slate-500">{isDesigner ? '从订单需求开始，沟通记录会保留在时间线' : '选择方案会保存为消息，双方可追溯'}</p></div><div className="mt-5">{serviceMode ? <ServiceContractPanel order={order} messages={messages} onBrief={() => setPanel('brief')} /> : <ArchivePanel order={order} messageCount={messages.length} proposalCount={proposals.length} onBrief={() => setPanel('brief')} />}</div></aside>}
@@ -393,7 +555,14 @@ export function OrderChat({ orderId, mobile = false, serviceMode = false, intake
       <section className="chat-print-brief hidden"><h1 className="text-2xl font-bold">订单协作 Brief</h1><p className="mt-2 text-sm">{order?.orderNo} · {order?.title}</p><dl className="mt-5 grid grid-cols-2 gap-3 text-sm"><div><dt>品牌方</dt><dd>{order?.creatorName}</dd></div><div><dt>设计师</dt><dd>{order?.designerName}</dd></div><div><dt>交付类型</dt><dd>{order?.category}</dd></div><div><dt>截止时间</dt><dd>{dateLabel(order?.deadline)}</dd></div></dl><h2 className="mt-6 border-b pb-2 font-bold">原始需求</h2><p className="mt-2 whitespace-pre-wrap text-sm">{order?.requirements || '未填写'}</p><h2 className="mt-6 border-b pb-2 font-bold">协作卡片</h2>{messages.map((message) => { const card = parseChatCard(message.body); return card?.kind === 'work_card' ? <div key={message.id} className="mt-4 break-inside-avoid border-b pb-3 text-sm"><h3 className="font-semibold">{card.title}</h3><p className="text-xs">{message.senderName} · {dateLabel(message.createdAt)}</p>{card.fields.map((field, index) => <p key={index} className="mt-1 whitespace-pre-wrap">{field.label}：{field.value}</p>)}</div> : null; })}</section>
     </>}
     {inviteOpen && intakeMode && <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/45 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setInviteOpen(false); }}><section role="dialog" aria-modal="true" aria-labelledby="intake-invite-title" className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl"><div className="flex items-center justify-between"><h2 id="intake-invite-title" className="text-lg font-bold text-slate-900">会话邀请码</h2><button type="button" aria-label="关闭" onClick={() => setInviteOpen(false)} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><p className="mt-2 text-xs text-slate-500">对方打开微信分享卡片或扫描小程序码，即可加入当前会话。</p>{inviteCodeUrl ? <img src={inviteCodeUrl} alt="加入会话的小程序码" className="mx-auto mt-4 h-48 w-48 rounded-lg border" /> : <div className="mt-4 flex h-48 items-center justify-center rounded-lg bg-slate-50 text-sm text-slate-400">{inviteBusy ? '正在生成小程序码…' : '小程序码暂不可用'}</div>}{invitePath && <div className="mt-4 flex gap-2"><input readOnly aria-label="小程序页面路径" value={invitePath} className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-xs" /><button type="button" onClick={() => void copyInvitePath()} className="shrink-0 rounded-lg role-primary-soft px-3 py-2 text-xs font-semibold role-primary-text">复制路径</button></div>}{error && <p role="alert" className="mt-2 text-xs text-rose-600">{error}</p>}{inviteCodeUrl && <a href={inviteCodeUrl} download="会话邀请码.png" className="mt-4 block rounded-lg role-primary-gradient px-4 py-2.5 text-center text-sm font-semibold text-white">下载小程序码</a>}</section></div>}
-    {workCardOpen && <ServiceCardComposer key={revisionMessage?.id || 'new'} onClose={() => setWorkCardOpen(false)} onSend={sendCard} initial={revisionMessage ? (parseChatCard(revisionMessage.body) as Extract<ChatCard, { kind: 'work_card' }>) : undefined} revisionOf={revisionMessage?.id} />}
+    {workCardOpen && (() => {
+      const parsed = revisionMessage ? parseChatCard(revisionMessage.body) : null;
+      const initial = parsed?.kind === 'work_card' ? parsed : undefined;
+      const onClose = () => { setWorkCardOpen(false); setRevisionMessage(null); };
+      return initial && /^biz_\d+$/.test(initial.templateId)
+        ? <BusinessCardBox key={revisionMessage?.id || 'new'} onClose={onClose} onSend={sendCard} initial={initial} revisionOf={revisionMessage?.id} messages={messages} />
+        : <ServiceCardComposer key={revisionMessage?.id || 'new'} onClose={onClose} onSend={sendCard} initial={initial} revisionOf={revisionMessage?.id} />;
+    })()}
     {composerOpen && <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="创建 A/B 提案"><div className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl bg-white p-5 shadow-xl sm:rounded-2xl"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold role-primary-text">{serviceMode ? '客服协作工具' : '设计师工具'}</p><h2 className="mt-1 text-lg font-bold text-slate-900">创建 A/B 方案提案</h2></div><button type="button" onClick={() => setComposerOpen(false)} aria-label="关闭提案" className="rounded-full p-2 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button></div><p className="mt-2 text-xs leading-5 text-slate-500">提案会作为当前订单的聊天卡片保存。图片素材与正式交付仍在订单任务中处理。</p><div className="mt-5 space-y-3">{([['title', '提案标题', '例如：主图视觉方向'], ['optionA', '方案 A 名称', '例如：轻盈自然'], ['detailA', '方案 A 说明', '说明视觉、配色与内容重点'], ['optionB', '方案 B 名称', '例如：质感聚焦'], ['detailB', '方案 B 说明', '说明视觉、配色与内容重点']] as const).map(([key, label, placeholder]) => <label key={key} className="block"><span className="text-xs font-semibold text-slate-700">{label}</span><textarea value={proposalDraft[key]} onChange={(event) => setProposalDraft((current) => ({ ...current, [key]: event.target.value }))} rows={key.startsWith('detail') ? 2 : 1} maxLength={key.startsWith('detail') ? 600 : 80} placeholder={placeholder} className="mt-1 w-full resize-none rounded-xl border border-slate-200 p-3 text-sm outline-none focus:role-primary-border" /></label>)}</div>{error && <p role="alert" className="mt-2 text-xs text-rose-600">{error}</p>}<button type="button" onClick={() => void sendProposal()} disabled={saving || !identityReady} className="mt-5 min-h-11 w-full rounded-xl role-primary-gradient text-sm font-semibold text-white disabled:opacity-40">发送方案卡片</button></div></div>}
   </div>;
 }

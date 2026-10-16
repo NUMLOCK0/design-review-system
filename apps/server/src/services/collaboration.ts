@@ -68,13 +68,21 @@ export async function getCollaborationFile(orderId: string, assetId: string, use
   const workspace = await getCollaborationWorkspace(orderId, user);
   const url = `/api/upload/assets/${assetId}`;
   function references(fields: FormField[], answers: FormAnswers): boolean {
-    return fields.some(field => field.kind === 'file' ? answers[field.key] === url : field.kind === 'repeat' && Array.isArray(answers[field.key]) && (answers[field.key] as FormAnswers[]).some(row => references(field.children || [], row)));
+    if (!fields.length) return false;
+    return fields.some(field => {
+      if (field.kind === 'file' || field.kind === 'image') {
+        const values = Array.isArray(answers[field.key]) ? answers[field.key] as unknown[] : [answers[field.key]];
+        return values.some(value => value === url || value === `/api/upload/previews/${assetId}`);
+      }
+      return field.kind === 'repeat' && Array.isArray(answers[field.key])
+        && (answers[field.key] as FormAnswers[]).some(row => references(field.children || [], row));
+    });
   }
   const form = workspace.forms.find(item => references(item.template.fields, item.answers));
   const frozen = workspace.requirements.some(item => item.content.sources.some(source => references(source.fields, source.answers)));
   if (!form && !frozen) fail('资料未关联此订单需求', 404);
   const asset = protectedAssets.get(assetId) || await findMediaAsset(assetId);
-  if (!asset || asset.kind !== 'source-file') fail('资料文件不存在', 404);
+  if (!asset || !['source-file', 'image'].includes(asset.kind)) fail('资料文件不存在', 404);
   // Frozen requirements have already passed ownership checks at submission.
   if (!frozen && ![workspace.creatorId, workspace.designerId, form?.createdBy].includes(asset.ownerId)) fail('无权读取该资料', 403);
   return asset;
@@ -209,10 +217,14 @@ export async function createPresetCollaborationForm(connection: PoolConnection, 
 export async function createComposedCollaborationForm(connection: PoolConnection, order: Order, user: AuthUserPayload,
   selections: Array<{ presetId: string; fieldKeys: string[] }>) {
   const fields: FormField[] = [];
+  const seenPresets = new Set<string>();
   for (const selection of selections) {
+    if (seenPresets.has(selection.presetId)) fail('组合发单包含重复业务类别', 400);
+    seenPresets.add(selection.presetId);
     const preset = ORDER_FORM_PRESETS.find(item => item.id === selection.presetId);
     if (!preset) fail('组合发单模板不存在', 404);
     const allowed = new Set(selection.fieldKeys);
+    if (allowed.size !== selection.fieldKeys.length) fail('组合发单包含重复问题', 400);
     const found = new Set<string>();
     for (const section of preset.sections) {
       const selected = section.fields.filter(item => allowed.has(item.key));
@@ -235,6 +247,43 @@ export async function createComposedCollaborationForm(connection: PoolConnection
   return insertCollaborationForm(connection, order, user, template);
 }
 
+export async function createManagedComposedCollaborationForm(connection: PoolConnection, order: Order, user: AuthUserPayload,
+  selections: Array<{ templateId: string; templateVersion: number; fieldKeys: string[] }>) {
+  const fields: FormField[] = [];
+  const seenTemplates = new Set<string>();
+  for (const selection of selections) {
+    if (seenTemplates.has(selection.templateId)) fail('组合发单包含重复表单', 400);
+    seenTemplates.add(selection.templateId);
+    if (new Set(selection.fieldKeys).size !== selection.fieldKeys.length) fail('组合发单包含重复问题', 400);
+    const [rows]: any = await connection.query(
+      'SELECT v.payload_json FROM form_template_versions v JOIN form_templates t ON t.id=v.template_id WHERE v.template_id=? AND v.version=? AND t.target=? AND t.status<>? LIMIT 1',
+      [selection.templateId, selection.templateVersion, 'order', 'archived'],
+    );
+    if (!rows[0]) fail('组合发单引用的表单版本不存在或已归档', 404);
+    const source = json<FormTemplate>(rows[0].payload_json);
+    const allowed = new Set(selection.fieldKeys);
+    let currentSection = source.name;
+    let sectionAdded = false;
+    const found = new Set<string>();
+    for (const item of source.fields) {
+      if (item.kind === 'section') { currentSection = item.label; sectionAdded = false; continue; }
+      if (['divider', 'paragraph'].includes(item.kind) || !allowed.has(item.key)) continue;
+      if (!sectionAdded) {
+        fields.push({ ...createFormField('section', fields.length + 1), key: `section_${fields.length + 1}`, label: `${source.name} · ${currentSection}`, width: 100 });
+        sectionAdded = true;
+      }
+      found.add(item.key);
+      fields.push({ ...item, id: `field_${fields.length + 1}`, key: `${source.id}_${item.key}`, width: item.kind === 'textarea' ? 100 : item.width });
+    }
+    if (found.size !== allowed.size) fail('组合发单包含无效问题', 400);
+  }
+  if (!fields.length || fields.length > 100) fail('请选择 1 至 100 个问题或分组', 400);
+  const stamp = now();
+  const template: FormTemplate = { id: `combo_${randomUUID()}`, name: '组合发单需求表', description: '从后台已发布表单中组合的填写表单',
+    target: 'order', category: '组合发单', fields, version: 1, publishedVersion: 1, status: 'published', createdAt: stamp, updatedAt: stamp };
+  return insertCollaborationForm(connection, order, user, template);
+}
+
 async function validateAssets(fields: FormField[], answers: FormAnswers, allowedOwners: string[]) {
   for (const field of fields) {
     const value = answers[field.key];
@@ -242,10 +291,14 @@ async function validateAssets(fields: FormField[], answers: FormAnswers, allowed
       for (const item of value) await validateAssets(field.children || [], item as FormAnswers, allowedOwners);
     }
     if (['image', 'file'].includes(field.kind) && value) {
-      const match = typeof value === 'string' ? /^\/api\/upload\/(?:previews|assets)\/([a-zA-Z0-9_-]+)$/.exec(value) : null;
-      if (!match) fail(`${field.label}：请通过系统上传文件`);
-      const asset = protectedAssets.get(match[1]) || await findMediaAsset(match[1]);
-      if (!asset || !allowedOwners.includes(asset.ownerId)) fail(`${field.label}：文件不存在或无权使用`, 403);
+      const values = Array.isArray(value) ? value : [value];
+      if (field.maxFiles !== null && values.length > (field.maxFiles ?? 1)) fail(`${field.label}：最多上传 ${field.maxFiles ?? 1} 个文件`);
+      for (const item of values) {
+        const match = typeof item === 'string' ? /^\/api\/upload\/(?:previews|assets)\/([a-zA-Z0-9_-]+)$/.exec(item) : null;
+        if (!match) fail(`${field.label}：请通过系统上传文件`);
+        const asset = protectedAssets.get(match[1]) || await findMediaAsset(match[1]);
+        if (!asset || !allowedOwners.includes(asset.ownerId)) fail(`${field.label}：文件不存在或无权使用`, 403);
+      }
     }
   }
 }

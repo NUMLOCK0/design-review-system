@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { calculateOrderMinimumBudget } from '@design-review/shared';
 import type { DesignOrder, OrderDispute, ServiceActionLog, WithdrawalRequest } from '@design-review/shared';
-import { Check, Clock3, CreditCard, FileCheck2, Inbox, MessageSquareWarning, RefreshCw, UserRound } from 'lucide-react';
-import { fetchWithAuth } from '@/lib/auth';
+import { ArrowRight, Check, Clock3, CreditCard, FileCheck2, Inbox, MessageSquareWarning, RefreshCw, UserRound, WandSparkles } from 'lucide-react';
+import { fetchWithAuth, getCurrentUser } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Drawer, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
@@ -70,6 +71,7 @@ export default function ServiceDashboardPage() {
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showImageStudioEntry, setShowImageStudioEntry] = useState(false);
   const [selected, setSelected] = useState<WorkItem | null>(null);
   const [logs, setLogs] = useState<ServiceActionLog[]>([]);
   const [comment, setComment] = useState('');
@@ -92,6 +94,7 @@ export default function ServiceDashboardPage() {
   };
 
   useEffect(() => { void loadData(); }, [tab, keyword, page]);
+  useEffect(() => { setShowImageStudioEntry(getCurrentUser()?.role === 'customer_service'); }, []);
   useEffect(() => {
     fetchWithAuth('/system-config/order-pricing')
       .then((response) => response.json())
@@ -184,6 +187,10 @@ export default function ServiceDashboardPage() {
       <div><p className="text-xs font-semibold text-blue-600">客服工作台</p><h1 className="mt-1 text-2xl font-bold text-slate-900">今天处理什么？</h1><p className="mt-1 text-xs text-slate-500">订单发布审核与纠纷处理统一在这里完成</p></div>
       <div className="flex min-w-0 gap-2"><form className="flex min-w-0 flex-1 gap-2 sm:w-64" onSubmit={(event) => { event.preventDefault(); setPage(1); setKeyword(search.trim()); }}><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索订单名称 / 编号" className="h-9 rounded-xl" /><Button type="submit" variant="outline" className="h-9 shrink-0 rounded-xl text-xs">搜索</Button></form><Button variant="outline" size="icon" className="h-9 w-9 shrink-0 rounded-xl" onClick={() => void loadData()} aria-label="刷新"><RefreshCw className="h-3.5 w-3.5" /></Button></div>
     </div>
+
+    {showImageStudioEntry && <Link href="/service/image-studio" className="group flex min-h-24 items-center justify-between gap-4 overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-violet-50 px-4 py-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md sm:px-5">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-4"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-indigo-600 text-white shadow-md shadow-indigo-200"><WandSparkles className="h-5 w-5" /></span><div className="min-w-0"><p className="font-semibold text-slate-900">商品视觉创作</p><p className="mt-1 text-xs leading-5 text-slate-500">整理商品素材、规划创作方向，并跟踪生成任务与结果</p></div></div><span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-indigo-700">打开工作台<ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></span>
+    </Link>}
 
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-5"><Metric icon={Inbox} label="待我处理" value={counts.mine} tone="blue" /><Metric icon={Clock3} label="即将超时" value={counts.overdue} tone="amber" /><Metric icon={CreditCard} label="提现审核" value={counts.withdrawalReview} tone="blue" /><Metric icon={MessageSquareWarning} label="处理中纠纷" value={counts.dispute} tone="rose" /><Metric icon={Check} label="今日已完成" value={counts.completedToday} tone="emerald" /></div>
 

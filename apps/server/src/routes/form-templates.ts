@@ -2,7 +2,7 @@ import { Router } from 'express';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { z } from 'zod';
-import { buildFormSchema, ORDER_FORM_PRESETS, type FormField, type FormTemplate } from '@design-review/shared';
+import { buildFormSchema, createOrderPresetDraft, ORDER_FORM_PRESETS, type FormField, type FormTemplate } from '@design-review/shared';
 import { dbPool } from '../config/database.js';
 import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
 import { recordAdminAudit } from '../services/admin-audit.js';
@@ -25,23 +25,28 @@ const fieldSchema: z.ZodType<FormField> = z.lazy(() => z.object({
   minLength: z.number().int().min(0).max(100000).optional(), maxLength: z.number().int().min(0).max(100000).optional(),
   pattern: z.string().max(300).optional(), condition: conditionSchema.optional(), children: z.array(fieldSchema).max(50).optional(),
   minItems: z.number().int().min(0).max(100).optional(), maxItems: z.number().int().min(1).max(100).optional(),
+  maxFiles: z.number().int().min(1).max(1000).nullable().optional(),
 }));
-const templateInput = z.object({ name: z.string().trim().min(1).max(120), description: z.string().max(1000).default(''), target: z.enum(['order', 'general']), category: z.string().trim().max(80).optional(), tag: z.string().trim().max(80).optional(), presetId: z.string().trim().max(80).optional(), fields: z.array(fieldSchema).max(100) });
+const templateInput = z.object({ name: z.string().trim().min(1).max(120), description: z.string().max(1000).default(''), target: z.enum(['order', 'general']), category: z.string().trim().max(80).optional(), tag: z.string().trim().max(80).optional(), presetId: z.string().trim().max(80).optional(), mobileStyle: z.enum(['comfortable', 'compact', 'large']).default('comfortable'), fields: z.array(fieldSchema).max(100) });
 
 function validateDefinition(input: unknown) {
   const parsed = templateInput.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message || '表单配置无效' } as const;
   const fields = parsed.data.fields;
   const keys = new Set<string>();
+  const ids = new Set<string>();
   const check = (items: FormField[], depth: number): string | null => {
     if (depth > 2) return '可增删子表单最多嵌套两层';
     const local = new Set<string>();
     for (const field of items) {
+      if (ids.has(field.id)) return `字段 ID 重复：${field.id}`;
+      ids.add(field.id);
       if (local.has(field.key)) return `字段标识重复：${field.key}`;
       local.add(field.key);
       if (depth === 0) keys.add(field.key);
       if (field.kind === 'repeat' && (!field.children?.length || (field.maxItems ?? 10) < (field.minItems ?? 0))) return '可增删子表单需要子字段，且最大条数不能小于最小条数';
       if (field.kind !== 'repeat' && field.children?.length) return '只有可增删子表单可以包含子字段';
+      if (field.maxFiles !== undefined && !['image', 'file'].includes(field.kind)) return `${field.label}：只有上传字段可以配置文件个数`;
       if (field.min !== undefined && field.max !== undefined && field.min > field.max) return `${field.label}：最小值不能大于最大值`;
       if (field.minLength !== undefined && field.maxLength !== undefined && field.minLength > field.maxLength) return `${field.label}：最短长度不能大于最长长度`;
       if (field.pattern) { try { new RegExp(field.pattern); } catch { return `${field.label}：正则表达式无效`; } }
@@ -76,7 +81,19 @@ function parseJson(value: unknown): FormTemplate | null {
 }
 
 export async function initializeFormTemplates() {
-  if (!dbPool) return;
+  const seedTemplate = (preset: typeof ORDER_FORM_PRESETS[number], now: string): FormTemplate => ({
+    ...createOrderPresetDraft(preset), id: `preset_${preset.id}`, version: 1, publishedVersion: 1,
+    status: 'published', createdAt: now, updatedAt: now,
+  });
+  if (!dbPool) {
+    for (const preset of ORDER_FORM_PRESETS) {
+      const id = `preset_${preset.id}`;
+      if (memory.has(id)) continue;
+      const template = seedTemplate(preset, new Date().toISOString());
+      memory.set(id, template); publishedMemory.set(id, new Map([[1, template]]));
+    }
+    return;
+  }
   await dbPool.query(`CREATE TABLE IF NOT EXISTS form_templates (
     id VARCHAR(80) PRIMARY KEY, name VARCHAR(120) NOT NULL, target VARCHAR(20) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'draft', draft_json JSON NOT NULL,
@@ -114,6 +131,17 @@ export async function initializeFormTemplates() {
       await dbPool.query('INSERT IGNORE INTO form_categories (id,name,description,sort_order,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?)', [id, name, '', seedNames.length + knownCategories.size, 1, now, now]);
       knownCategories.add(name);
     }
+  }
+  for (const preset of ORDER_FORM_PRESETS) {
+    const id = `preset_${preset.id}`;
+    const [existing]: any = await dbPool.query('SELECT id FROM form_templates WHERE id=? LIMIT 1', [id]);
+    if (existing.length) continue;
+    const now = new Date().toISOString();
+    const template = seedTemplate(preset, now);
+    await dbPool.query('INSERT INTO form_templates (id,name,target,status,draft_json,published_json,published_version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      [template.id, template.name, template.target, template.status, JSON.stringify(template), JSON.stringify(template), template.publishedVersion, now, now]);
+    await dbPool.query('INSERT INTO form_template_versions (template_id,version,payload_json,published_at) VALUES (?,?,?,?)',
+      [template.id, template.publishedVersion, JSON.stringify(template), now]);
   }
 }
 
@@ -313,6 +341,7 @@ formTemplatesRouter.delete('/:id', async (req, res, next) => {
   try {
     const current = await getTemplate(req.params.id);
     if (!current) return res.status(404).json({ code: 404, success: false, message: '表单不存在' });
+    if (current.presetId && ORDER_FORM_PRESETS.some((preset) => preset.id === current.presetId)) return res.status(409).json({ code: 409, success: false, message: '系统预制表单会保留，不能归档；可编辑并发布新版本' });
     const result: FormTemplate = { ...current, status: 'archived', updatedAt: new Date().toISOString() };
     if (dbPool) await dbPool.query('UPDATE form_templates SET status=?,draft_json=?,updated_at=? WHERE id=?', [result.status, JSON.stringify(result), result.updatedAt, result.id]);
     else memory.set(result.id, result);

@@ -9,17 +9,19 @@ export function queueMessage(orderId: string, body: string) {
   // Persist before attempting network transmission; errors leave the composer unchanged.
   uni.setStorageSync(storageKey(orderId), [...pendingMessages(orderId), pending]);
 }
-const sending = new Map<string, Promise<void>>();
+const sending = new Map<string, Promise<ChatMessage[]>>();
 export function flushOutbox(orderId: string) {
   const key = storageKey(orderId);
   const existing = sending.get(key);
   if (existing) return existing;
-  const operation = (async () => {
+  const operation = (async (): Promise<ChatMessage[]> => {
+    const saved: ChatMessage[] = [];
     for (const pending of (uni.getStorageSync(key) || []) as PendingMessage[]) {
       if (key !== storageKey(orderId)) break;
       if (pending.error) continue;
       try {
-        await request<ChatMessage>(`/chat/orders/${encodeURIComponent(orderId)}/messages`, 'POST', { clientMessageId: pending.clientMessageId, body: pending.body });
+        const message = await request<ChatMessage>(`/chat/orders/${encodeURIComponent(orderId)}/messages`, 'POST', { clientMessageId: pending.clientMessageId, body: pending.body });
+        saved.push(message);
         uni.setStorageSync(key, ((uni.getStorageSync(key) || []) as PendingMessage[]).filter(item => item.clientMessageId !== pending.clientMessageId));
       } catch (error) {
         if (error instanceof ApiError && error.status >= 400 && error.status < 500 && ![401, 408, 429].includes(error.status)) {
@@ -28,6 +30,7 @@ export function flushOutbox(orderId: string) {
         break;
       }
     }
+    return saved;
   })().finally(() => { sending.delete(key); });
   sending.set(key, operation);
   return operation;

@@ -2,21 +2,35 @@ import { Router } from 'express';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { authenticate, type AuthUserPayload } from '../middleware/auth.middleware.js';
-import { getConversationAssignment, getConversationTransferHistory, requireChatDatabase, transferServiceConversation } from '../services/chat.js';
+import { CARD_PREFIX, getConversationAssignment, getConversationTransferHistory, hasConversationImageAccess, parseCard, requireChatDatabase, transferServiceConversation } from '../services/chat.js';
+import { isCustomerServiceOnline, publishIntakeMessage } from '../socket/chat-socket.js';
+import { getDefaultEnabledAiConfig, getEnabledAiModelProfileCredentials, openAiChatCompletionsEndpoint } from '../services/ai-config.js';
+import { fetchAiJson } from '../services/ai-call-log.js';
 
 export const intakeSessionsRouter = Router();
 const ok = (data: unknown) => ({ code: 200, success: true, data });
 const fail = (message: string, status: number): never => { throw Object.assign(new Error(message), { status }); };
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
-const present = (row: any) => ({
+const present = (row: any) => {
+  const serviceUserId = row.assigned_service_id
+    || (['customer_service', 'admin'].includes(row.creator_role) ? row.creator_id : null)
+    || (['customer_service', 'admin'].includes(row.guest_role) ? row.guest_id : null);
+  return {
   id: row.id, title: row.title, creatorId: row.creator_id, creatorName: row.creator_name,
+  creatorRole: row.creator_role || null, guestRole: row.guest_role || null,
   guestId: row.guest_id || null, guestName: row.guest_name || null, status: row.status,
   lastSeq: Number(row.last_seq), updatedAt: row.updated_at,
   assignedServiceId: row.assigned_service_id || null, assignedServiceName: row.assigned_service_name || null,
-});
+  customerServiceOnline: isCustomerServiceOnline(serviceUserId),
+  };
+};
 async function member(id: string, user: AuthUserPayload) {
   const serviceAccess = ['customer_service', 'admin'].includes(user.role);
-  const [rows]: any = await requireChatDatabase().query(`SELECT s.*,a.assigned_service_id,a.assigned_service_name FROM intake_sessions s
+  const [rows]: any = await requireChatDatabase().query(`SELECT s.*,a.assigned_service_id,a.assigned_service_name,
+      creator.role AS creator_role, guest.role AS guest_role
+    FROM intake_sessions s
+    LEFT JOIN users creator ON creator.id=s.creator_id
+    LEFT JOIN users guest ON guest.id=s.guest_id
     LEFT JOIN service_conversation_assignments a ON a.conversation_type='intake' AND a.conversation_id=s.id
     WHERE s.id=? AND (${serviceAccess ? '1=1' : '(s.creator_id=? OR s.guest_id=?)'}) LIMIT 1`, serviceAccess ? [id] : [id, user.id, user.id]);
   if (!rows[0]) fail('会话不存在或无权访问', 404);
@@ -135,10 +149,78 @@ intakeSessionsRouter.get('/:id/messages', async (req, res, next) => {
     res.json(ok({ messages: rows.slice(0, 100).map((row: any) => ({ ...row, seq: Number(row.seq) })), hasMore: rows.length > 100 }));
   } catch (error) { next(error); }
 });
+intakeSessionsRouter.post('/:id/summary', async (req, res, next) => {
+  try {
+    const { modelProfileId } = z.object({ modelProfileId: z.string().trim().min(1).max(64).optional() }).strict().parse(req.body ?? {});
+    const session = await member(req.params.id, req.user!);
+    const activeConfig = modelProfileId ? await getEnabledAiModelProfileCredentials(modelProfileId, ['text', 'vision']) : await getDefaultEnabledAiConfig();
+    if (!activeConfig) throw Object.assign(new Error(modelProfileId ? '所选文生文模型不存在、未启用或能力不匹配' : 'AI 总结服务尚未配置，请在管理后台启用模型配置'), { status: modelProfileId ? 409 : 503 });
+    const { baseUrl, apiKey, model } = activeConfig;
+
+    const [rows]: any = await requireChatDatabase().query('SELECT id,seq,sender_id,sender_name,body,created_at FROM intake_messages WHERE session_id=? ORDER BY seq DESC LIMIT 200', [session.id]);
+    const ordered = [...rows].reverse();
+    const messageById = new Map(ordered.map((row: any) => [String(row.id), row]));
+    const brandIds = new Set([session.creator_role === 'advertiser' ? session.creator_id : null, session.guest_role === 'advertiser' ? session.guest_id : null].filter(Boolean));
+    const latestFormAnswerBySender = new Map<string, string>();
+    for (const row of ordered) {
+      const card = parseCard(String(row.body || ''));
+      if (card?.kind === 'form_answers' && brandIds.has(row.sender_id)) latestFormAnswerBySender.set(`${row.sender_id}:${card.formMessageId}`, String(row.id));
+    }
+    const transcript = ordered.flatMap((row: any) => {
+      const body = String(row.body || '');
+      const card = parseCard(body);
+      if (card?.kind === 'work_card' && card.templateId === 'intake_checklist') {
+        return [`${row.sender_name} 发出表单「${card.title}」：${card.fields.map((field, index) => `${index + 1}. ${field.label}${field.options?.length ? `（可选：${field.options.join('、')}）` : ''}`).join('；')}`];
+      }
+      if (card?.kind === 'form_answers' && brandIds.has(row.sender_id)) {
+        if (latestFormAnswerBySender.get(`${row.sender_id}:${card.formMessageId}`) !== String(row.id)) return [];
+        const formRow: any = messageById.get(card.formMessageId);
+        const form = formRow ? parseCard(String(formRow.body || '')) : null;
+        if (form?.kind !== 'work_card' || form.templateId !== 'intake_checklist') return [];
+        return [`${row.sender_name} 提交「${form.title}」：${card.answers.map((answer) => `${form.fields[answer.fieldIndex]?.label || `问题${answer.fieldIndex + 1}`}：${answer.value}`).join('；')}`];
+      }
+      if (card) {
+        if (card.kind === 'choice_answer' || card.kind === 'decision' || card.kind === 'requirement_review') return [`${row.sender_name} 的协作反馈：${JSON.stringify(card)}`];
+        return [];
+      }
+      const text = body.trim();
+      return text ? [`${row.sender_name}：${text.slice(0, 2000)}`] : [];
+    }).slice(-120).join('\n').slice(-24000);
+    if (!transcript.trim()) fail('当前会话还没有可用于总结的聊天或表单内容', 400);
+
+    const endpoint = openAiChatCompletionsEndpoint(baseUrl);
+    const { response, data: result } = await fetchAiJson(endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        temperature: 0.3,
+        messages: [
+          { role: 'system', content: '你是资深品牌视觉设计负责人。请基于给定的会话记录和品牌方表单答案，整理一份可执行的最终设计方案。用中文输出，包含：设计目标与受众、核心创意与视觉风格、色彩/字体/版式建议、画面内容与层级、素材与交付规范、仍需确认事项。只把记录明确表达的内容写成确定要求；你的推断和建议请标注为“建议”；缺失信息列入待确认，禁止编造品牌事实。表达简洁、具体、可直接交给设计师执行。' },
+          { role: 'user', content: `会话标题：${String(session.title || '品牌设计沟通')}\n以下是按时间排序的聊天记录和品牌方表单答案：\n${transcript}` },
+        ],
+      }),
+    }, 45000, { source: 'intake', operation: 'conversation_summary', model, configId: activeConfig.id,
+      profileId: modelProfileId, referenceId: session.id, apiKey });
+    const summary = String(result?.choices?.[0]?.message?.content || '').trim();
+    if (!response.ok) {
+      const providerMessage = String(result?.error?.message || result?.message || result?.msg || '').trim()
+        .replace(/Bearer\s+\S+/gi, 'Bearer [已隐藏]')
+        .replace(/(?:sk|key|token)[-_][A-Za-z0-9_-]{12,}/gi, '[已隐藏凭证]')
+        .slice(0, 240);
+      fail(providerMessage ? `模型服务返回 HTTP ${response.status}：${providerMessage}` : `模型服务返回 HTTP ${response.status}，请检查接口地址、模型名称和 API Key`, 502);
+    }
+    if (!summary) fail('模型服务已响应，但没有返回总结内容；请检查模型配置后重试', 502);
+    res.json(ok({ summary, generatedAt: new Date().toISOString(), model }));
+  } catch (error) { next(error); }
+});
 intakeSessionsRouter.post('/:id/messages', async (req, res, next) => {
   try {
-    const { clientMessageId, body } = z.object({ clientMessageId: z.string().uuid(), body: z.string().trim().min(1).max(5000) }).strict().parse(req.body);
-    if (body.startsWith('COZI_CHAT_CARD_V1:') || body.startsWith('COZI_WORKFLOW_V1:')) fail('此会话暂不支持业务卡片', 400);
+    const { clientMessageId, body } = z.object({ clientMessageId: z.string().uuid(), body: z.string().trim().min(1).max(8000) }).strict().parse(req.body);
+    if (body.startsWith('COZI_WORKFLOW_V1:')) fail('业务卡片必须通过需求协作接口生成', 403);
+    const card = parseCard(body);
+    if (card?.kind === 'video' || /^\/api\/upload\/assets\/asset_[a-f0-9]{32}$/.test(body)) fail('当前会话不支持发送视频，请发送图片或文字', 400);
+    if (card && !['image', 'work_card', 'choice', 'choice_answer', 'form_answers', 'proposal', 'decision'].includes(card.kind)) fail('此会话不支持该业务卡片', 400);
     const connection = await requireChatDatabase().getConnection();
     try {
       await connection.beginTransaction();
@@ -156,12 +238,79 @@ intakeSessionsRouter.post('/:id/messages', async (req, res, next) => {
         const [assignments]: any = await connection.query("SELECT assigned_service_id FROM service_conversation_assignments WHERE conversation_type='intake' AND conversation_id=? LIMIT 1", [req.params.id]);
         if (assignments[0] && assignments[0].assigned_service_id !== req.user!.id) fail('会话已转交给其他客服', 403);
       }
+      const legacyImageId = /^\/api\/upload\/previews\/(asset_[a-f0-9]{32})$/.exec(body)?.[1];
+      const imageAssetIds = card?.kind === 'image' ? card.attachments.map(item => item.url.slice('/api/upload/previews/'.length)) : legacyImageId ? [legacyImageId] : [];
+      if (imageAssetIds.length) {
+        const [assets]: any = await connection.query(`SELECT id FROM media_assets WHERE owner_id=? AND kind='image' AND id IN (${imageAssetIds.map(() => '?').join(',')})`, [req.user!.id, ...imageAssetIds]);
+        if (assets.length !== imageAssetIds.length) fail('图片不存在或无权发送，请重新选择后上传', 400);
+      }
+      if (card?.kind === 'work_card' && /^biz_\d+$/.test(card.templateId) && card.attachments.length) {
+        const businessImageIds = card.attachments.map(item => item.url.slice('/api/upload/previews/'.length));
+        if (new Set(businessImageIds).size !== businessImageIds.length) fail('业务需求卡中有重复图片，请检查后重试', 400);
+        if (!await hasConversationImageAccess(connection, 'intake', session.id, req.user!.id, businessImageIds)) fail('业务需求卡图片不在当前会话中或无权使用，请重新选择', 400);
+      }
+      if (card?.kind === 'work_card' || card?.kind === 'choice' || card?.kind === 'proposal') {
+        if (!['customer_service', 'admin'].includes(req.user!.role)) fail('只有客服可以发送协作卡片', 403);
+        if (card.kind === 'work_card' && card.templateId === 'contract_snapshot') fail('需求快照仅用于订单会话', 400);
+        if (card.kind === 'choice' && new Set(card.options.map(option => option.id)).size !== card.options.length) fail('选择题选项编号重复', 400);
+        if (card.kind === 'work_card' && card.revisionOf) {
+          const [originals]: any = await connection.query('SELECT body FROM intake_messages WHERE id=? AND session_id=? LIMIT 1', [card.revisionOf, session.id]);
+          if (!originals[0] || parseCard(String(originals[0].body))?.kind !== 'work_card') fail('原始协作卡片不存在', 404);
+        }
+      }
+      if (card?.kind === 'choice_answer') {
+        if (req.user!.id !== session.creator_id && req.user!.id !== session.guest_id) fail('只有会话参与者可以回答选择题', 403);
+        const [choices]: any = await connection.query('SELECT body,sender_id FROM intake_messages WHERE id=? AND session_id=? LIMIT 1', [card.choiceMessageId, session.id]);
+        const target = choices[0] ? parseCard(String(choices[0].body)) : null;
+        const choice = target?.kind === 'choice' ? target : fail('选择题不存在', 404);
+        if (choices[0].sender_id === req.user!.id) fail('不能回答自己发送的选择题', 403);
+        if (!choice.options.some(option => option.id === card.optionId && option.label === card.optionLabel)) fail('选项无效', 400);
+        const [answers]: any = await connection.query('SELECT body FROM intake_messages WHERE session_id=? AND sender_id=? AND LEFT(body, ?)=?', [session.id, req.user!.id, CARD_PREFIX.length, CARD_PREFIX]);
+        if (answers.some((row: any) => { const previous = parseCard(String(row.body)); return previous?.kind === 'choice_answer' && previous.choiceMessageId === card.choiceMessageId; })) fail('这道选择题已经回答', 409);
+      }
+      if (card?.kind === 'form_answers') {
+        if (req.user!.role !== 'advertiser' || (req.user!.id !== session.creator_id && req.user!.id !== session.guest_id)) fail('只有品牌方会话参与者可以填写需求表单', 403);
+        const [forms]: any = await connection.query('SELECT body,sender_id FROM intake_messages WHERE id=? AND session_id=? LIMIT 1', [card.formMessageId, session.id]);
+        const target: any = forms[0] ? parseCard(String(forms[0].body)) : null;
+        if (!target) fail('需求表单不存在', 404);
+        if (target.kind !== 'work_card') fail('需求表单不存在', 404);
+        if (target.templateId !== 'intake_checklist' || forms[0].sender_id === req.user!.id) fail('需求表单不存在', 404);
+        const formFields = (target as { fields: Array<{ label: string; options?: string[]; schema?: { kind: string; required?: boolean; options?: Array<{ value: string }> } }> }).fields;
+        if (card.answers.length !== formFields.length || new Set(card.answers.map((answer) => answer.fieldIndex)).size !== card.answers.length || card.answers.some((answer) => answer.fieldIndex >= formFields.length)) fail('请完整填写表单中的每一项', 400);
+        for (const answer of card.answers) {
+          const field = formFields[answer.fieldIndex];
+          if (!answer.value.trim() && (!field.schema || field.schema.required)) fail(`请填写“${field.label}”`, 400);
+          if (!answer.value) continue;
+          if (!field.schema && field.options?.length && !field.options.includes(answer.value)) fail(`“${field.label}”请选择有效选项`, 400);
+          if (field.schema?.kind === 'select' || field.schema?.kind === 'radio') {
+            const allowed = new Set([...(field.schema.options || []).map(option => option.value), ...(field.options || [])]);
+            if (!allowed.has(answer.value)) fail(`“${field.label}”请选择有效选项`, 400);
+          }
+          if (field.schema?.kind === 'checkbox') {
+            let choices: unknown;
+            try { choices = JSON.parse(answer.value); } catch { choices = answer.value; }
+            const allowed = new Set([...(field.schema.options || []).map(option => option.value), ...(field.options || [])]);
+            if (Array.isArray(choices) ? choices.some(choice => typeof choice !== 'string' || !allowed.has(choice)) : !allowed.has(choices as string)) fail(`“${field.label}”包含无效选项`, 400);
+          }
+        }
+      }
+      if (card?.kind === 'decision') {
+        if (req.user!.id !== session.creator_id && req.user!.id !== session.guest_id) fail('只有会话参与者可以选择方案', 403);
+        const [proposals]: any = await connection.query('SELECT body,sender_id FROM intake_messages WHERE id=? AND session_id=? LIMIT 1', [card.proposalMessageId, session.id]);
+        const target = proposals[0] ? parseCard(String(proposals[0].body)) : null;
+        if (target?.kind !== 'proposal' || proposals[0].sender_id === req.user!.id) fail('方案提案不存在', 404);
+        const [decisions]: any = await connection.query('SELECT body FROM intake_messages WHERE session_id=? AND sender_id=? AND LEFT(body, ?)=?', [session.id, req.user!.id, CARD_PREFIX.length, CARD_PREFIX]);
+        if (decisions.some((row: any) => { const previous = parseCard(String(row.body)); return previous?.kind === 'decision' && previous.proposalMessageId === card.proposalMessageId; })) fail('这份提案已经选择过方案', 409);
+      }
       const seq = Number(session.last_seq) + 1;
       const id = randomUUID();
       await connection.query('INSERT INTO intake_messages (id, session_id, seq, sender_id, sender_name, client_message_id, body) VALUES (?,?,?,?,?,?,?)', [id, session.id, seq, req.user!.id, req.user!.name, clientMessageId, body]);
       await connection.query('UPDATE intake_sessions SET last_seq=?, updated_at=NOW(3) WHERE id=?', [seq, session.id]);
       await connection.commit();
-      res.status(201).json(ok({ id, sessionId: session.id, seq, senderId: req.user!.id, senderName: req.user!.name, clientMessageId, body, createdAt: new Date().toISOString() }));
+      const message = { id, sessionId: String(session.id), seq, senderId: req.user!.id, senderName: req.user!.name,
+        clientMessageId, body, createdAt: new Date().toISOString() };
+      publishIntakeMessage(message, [...new Set([session.creator_id, session.guest_id, 'role:service'].filter(Boolean))] as string[]);
+      res.status(201).json(ok(message));
     } catch (error) { await connection.rollback(); throw error; }
     finally { connection.release(); }
   } catch (error) { next(error); }

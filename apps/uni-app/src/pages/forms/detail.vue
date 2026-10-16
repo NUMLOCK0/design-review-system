@@ -7,7 +7,7 @@
       <view class="row space-top"><text class="badge">{{ statusText }}</text><text class="muted">已提交 {{ form.revision }} 次</text></view>
       <view v-if="form.comment" class="hint space-top">补充说明：{{ form.comment }}</view>
       <view v-if="recovery" class="hint space-top">此设备有未保存内容。请核对最新表单后选择是否恢复。<view class="footer-actions"><button class="secondary" size="mini" @tap="restore">恢复本地内容</button><button class="secondary" size="mini" @tap="discard">舍弃本地内容</button></view></view>
-      <view class="panel space-top"><form-fields :order-id="orderId" v-model="answers" :fields="form.template.fields" :readonly="readonly" @busy="uploading = $event" /></view>
+      <view class="panel space-top"><form-fields :order-id="orderId" v-model="answers" :fields="form.template.fields" :mobile-style="form.template.mobileStyle || 'comfortable'" :readonly="readonly" @busy="uploading = $event" /></view>
       <view v-if="readonly" class="stack"><view class="hint">这份提交已保存。填写提交后，还需要核对并确认需求，才能生成正式需求单。</view><button class="primary" @tap="requirements">查看需求与确认</button><button v-if="!closed" class="secondary" :disabled="busy" @tap="revise">发起修订</button></view>
       <view v-if="!readonly" class="muted space-top">草稿暂存在此设备。点击「保存草稿」同步到其他设备；提交时会校验必填项。</view>
     </template>
