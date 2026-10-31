@@ -6,11 +6,17 @@ import { getObjectFromOss, getSignedOssUrl, putPrivateBufferAtOssKey } from '../
 import { findMediaAsset } from '../config/persistence.js';
 import { protectedAssets } from '../utils/media-protection.js';
 import { isOssConfigured } from '../config/oss-client.js';
+import { hasPdfSignature, isValidStudioMaterialType } from './image-studio-materials.js';
 import type { AuthUserPayload } from '../middleware/auth.middleware.js';
 import { getImageStudioQueue, IMAGE_STUDIO_QUEUES, type ImageStudioQueueName } from './image-studio-queue.js';
 import { CARD_PREFIX, getChatOrder, getConversationAssignment, listChatConversations, parseCard, requireChatDatabase } from './chat.js';
 import { getCollaborationFile, getCollaborationWorkspace } from './collaboration.js';
 import { parseWorkflowMessage, WORKFLOW_MESSAGE_PREFIX } from '@design-review/shared';
+import { listDesignSkills } from './design-skills.js';
+import { appendSingleLogoRule } from './image-studio-prompt-rules.js';
+import { assertDesignProductionApproval } from './image-studio-requirements.js';
+import { layeredPsdSchema } from './image-studio-layered-psd.js';
+import type { z } from 'zod';
 
 const json = (value: unknown) => JSON.stringify(value ?? null);
 const parse = <T>(value: unknown, fallback: T): T => {
@@ -36,13 +42,15 @@ function fail(message: string, status = 400, code = 'IMAGE_STUDIO_REQUEST_INVALI
 export type ImageStudioJobInput = {
   idempotencyKey: string;
   modelProfileId: string;
+  skillIds?: string[];
+  context?: Record<string, unknown>;
   generations: Array<{ slotKey: string; shotId?: string; prompt: string; referenceAssetIds: string[]; parameters: Record<string, unknown> }>;
 };
 
 export type ImageStudioTextInput = {
   idempotencyKey: string;
   modelProfileId: string;
-  operation: 'asset_annotate' | 'product_analyze' | 'chat_intake_extract' | 'plan_agent' | 'creative_candidates' | 'storyboard' | 'copy_generate' | 'prompt_generate';
+  operation: 'asset_annotate' | 'product_analyze' | 'chat_intake_extract' | 'plan_agent' | 'creative_candidates' | 'storyboard' | 'copy_generate' | 'prompt_generate' | 'svg_generate' | 'design_review';
   context: Record<string, unknown>;
   referenceAssetIds: string[];
   sourceType?: 'screenshots' | 'collaboration' | 'invite';
@@ -406,6 +414,62 @@ export async function listImageStudioCollaborationConversations(projectId: strin
   return [...orderItems, ...inviteItems].sort((a, b) => Date.parse(b.lastMessageAt || '') - Date.parse(a.lastMessageAt || '')).slice(0, 200);
 }
 
+function imagePlanningProjectContext(project: Awaited<ReturnType<typeof getImageStudioProject>>) {
+  const workflow = project.workflow || {};
+  const designAgent = (workflow as any).designAgent;
+  const designPlan = designAgent?.plan;
+  const direction = designPlan?.directions?.find((item: any) => item.id === designPlan.selectedDirectionId);
+  const productInfo = (workflow as any).productInfo || {};
+  const customerBrief = (workflow as any).customerBrief || {};
+  const marketResearch = (workflow as any).marketResearch || {};
+  const safeText = (value: unknown, maxLength = 300) => redactChatText(typeof value === 'string' ? value : '', maxLength);
+  const safeList = (value: unknown, max = 20) => Array.isArray(value) ? value.map((item) => safeText(item, 300)).filter(Boolean).slice(0, max) : [];
+  return {
+    platform: safeText(project.platform || (workflow as any).specs?.platformTemplate),
+    product: {
+      name: safeText((workflow as any).productName || productInfo.brand || project.name, 160),
+      category: safeText(productInfo.category || (workflow as any).productCategory, 120),
+      material: safeText(productInfo.material, 120), color: safeText(productInfo.color, 120),
+      shape: safeText(productInfo.shape, 120), specifications: safeList(productInfo.specifications?.map((item: any) => `${item.name || ''}：${item.value || ''}`)),
+      confirmedSellingPoints: safeList((workflow as any).creativeDirections?.selling?.selectedValues),
+    },
+    reviewedCustomerBrief: Object.keys(customerBrief).length ? {
+      summary: safeText(customerBrief.summary, 800), deliverables: safeList(customerBrief.deliverables, 12),
+      customerGoals: safeList(customerBrief.customerGoals, 12), confirmedRequirements: safeList(customerBrief.confirmedRequirements, 20),
+      sellingPointClues: safeList(customerBrief.sellingPointClues, 12), visualPreferences: safeList(customerBrief.visualPreferences, 12),
+      mustKeep: safeList(customerBrief.mustKeep, 12), avoid: safeList(customerBrief.avoid, 12), factsToConfirm: safeList(customerBrief.factsToConfirm, 12),
+    } : null,
+    publicMarketResearch: Array.isArray(marketResearch.sources) ? {
+      summary: safeText(marketResearch.summary, 900),
+      findings: Array.isArray(marketResearch.findings) ? marketResearch.findings.slice(0, 8).map((item: any) => ({
+        claim: safeText(item.claim, 360), sourceIndexes: Array.isArray(item.sourceIndexes) ? item.sourceIndexes.slice(0, 4) : [],
+        confidence: safeText(item.confidence, 12), kind: safeText(item.kind, 16),
+      })) : [],
+      sources: marketResearch.sources.slice(0, 6).map((item: any, index: number) => ({
+        index: index + 1, title: safeText(item.title, 180), url: /^https:\/\//i.test(String(item.url || '')) ? String(item.url).slice(0, 2048) : '',
+        excerpt: safeText(item.excerpt, 900), publishedDate: safeText(item.publishedDate, 64),
+      })),
+    } : null,
+    outputSpecs: Array.isArray((workflow as any).specs?.outputs)
+      ? (workflow as any).specs.outputs.filter((item: any) => item.enabled).slice(0, 8).map((item: any) => ({
+        key: safeText(item.key, 40), label: safeText(item.label, 80), aspectRatio: safeText(item.aspectRatio, 20),
+        width: Number(item.width) || undefined, height: Number(item.height) || undefined, count: Number(item.count) || undefined,
+      })) : [],
+    confirmedDesignDirection: designAgent?.status === 'approved' && direction ? {
+      name: safeText(direction.name, 100), concept: safeText(direction.concept, 300),
+      keywords: safeList(direction.keywords, 8), palette: Array.isArray(direction.palette)
+        ? direction.palette.slice(0, 6).map((item: any) => ({ name: safeText(item.name, 40), hex: safeText(item.hex, 8), usage: safeText(item.usage, 100) })) : [],
+      typography: safeText(direction.typography, 240), imagery: safeText(direction.imagery, 300),
+    } : null,
+    styleGuide: {
+      visualStyle: safeText((workflow as any).styleGuide?.visualStyle, 120),
+      palette: safeText((workflow as any).styleGuide?.palette, 240),
+      typography: safeText((workflow as any).styleGuide?.typography, 240),
+      mood: safeText((workflow as any).styleGuide?.mood, 240),
+    },
+  };
+}
+
 export async function createImageStudioCollaborationChatIntakeJob(projectId: string, user: AuthUserPayload, input: {
   idempotencyKey: string; modelProfileId: string; conversationId: string; conversationType?: 'order' | 'invite'; operation?: 'chat_intake_extract' | 'plan_agent';
 }) {
@@ -425,7 +489,8 @@ export async function createImageStudioCollaborationChatIntakeJob(projectId: str
     if (Buffer.byteLength(json(inviteSource.snapshot), 'utf8') > 240_000) fail('这段邀请会话内容较多，请先整理后再试', 413, 'IMAGE_STUDIO_INVITE_SOURCE_TOO_LARGE');
     return createImageStudioTextJob(projectId, user, {
       idempotencyKey: input.idempotencyKey, modelProfileId: input.modelProfileId, operation: input.operation || 'chat_intake_extract',
-      context: { projectName: project.name, projectPlatform: project.platform || '', sourceType: 'invite', conversationTitle: inviteSource.snapshot.conversation.title },
+      context: { projectName: project.name, projectPlatform: project.platform || '', sourceType: 'invite', conversationTitle: inviteSource.snapshot.conversation.title,
+        ...(input.operation === 'plan_agent' ? { imagePlanning: imagePlanningProjectContext(project) } : {}) },
       referenceAssetIds: importedImages.assets.map((asset) => asset.id).slice(0, 12), sourceType: 'invite', sourceConversationId: input.conversationId,
       sourceTitle: inviteSource.snapshot.conversation.title, sourceData: inviteSource.snapshot,
     });
@@ -480,7 +545,8 @@ export async function createImageStudioCollaborationChatIntakeJob(projectId: str
   if (Buffer.byteLength(json(snapshot), 'utf8') > 240_000) fail('协作会话档案过大，请先筛选或整理会话内容', 413, 'IMAGE_STUDIO_COLLABORATION_SOURCE_TOO_LARGE');
   return createImageStudioTextJob(projectId, user, {
     idempotencyKey: input.idempotencyKey, modelProfileId: input.modelProfileId, operation: input.operation || 'chat_intake_extract',
-    context: { projectName: project.name, projectPlatform: project.platform || '', sourceType: 'collaboration', conversationTitle: snapshot.conversation.title },
+    context: { projectName: project.name, projectPlatform: project.platform || '', sourceType: 'collaboration', conversationTitle: snapshot.conversation.title,
+      ...(input.operation === 'plan_agent' ? { imagePlanning: imagePlanningProjectContext(project) } : {}) },
     referenceAssetIds: importedImages.assets.map((asset) => asset.id).slice(0, 12), sourceType: 'collaboration', sourceConversationId: input.conversationId,
     sourceTitle: snapshot.conversation.title, sourceData: snapshot,
   });
@@ -495,7 +561,7 @@ export async function createImageStudioScreenshotPlanJob(projectId: string, user
   }
   return createImageStudioTextJob(projectId, user, {
     idempotencyKey: input.idempotencyKey, modelProfileId: input.modelProfileId, operation: 'plan_agent',
-    context: { projectName: project.name, projectPlatform: project.platform || '', sourceType: 'screenshots' },
+    context: { projectName: project.name, projectPlatform: project.platform || '', sourceType: 'screenshots', imagePlanning: imagePlanningProjectContext(project) },
     referenceAssetIds: input.assetIds, sourceType: 'screenshots', sourceConversationId: 'uploaded-screenshots',
     sourceTitle: '微信聊天截图', sourceData: { conversation: { title: '微信聊天截图', platform: project.platform || '' },
       messages: [], dossier: { imageAttachments: [], screenshotAssetIds: input.assetIds } },
@@ -771,6 +837,19 @@ export async function saveImageStudioModelProfile(user: AuthUserPayload, input: 
 }
 
 export async function createImageStudioGenerationJob(projectId: string, user: AuthUserPayload, input: ImageStudioJobInput) {
+  if (Buffer.byteLength(json(input.context || {}), 'utf8') > 300_000) fail('制作任务的需求快照超过大小限制', 413, 'IMAGE_STUDIO_CONTEXT_TOO_LARGE');
+  const selectedSkillIds = [...new Set(input.skillIds || [])].slice(0, 5);
+  const availableSkills = selectedSkillIds.length ? await listDesignSkills(false) : [];
+  const skillById = new Map(availableSkills.map((skill) => [skill.id, skill]));
+  if (selectedSkillIds.some((id) => !skillById.has(id))) fail('任务关联的设计 Skill 已失效，请刷新方案后重试', 409, 'IMAGE_STUDIO_SKILL_UNAVAILABLE');
+  const skillGuidance = selectedSkillIds.map((id) => {
+    const skill = skillById.get(id)!;
+    return `${skill.name}：${skill.instructions.slice(0, 1200)}${skill.completionCriteria ? `\n完成标准：${skill.completionCriteria.slice(0, 500)}` : ''}`;
+  });
+  const singleLogoSlots = new Set(Array.isArray(input.context?.singleLogoSlots) ? input.context.singleLogoSlots.filter((item): item is string => typeof item === 'string') : []);
+  const generations = input.generations.map((generation) => ({ ...generation,
+    prompt: appendSingleLogoRule(skillGuidance.length ? `${generation.prompt}\n\n本任务采用的设计 Skill 标准：\n${skillGuidance.join('\n\n')}` : generation.prompt, singleLogoSlots.has(generation.slotKey)),
+  }));
   const connection = await pool().getConnection();
   try {
     await connection.beginTransaction();
@@ -781,14 +860,15 @@ export async function createImageStudioGenerationJob(projectId: string, user: Au
     }
 
     await connection.query('SELECT id FROM users WHERE id=? FOR UPDATE', [user.id]);
-    const [projects]: any = await connection.query('SELECT id FROM image_studio_projects WHERE id=? AND owner_id=? AND deleted_at IS NULL FOR UPDATE', [projectId, user.id]);
+    const [projects]: any = await connection.query('SELECT id,workflow_json FROM image_studio_projects WHERE id=? AND owner_id=? AND deleted_at IS NULL FOR UPDATE', [projectId, user.id]);
     if (!projects[0]) fail('项目不存在或无权访问', 404, 'IMAGE_STUDIO_PROJECT_NOT_FOUND');
+    assertDesignProductionApproval(input.context, parse(projects[0].workflow_json, {}));
     const [activeJobs]: any = await connection.query(`SELECT COUNT(*) AS total FROM image_studio_jobs
       WHERE owner_id=? AND status IN ('queued','running','cancelling')`, [user.id]);
     if (Number(activeJobs[0]?.total || 0) >= Number(process.env.IMAGE_STUDIO_MAX_ACTIVE_JOBS_PER_USER || 5)) fail('当前后台任务较多，请等待部分任务完成后再提交', 429, 'IMAGE_STUDIO_ACTIVE_LIMIT');
     const [dailyUsage]: any = await connection.query(`SELECT COUNT(*) AS total FROM image_studio_generations g
       JOIN image_studio_jobs j ON j.id=g.job_id WHERE j.owner_id=? AND j.created_at>=UTC_DATE()`, [user.id]);
-    if (Number(dailyUsage[0]?.total || 0) + input.generations.length > Number(process.env.IMAGE_STUDIO_DAILY_GENERATION_LIMIT || 200)) fail('已达到每日生图数量上限，请联系管理员调整额度', 429, 'IMAGE_STUDIO_DAILY_LIMIT');
+    if (Number(dailyUsage[0]?.total || 0) + generations.length > Number(process.env.IMAGE_STUDIO_DAILY_GENERATION_LIMIT || 200)) fail('已达到每日生图数量上限，请联系管理员调整额度', 429, 'IMAGE_STUDIO_DAILY_LIMIT');
     const [profiles]: any = await connection.query(`SELECT p.id,p.protocol,p.options_json FROM image_studio_model_profiles p
       JOIN ai_model_configs c ON c.id COLLATE utf8mb4_unicode_ci=p.ai_config_id COLLATE utf8mb4_unicode_ci AND c.enabled=TRUE
       WHERE p.id=? AND p.capability='image' AND p.enabled=1 LIMIT 1`, [input.modelProfileId]);
@@ -798,13 +878,13 @@ export async function createImageStudioGenerationJob(projectId: string, user: Au
     const configuredQualities = Array.isArray(profileOptions.qualityLevels) ? profileOptions.qualityLevels.filter((value: unknown) => typeof value === 'string') : [];
     const supportedSizes = configuredSizes.length ? configuredSizes : ['1024x1024', '1536x1024', '1024x1536', 'auto'];
     const supportedQualities = configuredQualities.length ? configuredQualities : ['auto', 'low', 'medium', 'high'];
-    for (const generation of input.generations) {
-      if (generation.parameters.size !== undefined && !supportedSizes.includes(String(generation.parameters.size))) fail('所选尺寸不受当前图像模型支持', 400, 'IMAGE_STUDIO_SIZE_UNSUPPORTED');
-      if (generation.parameters.quality !== undefined && !supportedQualities.includes(String(generation.parameters.quality))) fail('所选质量不受当前图像模型支持', 400, 'IMAGE_STUDIO_QUALITY_UNSUPPORTED');
+    for (const generation of generations) {
+      if (generation.parameters.size !== undefined && !supportedSizes.includes(String(generation.parameters.size))) fail(`所选尺寸不受当前图像模型支持。可用尺寸：${supportedSizes.join('、')}`, 400, 'IMAGE_STUDIO_SIZE_UNSUPPORTED');
+      if (generation.parameters.quality !== undefined && !supportedQualities.includes(String(generation.parameters.quality))) fail(`所选质量不受当前图像模型支持。可用质量：${supportedQualities.join('、')}`, 400, 'IMAGE_STUDIO_QUALITY_UNSUPPORTED');
       if (Buffer.byteLength(json(generation.parameters), 'utf8') > 16 * 1024) fail('生成参数超过限制', 400, 'IMAGE_STUDIO_PARAMETERS_TOO_LARGE');
     }
 
-    const assetIds = [...new Set(input.generations.flatMap((item) => item.referenceAssetIds))];
+    const assetIds = [...new Set(generations.flatMap((item) => item.referenceAssetIds))];
     if (assetIds.length) {
       const [assets]: any = await connection.query(`SELECT id,role FROM image_studio_assets WHERE project_id=? AND owner_id=? AND deleted_at IS NULL
         AND id IN (${assetIds.map(() => '?').join(',')})`, [projectId, user.id, ...assetIds]);
@@ -817,8 +897,8 @@ export async function createImageStudioGenerationJob(projectId: string, user: Au
     await connection.query(`INSERT INTO image_studio_jobs
       (id,project_id,owner_id,job_type,status,idempotency_key,request_json,model_profile_id,progress,attempt_count,created_at,updated_at)
       VALUES (?,?,?,'image_generate','queued',?,?,?,0,0,?,?)`,
-    [jobId, projectId, user.id, input.idempotencyKey, json({ generations: input.generations }), input.modelProfileId, timestamp, timestamp]);
-    for (const item of input.generations) {
+    [jobId, projectId, user.id, input.idempotencyKey, json({ generations, skillIds: selectedSkillIds, context: input.context || {} }), input.modelProfileId, timestamp, timestamp]);
+    for (const item of generations) {
       await connection.query(`INSERT INTO image_studio_generations
         (id,job_id,project_id,slot_key,shot_id,prompt,reference_asset_ids,model_profile_id,model_name,parameters_json,status,created_at)
         VALUES (?,?,?,?,?,?,?,?,?,?, 'queued',?)`,
@@ -826,11 +906,11 @@ export async function createImageStudioGenerationJob(projectId: string, user: Au
     }
     const eventId = randomUUID();
     await connection.query(`INSERT INTO image_studio_job_events (job_id,project_id,owner_id,event_type,payload_json,created_at)
-      VALUES (?,?,?,'job.accepted',?,?)`, [jobId, projectId, user.id, json({ jobId, status: 'queued', generationCount: input.generations.length }), timestamp]);
+      VALUES (?,?,?,'job.accepted',?,?)`, [jobId, projectId, user.id, json({ jobId, status: 'queued', generationCount: generations.length }), timestamp]);
     await connection.query(`INSERT INTO image_studio_outbox (id,job_id,queue_name,job_name,payload_json,status,attempts,available_at,created_at)
       VALUES (?,?,?,'generate-image-batch',?,'pending',0,?,?)`,
     [eventId, jobId, 'image-studio-generation', json({ jobId }), timestamp, timestamp]);
-    await audit(connection, user.id, 'generation.create', jobId, projectId, { modelProfileId: input.modelProfileId, count: input.generations.length });
+    await audit(connection, user.id, 'generation.create', jobId, projectId, { modelProfileId: input.modelProfileId, count: generations.length, skillIds: selectedSkillIds });
     await connection.commit();
     return { id: jobId, status: 'queued', duplicate: false };
   } catch (error) {
@@ -849,14 +929,16 @@ export async function createImageStudioTextJob(projectId: string, user: AuthUser
       await connection.commit(); return { id: String(existing[0].id), status: String(existing[0].status), duplicate: true };
     }
     await connection.query('SELECT id FROM users WHERE id=? FOR UPDATE', [user.id]);
-    const [projects]: any = await connection.query('SELECT id FROM image_studio_projects WHERE id=? AND owner_id=? AND deleted_at IS NULL FOR UPDATE', [projectId, user.id]);
+    const [projects]: any = await connection.query('SELECT id,workflow_json FROM image_studio_projects WHERE id=? AND owner_id=? AND deleted_at IS NULL FOR UPDATE', [projectId, user.id]);
     if (!projects[0]) fail('项目不存在或无权访问', 404, 'IMAGE_STUDIO_PROJECT_NOT_FOUND');
-    const needsVision = input.operation === 'plan_agent' || input.operation === 'chat_intake_extract' && ((input.sourceType || 'screenshots') === 'screenshots' || input.referenceAssetIds.length > 0);
+    assertDesignProductionApproval(input.context, parse(projects[0].workflow_json, {}));
+    if (input.operation === 'design_review' && !input.referenceAssetIds.length) fail('审稿需要实际图片', 400, 'IMAGE_STUDIO_REVIEW_REQUIRES_IMAGES');
+    const needsVision = input.referenceAssetIds.length > 0 || input.operation === 'design_review' || input.operation === 'plan_agent' || input.operation === 'chat_intake_extract' && (input.sourceType || 'screenshots') === 'screenshots';
     const capabilityFilter = needsVision ? "p.capability='vision'" : "p.capability IN ('text','vision')";
     const [profiles]: any = await connection.query(`SELECT p.id,p.capability FROM image_studio_model_profiles p
       JOIN ai_model_configs c ON c.id COLLATE utf8mb4_unicode_ci=p.ai_config_id COLLATE utf8mb4_unicode_ci AND c.enabled=TRUE
       WHERE p.id=? AND ${capabilityFilter} AND p.enabled=1 LIMIT 1`, [input.modelProfileId]);
-    if (!profiles[0]) fail(needsVision ? '图片需求整理需要启用的图生文模型' : '文本或视觉模型配置不可用，请联系管理员', 409, 'IMAGE_STUDIO_MODEL_UNAVAILABLE');
+    if (!profiles[0]) fail(needsVision ? '带图片的任务需要启用的图像理解模型' : '文本或视觉模型配置不可用，请联系管理员', 409, 'IMAGE_STUDIO_MODEL_UNAVAILABLE');
     if (input.operation === 'chat_intake_extract' || input.operation === 'plan_agent') {
       const sourceType = input.sourceType || 'screenshots';
       if (sourceType === 'screenshots') {
@@ -1129,7 +1211,8 @@ export async function updateImageStudioGenerationReview(projectId: string, gener
   finally { connection.release(); }
 }
 
-export async function createImageStudioExport(projectId: string, user: AuthUserPayload, idempotencyKey: string = randomUUID()) {
+export async function createImageStudioExport(projectId: string, user: AuthUserPayload, idempotencyKey: string = randomUUID(), psdLayout?: z.infer<typeof layeredPsdSchema>) {
+  if (psdLayout) psdLayout = layeredPsdSchema.parse(psdLayout);
   const connection = await pool().getConnection();
   const timestamp = now();
   try {
@@ -1138,30 +1221,34 @@ export async function createImageStudioExport(projectId: string, user: AuthUserP
     if (existing[0]) {
       if (String(existing[0].project_id) !== projectId) fail('幂等键已用于其他项目', 409, 'IMAGE_STUDIO_IDEMPOTENCY_CONFLICT');
       const request = parse<Record<string, any>>(existing[0].request_json, {});
+      if (JSON.stringify(request.psdLayout || null) !== JSON.stringify(psdLayout || null)) fail('幂等键已用于其他导出设置', 409, 'IMAGE_STUDIO_IDEMPOTENCY_CONFLICT');
       await connection.commit();
       return { id: String(request.exportId || ''), jobId: String(existing[0].id), status: String(existing[0].status), imageCount: Number(request.imageCount || 0), duplicate: true };
     }
     const [projects]: any = await connection.query('SELECT id FROM image_studio_projects WHERE id=? AND owner_id=? AND deleted_at IS NULL FOR UPDATE', [projectId, user.id]);
     if (!projects[0]) fail('项目不存在或无权访问', 404, 'IMAGE_STUDIO_PROJECT_NOT_FOUND');
-    const [images]: any = await connection.query(`SELECT g.id AS generation_id,g.shot_id,a.object_key,a.filename,a.size_bytes,a.mime_type
+    const [allImages]: any = await connection.query(`SELECT a.id AS asset_id,g.id AS generation_id,g.shot_id,a.object_key,a.filename,a.size_bytes,a.mime_type
       FROM image_studio_generation_reviews r JOIN image_studio_generations g ON g.id=r.generation_id AND g.project_id=r.project_id
       JOIN image_studio_assets a ON a.id=g.output_asset_id AND a.project_id=g.project_id AND a.owner_id=r.owner_id
       WHERE r.project_id=? AND r.owner_id=? AND r.is_selected=TRUE AND g.status='completed' AND a.deleted_at IS NULL
       ORDER BY COALESCE(g.shot_id,''),g.created_at,g.id FOR UPDATE`, [projectId, user.id]);
+    const requiredAssets = psdLayout ? [...new Set(psdLayout.layers.flatMap((layer) => layer.kind === 'image' ? [layer.assetId] : []))] : [];
+    const images = psdLayout ? allImages.filter((image: any) => requiredAssets.includes(String(image.asset_id))) : allImages;
+    if (psdLayout && images.length !== requiredAssets.length) fail('PSD 图层素材必须是当前项目已选择的成品', 400, 'IMAGE_STUDIO_PSD_ASSET_INVALID');
     if (!images.length) fail('请先选择至少一张已完成的图片', 409, 'IMAGE_STUDIO_EXPORT_EMPTY');
     if (images.length > 100) fail('单次最多导出 100 张图片', 400, 'IMAGE_STUDIO_EXPORT_COUNT_LIMIT');
     const totalBytes = images.reduce((total: number, item: any) => total + Number(item.size_bytes || 0), 0);
     if (totalBytes > 100 * 1024 * 1024) fail('所选图片合计超过 100 MB，请分批导出', 413, 'IMAGE_STUDIO_EXPORT_SIZE_LIMIT');
     const manifest = images.map((item: any, index: number) => ({ generationId: String(item.generation_id), shotId: item.shot_id || null,
       objectKey: String(item.object_key), filename: String(item.filename || ('image-' + (index + 1) + '.png')), mimeType: String(item.mime_type || 'image/png'),
-      size: Number(item.size_bytes || 0) }));
+      size: Number(item.size_bytes || 0), assetId: String(item.asset_id) }));
     const [active]: any = await connection.query(`SELECT COUNT(*) AS total FROM image_studio_jobs
       WHERE owner_id=? AND status IN ('queued','running','cancelling')`, [user.id]);
     if (Number(active[0]?.total || 0) >= Number(process.env.IMAGE_STUDIO_MAX_ACTIVE_JOBS_PER_USER || 5)) fail('当前后台任务较多，请等待部分任务完成后再提交', 429, 'IMAGE_STUDIO_ACTIVE_LIMIT');
     const jobId = randomUUID(); const exportId = randomUUID();
     await connection.query(`INSERT INTO image_studio_jobs
       (id,project_id,owner_id,job_type,status,idempotency_key,request_json,model_profile_id,progress,attempt_count,created_at,updated_at)
-      VALUES (?,?,?,'export','queued',?,?,NULL,0,0,?,?)`, [jobId, projectId, user.id, idempotencyKey, json({ exportId, imageCount: images.length }), timestamp, timestamp]);
+      VALUES (?,?,?,'export','queued',?,?,NULL,0,0,?,?)`, [jobId, projectId, user.id, idempotencyKey, json({ exportId, imageCount: images.length, ...(psdLayout ? { format: 'psd', psdLayout } : {}) }), timestamp, timestamp]);
     await connection.query(`INSERT INTO image_studio_exports
       (id,job_id,project_id,owner_id,manifest_json,image_count,status,created_at,updated_at)
       VALUES (?,?,?,?,?,?,'queued',?,?)`, [exportId, jobId, projectId, user.id, json(manifest), images.length, timestamp, timestamp]);
@@ -1189,11 +1276,11 @@ export async function listImageStudioExports(projectId: string, user: AuthUserPa
 }
 
 export async function loadImageStudioExport(jobId: string) {
-  const [rows]: any = await pool().query(`SELECT e.*,j.status AS job_status FROM image_studio_exports e
+  const [rows]: any = await pool().query(`SELECT e.*,j.status AS job_status,j.request_json FROM image_studio_exports e
     JOIN image_studio_jobs j ON j.id=e.job_id WHERE e.job_id=? LIMIT 1`, [jobId]);
   if (!rows[0]) fail('导出任务不存在', 404, 'IMAGE_STUDIO_EXPORT_NOT_FOUND');
   return { id: String(rows[0].id), jobId: String(rows[0].job_id), projectId: String(rows[0].project_id), ownerId: String(rows[0].owner_id),
-    status: String(rows[0].status), jobStatus: String(rows[0].job_status), manifest: parse<Array<Record<string, any>>>(rows[0].manifest_json, []), objectKey: rows[0].object_key || null };
+    status: String(rows[0].status), jobStatus: String(rows[0].job_status), psdLayout: parse<any>(rows[0].request_json, {})?.psdLayout || null, manifest: parse<Array<Record<string, any>>>(rows[0].manifest_json, []), objectKey: rows[0].object_key || null };
 }
 
 export async function saveImageStudioExport(exportId: string, objectKey: string) {
@@ -1243,7 +1330,7 @@ export async function cancelImageStudioJob(jobId: string, user: AuthUserPayload)
     const [rows]: any = await connection.query('SELECT project_id,status,job_type,request_json FROM image_studio_jobs WHERE id=? AND owner_id=? FOR UPDATE', [jobId, user.id]);
     if (!rows[0]) fail('任务不存在或无权访问', 404, 'IMAGE_STUDIO_JOB_NOT_FOUND');
     projectId = String(rows[0].project_id);
-    queueName = String(rows[0].job_type) === 'export' ? IMAGE_STUDIO_QUEUES.export : String(rows[0].job_type) === 'text_task' ? IMAGE_STUDIO_QUEUES.text : IMAGE_STUDIO_QUEUES.generation;
+    queueName = ['export', 'vectorize'].includes(String(rows[0].job_type)) ? IMAGE_STUDIO_QUEUES.export : String(rows[0].job_type) === 'text_task' ? IMAGE_STUDIO_QUEUES.text : IMAGE_STUDIO_QUEUES.generation;
     if (!['queued', 'running'].includes(String(rows[0].status))) fail('当前任务状态不支持取消', 409, 'IMAGE_STUDIO_JOB_NOT_CANCELLABLE');
     const status = rows[0].status === 'queued' ? 'cancelled' : 'cancelling';
     await connection.query('UPDATE image_studio_jobs SET status=?,updated_at=? WHERE id=?', [status, now(), jobId]);
@@ -1284,12 +1371,13 @@ export async function retryImageStudioJob(jobId: string, user: AuthUserPayload) 
       const [active]: any = await connection.query(`SELECT COUNT(*) AS total FROM image_studio_jobs
         WHERE owner_id=? AND status IN ('queued','running','cancelling')`, [user.id]);
       if (Number(active[0]?.total || 0) >= Number(process.env.IMAGE_STUDIO_MAX_ACTIVE_JOBS_PER_USER || 5)) fail('当前后台任务较多，请等待部分任务完成后再提交', 429, 'IMAGE_STUDIO_ACTIVE_LIMIT');
+      const oldRequest = parse<any>(jobs[0].request_json, {});
       const newJobId = randomUUID();
       const exportId = randomUUID();
       const imageCount = Number(exports[0].image_count);
       await connection.query(`INSERT INTO image_studio_jobs
         (id,project_id,owner_id,job_type,status,idempotency_key,request_json,model_profile_id,progress,attempt_count,created_at,updated_at)
-        VALUES (?,?,?,'export','queued',?,?,NULL,0,0,?,?)`, [newJobId, projectId, user.id, `retry:${jobId}:${randomUUID()}`, json({ exportId, imageCount, retryOf: jobId }), timestamp, timestamp]);
+        VALUES (?,?,?,'export','queued',?,?,NULL,0,0,?,?)`, [newJobId, projectId, user.id, `retry:${jobId}:${randomUUID()}`, json({ exportId, imageCount, retryOf: jobId, ...(oldRequest.psdLayout ? { format: 'psd', psdLayout: oldRequest.psdLayout } : {}) }), timestamp, timestamp]);
       await connection.query(`INSERT INTO image_studio_exports
         (id,job_id,project_id,owner_id,manifest_json,image_count,status,created_at,updated_at)
         VALUES (?,?,?,?,?,?,'queued',?,?)`, [exportId, newJobId, projectId, user.id, json(manifest), imageCount, timestamp, timestamp]);
@@ -1335,9 +1423,16 @@ export async function getImageStudioEvents(projectId: string, user: AuthUserPayl
 
 export async function attachImageStudioAsset(projectId: string, user: AuthUserPayload, mediaAssetId: string, role: string) {
   if (!isOssConfigured) fail('生图工作台要求配置私有 OSS 存储', 503, 'IMAGE_STUDIO_OSS_UNAVAILABLE');
+  await getImageStudioProject(projectId, user);
   const mediaAsset = await findMediaAsset(mediaAssetId);
-  if (!mediaAsset || mediaAsset.ownerId !== user.id || mediaAsset.kind !== 'image' || !mediaAsset.ossOriginalKey) {
-    fail('上传图片不存在、尚未完成 OSS 登记或无权使用', 400, 'IMAGE_STUDIO_ASSET_INVALID');
+  const isReport = role === 'report';
+  if (!mediaAsset || mediaAsset.ownerId !== user.id || !mediaAsset.ossOriginalKey || !isValidStudioMaterialType(mediaAsset, role)) {
+    fail('素材不存在、类型不匹配或无权使用', 400, 'IMAGE_STUDIO_ASSET_INVALID');
+  }
+  if (isReport) {
+    const object = await getObjectFromOss(mediaAsset.ossOriginalKey);
+    const content = Buffer.from(object.content as Buffer);
+    if (!hasPdfSignature(content)) fail('文件不是有效的 PDF，请重新上传', 400, 'IMAGE_STUDIO_ASSET_INVALID');
   }
   const timestamp = now();
   const studioAssetId = randomUUID();
@@ -1348,9 +1443,9 @@ export async function attachImageStudioAsset(projectId: string, user: AuthUserPa
     if (!projects[0]) fail('项目不存在或无权访问', 404, 'IMAGE_STUDIO_PROJECT_NOT_FOUND');
     await connection.query(`INSERT INTO image_studio_assets
       (id,project_id,owner_id,media_asset_id,kind,role,object_key,filename,mime_type,size_bytes,source,created_at)
-      VALUES (?,?,?,?,'image',?,?,?,?,?,'upload',?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,'upload',?)
       ON DUPLICATE KEY UPDATE role=VALUES(role),deleted_at=NULL`,
-    [studioAssetId, projectId, user.id, mediaAsset.id, role, mediaAsset.ossOriginalKey, mediaAsset.filename, mediaAsset.mimetype, mediaAsset.size, timestamp]);
+    [studioAssetId, projectId, user.id, mediaAsset.id, isReport ? 'document' : 'image', role, mediaAsset.ossOriginalKey, mediaAsset.filename, mediaAsset.mimetype, mediaAsset.size, timestamp]);
     const [attached]: any = await connection.query('SELECT id FROM image_studio_assets WHERE project_id=? AND media_asset_id=? LIMIT 1', [projectId, mediaAsset.id]);
     const id = String(attached[0]?.id || studioAssetId);
     await audit(connection, user.id, 'asset.attach', id, projectId, { role, size: mediaAsset.size, mimeType: mediaAsset.mimetype });
@@ -1375,6 +1470,15 @@ export async function listImageStudioAssets(projectId: string, user: AuthUserPay
     previewUrl: `/api/image-studio/assets/${encodeURIComponent(String(row.id))}/preview`, createdAt: new Date(row.created_at).toISOString() }));
 }
 
+export async function removeImageStudioAsset(projectId: string, assetId: string, user: AuthUserPayload) {
+  await getImageStudioProject(projectId, user);
+  const [result]: any = await pool().query(`UPDATE image_studio_assets SET deleted_at=?
+    WHERE id=? AND project_id=? AND owner_id=? AND ((kind='image' AND role IN ('product','brand_logo','packaging','competitor','other')) OR (kind='document' AND role='report')) AND deleted_at IS NULL`,
+  [now(), assetId, projectId, user.id]);
+  if (!result.affectedRows) fail('素材不存在或已移除', 404, 'IMAGE_STUDIO_ASSET_NOT_FOUND');
+  return { deleted: true };
+}
+
 export async function updateImageStudioAsset(projectId: string, assetId: string, user: AuthUserPayload,
   input: { role?: string; manualCatalog?: Partial<Record<'what' | 'spec' | 'color' | 'use', string>>; version?: number }) {
   const connection = await pool().getConnection();
@@ -1382,9 +1486,10 @@ export async function updateImageStudioAsset(projectId: string, assetId: string,
     await connection.beginTransaction();
     const [projects]: any = await connection.query('SELECT id FROM image_studio_projects WHERE id=? AND owner_id=? AND deleted_at IS NULL FOR UPDATE', [projectId, user.id]);
     if (!projects[0]) fail('项目不存在或无权访问', 404, 'IMAGE_STUDIO_PROJECT_NOT_FOUND');
-    const [assets]: any = await connection.query(`SELECT id,catalog_json FROM image_studio_assets
+    const [assets]: any = await connection.query(`SELECT id,kind,catalog_json FROM image_studio_assets
       WHERE id=? AND project_id=? AND owner_id=? AND deleted_at IS NULL FOR UPDATE`, [assetId, projectId, user.id]);
     if (!assets[0]) fail('素材不存在或无权访问', 404, 'IMAGE_STUDIO_ASSET_NOT_FOUND');
+    if (input.role && ((assets[0].kind === 'document') !== (input.role === 'report'))) fail('检测报告和图片不能相互转换素材类型', 400, 'IMAGE_STUDIO_ASSET_INVALID');
     if (input.role) await connection.query('UPDATE image_studio_assets SET role=? WHERE id=?', [input.role, assetId]);
     if (input.manualCatalog) {
       const [annotations]: any = await connection.query(`SELECT id,ai_json,manual_json,version FROM image_studio_asset_annotations

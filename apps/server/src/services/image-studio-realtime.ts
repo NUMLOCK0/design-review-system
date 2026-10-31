@@ -7,6 +7,19 @@ let started = false;
 export function startImageStudioRealtimeBridge() {
   if (started || !dbPool || !process.env.REDIS_URL) return;
   started = true;
+  // Database events are the recovery source; this relay only invalidates client
+  // views. Reconnecting clients fetch authoritative run state.
+  let cursor: number | null = null; let relaying = false;
+  const relay = async () => {
+    if (relaying || !dbPool) return; relaying = true;
+    try {
+      if (cursor === null) { const [rows]: any = await dbPool.query('SELECT COALESCE(MAX(event_id),0) AS id FROM image_studio_orchestration_events'); cursor = Number(rows[0].id); return; }
+      const [rows]: any = await dbPool.query('SELECT event_id,owner_id,project_id,run_id,event_type FROM image_studio_orchestration_events WHERE event_id>? ORDER BY event_id LIMIT 200', [cursor]);
+      for (const row of rows) { publishImageStudioEvent(String(row.owner_id), { projectId: row.project_id, orchestrationRunId: row.run_id, orchestrationEventId: Number(row.event_id), eventType: row.event_type }); cursor = Number(row.event_id); }
+    } catch (error: any) { console.warn('[orchestration] realtime relay failed', error.code || 'RELAY_FAILED'); }
+    finally { relaying = false; }
+  };
+  const relayTimer = setInterval(() => void relay(), 1000); relayTimer.unref(); void relay();
   const queues = [IMAGE_STUDIO_QUEUES.generation, IMAGE_STUDIO_QUEUES.text, IMAGE_STUDIO_QUEUES.export];
   for (const name of queues) {
     const events = getImageStudioQueueEvents(name as ImageStudioQueueName);

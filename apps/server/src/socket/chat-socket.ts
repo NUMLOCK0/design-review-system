@@ -7,6 +7,7 @@ import { JWT_SECRET } from '../middleware/auth.middleware.js';
 import type { AuthUserPayload } from '../middleware/auth.middleware.js';
 import { storeChatMessage } from '../services/chat.js';
 import type { ChatMessage } from '../services/chat.js';
+import { scheduleDesignMessageRecognition } from '../services/design-skill-assistant.js';
 
 let chatIo: Server | null = null;
 const miniSockets = new Map<string, Set<WebSocket>>();
@@ -134,7 +135,10 @@ export function attachChatSocket(httpServer: HttpServer, isAllowedOrigin: (origi
         const result = await storeChatMessage(input, user);
         // Acknowledge only after the transaction has committed. An uncertain commit is retried with the same ID.
         ack({ ok: true, message: result.message });
-        if (!result.duplicate) publishChatMessage(result.message, result.recipients);
+        if (!result.duplicate) {
+          publishChatMessage(result.message, result.recipients);
+          if (user.role === 'advertiser') scheduleDesignMessageRecognition('order', result.message.orderId, result.message.id);
+        }
       } catch (error: any) {
         ack({ ok: false, error: error?.name === 'ZodError' ? '消息格式无效' : error?.status && error.status < 500 ? error.message : '消息暂未保存，请稍后重试' });
       }

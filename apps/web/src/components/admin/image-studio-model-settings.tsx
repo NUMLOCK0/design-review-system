@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { fetchWithAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { AiModelPicker, type SelectedAiModel } from '@/components/admin/ai-model-picker';
 
 type AiConfig = { id: string; name: string; baseUrl: string; model: string; enabled: boolean; keyConfigured: boolean };
 type Capability = 'text' | 'vision' | 'image';
@@ -27,6 +28,7 @@ export function ImageStudioModelSettings() {
   const [draft, setDraft] = useState<Draft>(blank());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const selectedModel = draft.model || (draft.id ? configs.find((config) => config.id === draft.aiConfigId)?.model : '') || '';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -49,9 +51,12 @@ export function ImageStudioModelSettings() {
     statusPath: String(profile.options.statusPath || '/media/status'), cancelPath: String(profile.options.cancelPath || '') });
 
   const save = async (event: React.FormEvent) => {
-    event.preventDefault(); setSaving(true);
+    event.preventDefault();
+    if (!draft.model && !draft.id) { toast.error('请先获取并选择模型，或手动添加模型 ID'); return; }
+    setSaving(true);
     try {
       const options = {
+        ...draft.options,
         timeoutMs: Number(draft.timeoutMs), pollIntervalMs: Number(draft.pollIntervalMs),
         statusPath: draft.statusPath, cancelPath: draft.cancelPath || undefined,
         resultHosts: draft.resultHosts.split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
@@ -77,10 +82,9 @@ export function ImageStudioModelSettings() {
       <form onSubmit={save} className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex items-center justify-between"><h2 className="font-semibold">{draft.id ? '编辑档案' : '新增档案'}</h2><Button type="button" variant="ghost" size="sm" onClick={() => setDraft({ ...blank(), aiConfigId: configs.find((item) => item.enabled)?.id || '' })}><Plus className="mr-1 h-3.5 w-3.5" />清空</Button></div>
         <Field label="档案名称"><Input required maxLength={120} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例如：主用商品图模型" /></Field>
-        <Field label="模型能力"><select value={draft.capability} onChange={(event) => { const capability = event.target.value as Capability; setDraft({ ...draft, capability, protocol: capability === 'image' ? 'openai-images' : 'openai-chat' }); }} className="control"><option value="text">文生文</option><option value="vision">图生文 / 多模态理解</option><option value="image">图像生成</option></select></Field>
-        <Field label="引用现有 API 配置"><select required value={draft.aiConfigId} onChange={(event) => setDraft({ ...draft, aiConfigId: event.target.value })} className="control"><option value="">选择已启用配置</option>{configs.filter((config) => config.enabled).map((config) => <option key={config.id} value={config.id}>{config.name} · {config.model}</option>)}</select></Field>
+        <Field label="引用现有 API 配置"><select required value={draft.aiConfigId} onChange={(event) => setDraft({ ...draft, aiConfigId: event.target.value, model: '' })} className="control"><option value="">选择已启用配置</option>{configs.filter((config) => config.enabled || config.id === draft.aiConfigId).map((config) => <option key={config.id} value={config.id}>{config.name}{!config.enabled && '（已禁用）'}</option>)}</select></Field>
+        <AiModelPicker configId={draft.aiConfigId || undefined} multiple={false} disabled={saving || !draft.aiConfigId} selected={selectedModel ? [{ model: selectedModel, capability: draft.capability, protocol: draft.protocol as SelectedAiModel['protocol'] }] : []} onChange={(models) => { const model = models[0]; if (model) setDraft((current) => ({ ...current, model: model.model, capability: model.capability, protocol: model.protocol, name: current.name || model.model.slice(0, 120) })); }} />
         <Field label="调用协议"><select value={draft.protocol} onChange={(event) => setDraft({ ...draft, protocol: event.target.value })} className="control">{draft.capability !== 'image' ? <option value="openai-chat">OpenAI 兼容 Chat Completions</option> : <><option value="openai-images">OpenAI 兼容 Images</option><option value="native-async">原生异步任务</option></>}</select></Field>
-        <Field label="模型 ID 覆盖（选填）"><Input maxLength={160} value={draft.model || ''} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="留空使用 API 配置中的模型 ID" /></Field>
         {draft.capability === 'vision' && <p className="rounded-xl bg-indigo-50 p-3 text-xs leading-5 text-indigo-800 sm:col-span-2">该档案用于素材识别、商品分析等带图片输入的任务。请确认服务商模型支持图像输入；同一配置可以另建文生文档案。</p>}
         {draft.capability === 'image' && <>
           {draft.protocol === 'native-async' && <><Field label="任务状态路径"><Input required value={draft.statusPath} onChange={(event) => setDraft({ ...draft, statusPath: event.target.value })} /></Field><Field label="取消路径（可选，使用 :taskId 占位）"><Input value={draft.cancelPath} onChange={(event) => setDraft({ ...draft, cancelPath: event.target.value })} placeholder="/media/cancel/:taskId" /></Field><Field label="后台查询间隔（毫秒）"><Input type="number" min={1000} max={30000} step={500} value={draft.pollIntervalMs} onChange={(event) => setDraft({ ...draft, pollIntervalMs: event.target.value })} /></Field></>}

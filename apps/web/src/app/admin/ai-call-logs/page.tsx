@@ -18,11 +18,13 @@ type AiCallLog = {
 const sources = [
   { value: '', label: '全部来源' }, { value: 'intake', label: '会话总结' },
   { value: 'ai_style', label: 'AI 配色' }, { value: 'image_studio', label: '生图工作台' },
+  { value: 'mastra_design_agent', label: '设计 Agent 模型调用' }, { value: 'design_agent_api', label: '设计 Agent 接口' },
 ];
 const operationLabels: Record<string, string> = {
   conversation_summary: '会话总结', style_directions: '八种配色', image_edit: '图片编辑',
   image_generation: '图片生成', native_image_submit: '原生生图提交', native_image_poll: '原生生图查询', native_image_cancel: '原生生图取消',
   plan_agent_text: '方案文本 Agent', plan_agent_vision: '方案视觉 Agent',
+  generate_design_plan: '设计方案模型调用', plan_endpoint: '设计方案接口调用',
 };
 
 export default function AdminAiCallLogsPage() {

@@ -11,6 +11,7 @@ export type ChatCard =
   | { kind: 'form_answers'; formMessageId: string; answers: Array<{ fieldIndex: number; value: string }> }
   | { kind: 'snapshot_ack'; snapshotMessageId: string; decision: 'confirmed' | 'needs_changes'; note: string }
   | { kind: 'choice'; source: 'combo' | 'style'; title: string; prompt: string; options: Array<{ id: string; label: string; detail: string }>; attachments?: Array<{ name: string; url: string }> }
+  | { kind: 'style_reference_set'; title: string; query: string; references: Array<{ id: string; title: string; thumbnailUrl: string; sourceUrl: string; creator: string; creatorUrl?: string; provider: string; license: string; licenseVersion?: string; licenseUrl?: string }> }
   | { kind: 'choice_answer'; choiceMessageId: string; optionId: string; optionLabel: string; note: string }
   | { kind: 'annotation'; annotationId: string; taskId: string; taskNo: string; imageId: string; imageVersion: number; revision: number; productName: string; imageIndex: number; imageUrl: string; annotations: Array<{ id: string; type: 'pin'; x: number; y: number; color: string; comment: string; creatorId: string; creatorName: string; createdAt: string }> }
   | { kind: 'recall'; targetMessageId: string };
@@ -40,6 +41,7 @@ export function parseChatCard(body: string): ChatCard | null {
     if (card.kind === 'form_answers' && typeof card.formMessageId === 'string' && Array.isArray(card.answers) && card.answers.every((answer: any) => Number.isInteger(answer?.fieldIndex) && answer.fieldIndex >= 0 && typeof answer?.value === 'string')) return card as ChatCard;
     if (card.kind === 'snapshot_ack' && typeof card.snapshotMessageId === 'string' && (card.decision === 'confirmed' || card.decision === 'needs_changes') && typeof card.note === 'string') return card as ChatCard;
     if (card.kind === 'choice' && (card.source === 'combo' || card.source === 'style') && typeof card.title === 'string' && typeof card.prompt === 'string' && Array.isArray(card.options) && card.options.every((item: any) => typeof item?.id === 'string' && typeof item?.label === 'string' && typeof item?.detail === 'string') && (card.attachments === undefined || Array.isArray(card.attachments) && card.attachments.every((item: any) => typeof item?.name === 'string' && typeof item?.url === 'string'))) return card as ChatCard;
+    if (card.kind === 'style_reference_set' && typeof card.title === 'string' && typeof card.query === 'string' && Array.isArray(card.references) && card.references.length > 0 && card.references.length <= 6 && card.references.every((item: any) => typeof item?.id === 'string' && typeof item?.title === 'string' && typeof item?.thumbnailUrl === 'string' && /^https:\/\//i.test(item.thumbnailUrl) && typeof item?.sourceUrl === 'string' && /^https:\/\//i.test(item.sourceUrl) && typeof item?.creator === 'string' && typeof item?.provider === 'string' && typeof item?.license === 'string')) return card as ChatCard;
     if (card.kind === 'choice_answer' && typeof card.choiceMessageId === 'string' && typeof card.optionId === 'string' && typeof card.optionLabel === 'string' && typeof card.note === 'string') return card as ChatCard;
     if (card.kind === 'annotation' && typeof card.annotationId === 'string' && typeof card.taskId === 'string' && typeof card.imageId === 'string' && typeof card.imageVersion === 'number' && typeof card.revision === 'number' && typeof card.productName === 'string' && typeof card.imageIndex === 'number' && /^\/api\/upload\/(?:assets|previews)\/asset_[a-f0-9]{32}$/.test(String(card.imageUrl || '')) && Array.isArray(card.annotations) && card.annotations.length > 0 && card.annotations.length <= 12 && card.annotations.every((item: any) => typeof item?.id === 'string' && item.type === 'pin' && Number.isFinite(item.x) && item.x >= 0 && item.x <= 100 && Number.isFinite(item.y) && item.y >= 0 && item.y <= 100 && typeof item.comment === 'string' && typeof item.color === 'string')) return card as ChatCard;
     if (card.kind === 'recall' && typeof card.targetMessageId === 'string') return card as ChatCard;
@@ -62,6 +64,7 @@ export function chatPreview(body: string) {
   if (card.kind === 'form_answers') return '已提交品牌需求表单';
   if (card.kind === 'snapshot_ack') return card.decision === 'confirmed' ? '已确认需求快照' : '需求快照需要修改';
   if (card.kind === 'choice') return `待选择：${card.title}`;
+  if (card.kind === 'style_reference_set') return `风格参考图：${card.title} · ${card.references.length} 张`;
   if (card.kind === 'choice_answer') return `已选择：${card.optionLabel}`;
   if (card.kind === 'annotation') return `图片批注：${card.productName} · ${card.annotations.length} 处`;
   if (card.kind === 'recall') return '撤回了一条消息';

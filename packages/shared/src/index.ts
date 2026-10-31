@@ -2,6 +2,8 @@
 export * from './form-config';
 export * from './order-form-presets';
 export * from './collaboration';
+export * from './design-skills';
+export * from './design-question-choices';
 export type UserRole = 'advertiser' | 'designer' | 'customer_service' | 'admin';
 
 export interface User {

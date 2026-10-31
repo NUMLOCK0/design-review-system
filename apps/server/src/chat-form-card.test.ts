@@ -26,3 +26,15 @@ test('chat form answers allow structured values longer than the legacy 200-chara
   assert.equal(card?.kind, 'form_answers');
   if (card?.kind === 'form_answers') assert.equal(card.answers[0].value, value);
 });
+
+test('chat form answers accept values up to the request body limit', () => {
+  const value = '答'.repeat(7801);
+  const body = `${CARD_PREFIX}${JSON.stringify({
+    kind: 'form_answers', formMessageId: '00000000-0000-4000-8000-000000000001',
+    answers: [{ fieldIndex: 0, value }],
+  })}`;
+  assert.ok(body.length <= 8000);
+  const card = parseCard(body);
+  assert.equal(card?.kind, 'form_answers');
+  if (card?.kind === 'form_answers') assert.equal(card.answers[0].value, value);
+});

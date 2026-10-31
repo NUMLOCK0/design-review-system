@@ -42,6 +42,10 @@
             <button v-if="!myDecision(intakeCard(item)!.id) && !confirmationHasNewerSubmissions(intakeCard(item)!)" class="card-action" @tap="confirmRequirement(intakeCard(item)!)">确认需求内容</button>
             <view v-else class="decision-done">{{ confirmationHasNewerSubmissions(intakeCard(item)!) ? '表单已更新 · 此确认已过期' : myDecision(intakeCard(item)!.id) === 'confirmed' ? '你已确认' : '你已提出修改' }}</view>
           </template>
+          <template v-else-if="intakeCard(item)!.kind === 'references'">
+            <view class="reference-grid"><view v-for="reference in intakeCard(item)!.references" :key="reference.id" class="reference-item"><image class="reference-image" :src="reference.thumbnailUrl" mode="aspectFill" @tap="previewReference(reference.thumbnailUrl)"/><view class="reference-copy"><text class="reference-title">{{ reference.title || '风格参考图' }}</text><text class="reference-meta">{{ reference.creator || '作者未注明' }} · {{ reference.license }}</text><button class="reference-link" @tap="copyReferenceSource(reference.sourceUrl)">查看来源链接</button></view></view></view>
+            <view class="card-meta">搜索词：{{ intakeCard(item)!.query }} · 图片由来源网站托管</view>
+          </template>
         </view>
         <view v-else-if="cardDecision(item)" class="bubble"><text>{{ decisionText(cardDecision(item)!) }}</text></view>
         <view v-else-if="videoMessage(item)" class="image-bubble"><protected-video :src="videoMessage(item)!.url" /><text v-if="videoMessage(item)?.caption" class="image-caption">{{ videoMessage(item)?.caption }}</text></view>
@@ -101,7 +105,7 @@ import { mergeFormDefaults, validateFormAnswers } from '../../lib/forms';
 import { configuredChecklistField, decodeChecklistAnswer, encodeChecklistAnswer } from '../../lib/chat-form-schema';
 import { isChatLiveConnected, subscribeChatNotifications } from '../../lib/chat-live';
 import { markConversationRead } from '../../lib/notification-center';
-type IntakeCard = { version: 1; id: string; title: string; description?: string } & ({ kind: 'form'; fields: FormField[]; protocol?: 'chat_card'; mobileStyle?: FormMobileStyle } | { kind: 'submission'; formId: string; answers: FormAnswers } | { kind: 'confirmation'; formIds: string[] } | { kind: 'decision'; confirmationId: string; decision: 'confirmed' | 'changes'; note: string });
+type IntakeCard = { version: 1; id: string; title: string; description?: string } & ({ kind: 'form'; fields: FormField[]; protocol?: 'chat_card'; mobileStyle?: FormMobileStyle } | { kind: 'submission'; formId: string; answers: FormAnswers } | { kind: 'confirmation'; formIds: string[] } | { kind: 'decision'; confirmationId: string; decision: 'confirmed' | 'changes'; note: string } | { kind: 'references'; query: string; references: Array<{ id: string; title: string; thumbnailUrl: string; sourceUrl: string; creator: string; provider: string; license: string }> });
 type FormPresetView = { id: string; name: string; description: string; template: FormTemplate; sections: Array<{ title: string; fields: FormField[] }> };
 const CARD_PREFIX = 'COZI_INTAKE_CARD_V1:';
 const CHAT_CARD_PREFIX = 'COZI_CHAT_CARD_V1:';
@@ -243,7 +247,7 @@ function parseChatChecklist(message: IntakeMessage): Extract<IntakeCard, { kind:
   if (!message.body.startsWith(CHAT_CARD_PREFIX)) return null;
   try {
     const card = JSON.parse(message.body.slice(CHAT_CARD_PREFIX.length));
-    if (card?.kind !== 'work_card' || card.templateId !== 'intake_checklist' || !Array.isArray(card.fields)) return null;
+    if (card?.kind !== 'work_card' || !['intake_checklist', 'design_skill_intake'].includes(card.templateId) || !Array.isArray(card.fields)) return null;
     const fields = card.fields.map((field: { label?: unknown; value?: unknown; kind?: unknown; options?: unknown; schema?: unknown }, index: number) => {
       if (typeof field?.label !== 'string') throw new Error('invalid form');
       const configured = configuredChecklistField(field.schema, field.label, index);
@@ -256,7 +260,7 @@ function parseChatChecklist(message: IntakeMessage): Extract<IntakeCard, { kind:
       return { key: `chat_field_${index}`, label: field.label, kind, required: true, placeholder: kind === 'image' ? '请选择需要上传的图片' : '请填写你的回答', width: 100, maxLength: 200, ...(options.length && kind !== 'image' ? { options: options.map(value => ({ label: value, value })) } : {}) } as FormField;
     });
     const mobileStyle = ['comfortable', 'compact', 'large'].includes(card.mobileStyle) ? card.mobileStyle as FormMobileStyle : undefined;
-    return { version: 1, id: message.id, kind: 'form', protocol: 'chat_card', title: typeof card.title === 'string' ? card.title : '品牌需求表单', description: '请填写问题并提交给客服。', mobileStyle, fields };
+    return { version: 1, id: message.id, kind: 'form', protocol: 'chat_card', title: typeof card.title === 'string' ? card.title : '品牌需求表单', description: card.templateId === 'design_skill_intake' ? '根据当前设计需求定制的问题，请按实际情况填写。' : '请填写问题并提交给客服。', mobileStyle, fields };
   } catch { return null; }
 }
 function parseChatAnswers(message: IntakeMessage): Extract<IntakeCard, { kind: 'submission' }> | null {
@@ -278,9 +282,21 @@ function parseChatAnswers(message: IntakeMessage): Extract<IntakeCard, { kind: '
 function intakeCard(message: IntakeMessage): IntakeCard | null {
   const legacy = parseIntakeCard(message.body);
   if (legacy) return legacy;
-  return parseChatChecklist(message) || parseChatAnswers(message);
+  return parseChatChecklist(message) || parseChatAnswers(message) || parseChatReferences(message);
 }
-function cardLabel(card: IntakeCard) { return ({ form: '需求表单', submission: '需求资料', confirmation: '需求确认', decision: '确认记录' })[card.kind]; }
+function parseChatReferences(message: IntakeMessage): Extract<IntakeCard, { kind: 'references' }> | null {
+  if (!message.body.startsWith(CHAT_CARD_PREFIX)) return null;
+  try {
+    const card = JSON.parse(message.body.slice(CHAT_CARD_PREFIX.length));
+    if (card?.kind !== 'style_reference_set' || typeof card.title !== 'string' || typeof card.query !== 'string' || !Array.isArray(card.references) || !card.references.length) return null;
+    const references = card.references.filter((item: any) => typeof item?.id === 'string' && /^https:\/\//i.test(item.thumbnailUrl) && /^https:\/\//i.test(item.sourceUrl)).slice(0, 6);
+    if (!references.length) return null;
+    return { version: 1, id: message.id, kind: 'references', title: card.title, query: card.query, references };
+  } catch { return null; }
+}
+function cardLabel(card: IntakeCard) { return ({ form: '需求表单', submission: '需求资料', confirmation: '需求确认', decision: '确认记录', references: '风格参考图' })[card.kind]; }
+function previewReference(url: string) { uni.previewImage({ current: url, urls: [url] }); }
+function copyReferenceSource(url: string) { uni.setClipboardData({ data: url, success: () => uni.showToast({ title: '来源链接已复制', icon: 'none' }) }); }
 function submissionFor(formId: string, senderId?: string) { return [...submittedForms.value].reverse().find(entry => entry.card.formId === formId && (!senderId || entry.message.senderId === senderId)); }
 function canEditIntakeForm() { return getSession()?.user.role === 'advertiser'; }
 function hasOwnSubmission(formId: string) { return Boolean(submissionFor(formId, userId.value)); }
@@ -412,6 +428,7 @@ async function submitIntakeForm(card: Extract<IntakeCard, { kind: 'form' }>) {
     if (card.protocol === 'chat_card') {
       const answers = card.fields.map((field, fieldIndex) => ({ fieldIndex, value: encodeChecklistAnswer(formAnswers.value[field.key]) }));
       const body = `${CHAT_CARD_PREFIX}${JSON.stringify({ kind: 'form_answers', formMessageId: card.id, answers })}`;
+      if (body.length > 8000) throw new Error('填写内容过长，请缩减长文本或附件后再提交');
       await persistIntakeMessage(body);
     } else {
       await sendIntakeCard({ version: 1, id: uuid(), kind: 'submission', formId: card.id, title: card.title, answers: formAnswers.value });
@@ -566,4 +583,12 @@ function back() { uni.navigateBack({ fail: () => uni.switchTab({ url: '/pages/in
 .inline-primary { background:linear-gradient(110deg,#6278f6,#5263e9); box-shadow:0 5rpx 12rpx rgba(82,99,233,.18); color:#fff; }
 .inline-primary[disabled],.inline-secondary[disabled] { opacity:.55; }
 .revision-hint { margin-top:11rpx; color:#64748b; font-size:18rpx; line-height:1.5; }
+.reference-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14rpx; margin-top:16rpx; }
+.reference-item { overflow:hidden; border:1rpx solid #e2e8f0; border-radius:14rpx; background:#fff; }
+.reference-image { display:block; width:100%; height:210rpx; background:#f1f5f9; }
+.reference-copy { display:flex; flex-direction:column; gap:5rpx; padding:10rpx; }
+.reference-title { overflow:hidden; color:#334155; font-size:19rpx; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+.reference-meta { overflow:hidden; color:#94a3b8; font-size:16rpx; text-overflow:ellipsis; white-space:nowrap; }
+.reference-link { align-self:flex-start; height:auto; margin:3rpx 0 0; padding:0; background:transparent; color:#4f46e5; font-size:17rpx; line-height:1.5; text-align:left; }
+.reference-link::after { border:0; }
 </style>

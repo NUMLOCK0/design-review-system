@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRoles } from '../middleware/auth.middleware.js';
-import { deleteAiConfig, listAiConfigs, saveAiConfig, setAiConfigEnabled } from '../services/ai-config.js';
+import { deleteAiConfig, getAiConfigCredentials, listAiConfigs, saveAiConfig, setAiConfigEnabled } from '../services/ai-config.js';
+import { fetchAiModelCatalog } from '../services/ai-model-catalog.js';
 import { recordAdminAudit } from '../services/admin-audit.js';
 
 export const aiConfigRouter = Router();
@@ -18,6 +19,10 @@ const inputSchema = z.object({
   }, '请输入 HTTPS 中转站地址；本机开发可使用 HTTP localhost'),
   model: z.string().trim().min(1).max(128),
   apiKey: z.string().trim().max(4096).optional(),
+  models: z.array(z.object({
+    model: z.string().trim().min(1).max(128), capability: z.enum(['text', 'vision', 'image']),
+    protocol: z.enum(['openai-chat', 'openai-images', 'native-async']),
+  }).strict().refine((value) => value.capability === 'image' ? value.protocol !== 'openai-chat' : value.protocol === 'openai-chat', '模型类型与调用协议不匹配')).max(100).optional(),
 }).strict();
 
 function invalid(res: any, message: string) {
@@ -29,13 +34,28 @@ aiConfigRouter.get('/', async (_req, res, next) => {
   catch (error) { next(error); }
 });
 
+aiConfigRouter.post('/discover-models', async (req, res, next) => {
+  const parsed = z.object({ configId: z.string().min(1).max(64).optional(), baseUrl: inputSchema.shape.baseUrl.optional(),
+    apiKey: inputSchema.shape.apiKey }).strict().safeParse(req.body);
+  if (!parsed.success) return invalid(res, parsed.error.issues[0]?.message || '获取模型参数无效');
+  try {
+    // A newly entered key takes precedence, so an unreadable saved key can be replaced before saving.
+    const saved = parsed.data.configId ? (await listAiConfigs()).find((config) => config.id === parsed.data.configId) : null;
+    if (parsed.data.configId && !saved) return res.status(404).json({ code: 404, success: false, message: 'API 配置不存在' });
+    const baseUrl = parsed.data.baseUrl || saved?.baseUrl;
+    const apiKey = parsed.data.apiKey || (saved ? (await getAiConfigCredentials(saved.id))?.apiKey : undefined);
+    if (!baseUrl || !apiKey) return invalid(res, '请先填写服务地址和 API Key');
+    res.json({ code: 200, success: true, data: await fetchAiModelCatalog({ baseUrl, apiKey, configId: parsed.data.configId }) });
+  } catch (error) { next(error); }
+});
+
 aiConfigRouter.post('/', async (req, res, next) => {
   const parsed = inputSchema.safeParse(req.body);
   if (!parsed.success) return invalid(res, parsed.error.issues[0]?.message || '配置格式无效');
   if (!parsed.data.apiKey) return invalid(res, '新增配置时必须填写 API Key');
   try {
-    const config = await saveAiConfig(parsed.data);
-    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'ai_config', action: 'create', targetType: 'ai_model_config', targetId: config!.id, summary: `${req.user!.name}新增 AI 模型配置`, detail: { name: config!.name, model: config!.model }, ipAddress: req.ip }).catch(console.error);
+    const config = await saveAiConfig(parsed.data, undefined, req.user!.id);
+    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'ai_config', action: 'create', targetType: 'ai_model_config', targetId: config!.id, summary: `${req.user!.name}新增 AI 模型配置`, detail: { name: config!.name, model: config!.model, addedModels: parsed.data.models || [] }, ipAddress: req.ip }).catch(console.error);
     res.status(201).json({ code: 200, success: true, data: config });
   } catch (error) { next(error); }
 });
@@ -44,9 +64,9 @@ aiConfigRouter.put('/:id', async (req, res, next) => {
   const parsed = inputSchema.safeParse(req.body);
   if (!parsed.success) return invalid(res, parsed.error.issues[0]?.message || '配置格式无效');
   try {
-    const config = await saveAiConfig(parsed.data, req.params.id);
+    const config = await saveAiConfig(parsed.data, req.params.id, req.user!.id);
     if (!config) return res.status(404).json({ code: 404, success: false, message: '配置不存在' });
-    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'ai_config', action: 'update', targetType: 'ai_model_config', targetId: config.id, summary: `${req.user!.name}更新 AI 模型配置`, detail: { name: config.name, model: config.model, keyChanged: Boolean(parsed.data.apiKey) }, ipAddress: req.ip }).catch(console.error);
+    void recordAdminAudit({ operatorId: req.user!.id, operatorName: req.user!.name, module: 'ai_config', action: 'update', targetType: 'ai_model_config', targetId: config.id, summary: `${req.user!.name}更新 AI 模型配置`, detail: { name: config.name, model: config.model, keyChanged: Boolean(parsed.data.apiKey), addedModels: parsed.data.models || [] }, ipAddress: req.ip }).catch(console.error);
     res.json({ code: 200, success: true, data: config });
   } catch (error) { next(error); }
 });

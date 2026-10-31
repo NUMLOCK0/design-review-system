@@ -6,6 +6,7 @@ import { CARD_PREFIX, getConversationAssignment, getConversationTransferHistory,
 import { isCustomerServiceOnline, publishIntakeMessage } from '../socket/chat-socket.js';
 import { getDefaultEnabledAiConfig, getEnabledAiModelProfileCredentials, openAiChatCompletionsEndpoint } from '../services/ai-config.js';
 import { fetchAiJson } from '../services/ai-call-log.js';
+import { scheduleDesignMessageRecognition } from '../services/design-skill-assistant.js';
 
 export const intakeSessionsRouter = Router();
 const ok = (data: unknown) => ({ code: 200, success: true, data });
@@ -220,7 +221,7 @@ intakeSessionsRouter.post('/:id/messages', async (req, res, next) => {
     if (body.startsWith('COZI_WORKFLOW_V1:')) fail('业务卡片必须通过需求协作接口生成', 403);
     const card = parseCard(body);
     if (card?.kind === 'video' || /^\/api\/upload\/assets\/asset_[a-f0-9]{32}$/.test(body)) fail('当前会话不支持发送视频，请发送图片或文字', 400);
-    if (card && !['image', 'work_card', 'choice', 'choice_answer', 'form_answers', 'proposal', 'decision'].includes(card.kind)) fail('此会话不支持该业务卡片', 400);
+    if (card && !['image', 'work_card', 'choice', 'choice_answer', 'form_answers', 'proposal', 'decision', 'style_reference_set'].includes(card.kind)) fail('此会话不支持该业务卡片', 400);
     const connection = await requireChatDatabase().getConnection();
     try {
       await connection.beginTransaction();
@@ -249,7 +250,7 @@ intakeSessionsRouter.post('/:id/messages', async (req, res, next) => {
         if (new Set(businessImageIds).size !== businessImageIds.length) fail('业务需求卡中有重复图片，请检查后重试', 400);
         if (!await hasConversationImageAccess(connection, 'intake', session.id, req.user!.id, businessImageIds)) fail('业务需求卡图片不在当前会话中或无权使用，请重新选择', 400);
       }
-      if (card?.kind === 'work_card' || card?.kind === 'choice' || card?.kind === 'proposal') {
+      if (card?.kind === 'work_card' || card?.kind === 'choice' || card?.kind === 'proposal' || card?.kind === 'style_reference_set') {
         if (!['customer_service', 'admin'].includes(req.user!.role)) fail('只有客服可以发送协作卡片', 403);
         if (card.kind === 'work_card' && card.templateId === 'contract_snapshot') fail('需求快照仅用于订单会话', 400);
         if (card.kind === 'choice' && new Set(card.options.map(option => option.id)).size !== card.options.length) fail('选择题选项编号重复', 400);
@@ -274,9 +275,10 @@ intakeSessionsRouter.post('/:id/messages', async (req, res, next) => {
         const target: any = forms[0] ? parseCard(String(forms[0].body)) : null;
         if (!target) fail('需求表单不存在', 404);
         if (target.kind !== 'work_card') fail('需求表单不存在', 404);
-        if (target.templateId !== 'intake_checklist' || forms[0].sender_id === req.user!.id) fail('需求表单不存在', 404);
+        if (!['intake_checklist', 'design_skill_intake'].includes(target.templateId) || forms[0].sender_id === req.user!.id) fail('需求表单不存在', 404);
         const formFields = (target as { fields: Array<{ label: string; options?: string[]; schema?: { kind: string; required?: boolean; options?: Array<{ value: string }> } }> }).fields;
         if (card.answers.length !== formFields.length || new Set(card.answers.map((answer) => answer.fieldIndex)).size !== card.answers.length || card.answers.some((answer) => answer.fieldIndex >= formFields.length)) fail('请完整填写表单中的每一项', 400);
+        const uploadedAssetIds: string[] = [];
         for (const answer of card.answers) {
           const field = formFields[answer.fieldIndex];
           if (!answer.value.trim() && (!field.schema || field.schema.required)) fail(`请填写“${field.label}”`, 400);
@@ -292,6 +294,17 @@ intakeSessionsRouter.post('/:id/messages', async (req, res, next) => {
             const allowed = new Set([...(field.schema.options || []).map(option => option.value), ...(field.options || [])]);
             if (Array.isArray(choices) ? choices.some(choice => typeof choice !== 'string' || !allowed.has(choice)) : !allowed.has(choices as string)) fail(`“${field.label}”包含无效选项`, 400);
           }
+          if (field.schema?.kind === 'image' || field.schema?.kind === 'file') {
+            let uploaded: unknown;
+            try { uploaded = JSON.parse(answer.value); } catch { uploaded = null; }
+            if (!Array.isArray(uploaded) || uploaded.length > 5 || uploaded.some((url: unknown) => typeof url !== 'string' || !/^\/api\/upload\/(?:assets|previews)\/(asset_[a-f0-9]{32})$/.test(url) || (field.schema?.kind === 'image' && !url.startsWith('/api/upload/previews/')))) fail(`“${field.label}”附件无效，请重新上传`, 400);
+            uploadedAssetIds.push(...(uploaded as string[]).map((url) => /\/(asset_[a-f0-9]{32})$/.exec(url)![1]));
+          }
+        }
+        if (uploadedAssetIds.length) {
+          const ids = [...new Set(uploadedAssetIds)];
+          const [assets]: any = await connection.query(`SELECT id FROM media_assets WHERE owner_id=? AND id IN (${ids.map(() => '?').join(',')})`, [req.user!.id, ...ids]);
+          if (assets.length !== ids.length) fail('表单附件不存在或不属于当前账号，请重新上传', 400);
         }
       }
       if (card?.kind === 'decision') {
@@ -310,6 +323,7 @@ intakeSessionsRouter.post('/:id/messages', async (req, res, next) => {
       const message = { id, sessionId: String(session.id), seq, senderId: req.user!.id, senderName: req.user!.name,
         clientMessageId, body, createdAt: new Date().toISOString() };
       publishIntakeMessage(message, [...new Set([session.creator_id, session.guest_id, 'role:service'].filter(Boolean))] as string[]);
+      if (req.user!.role === 'advertiser') scheduleDesignMessageRecognition('intake', String(session.id), message.id);
       res.status(201).json(ok(message));
     } catch (error) { await connection.rollback(); throw error; }
     finally { connection.release(); }

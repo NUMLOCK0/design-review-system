@@ -6,6 +6,7 @@ import { getChatOrder, listChatConversations, listChatMessages, storeChatMessage
 import { publishChatMessage } from '../socket/chat-socket.js';
 import { getChatUnreadSummary, markChatRead } from '../services/chat-unread.js';
 import { generateAiStyleDirections } from '../services/ai-style.js';
+import { recommendDesignSkills, recognizeDesignMessage, scheduleDesignMessageRecognition, searchDesignReferenceImages } from '../services/design-skill-assistant.js';
 import { createOrderImageAnnotation, listOrderDeliverableImages } from '../services/chat-annotations.js';
 
 export const chatRouter = Router();
@@ -53,6 +54,51 @@ chatRouter.post('/style-directions', async (req, res, next) => {
   }
 });
 
+chatRouter.post('/design-skills/recommend', async (req, res, next) => {
+  try {
+    const body = z.object({
+      conversationType: z.enum(['order', 'intake']),
+      conversationId: z.string().trim().min(1).max(64),
+    }).strict().parse(req.body);
+    const data = await recommendDesignSkills(body.conversationType, body.conversationId, req.user!);
+    res.json({ code: 200, success: true, data });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ code: 400, success: false, message: '技能推荐参数无效' });
+    next(error);
+  }
+});
+
+chatRouter.post('/design-skills/recognize-message', async (req, res, next) => {
+  try {
+    const body = z.object({
+      conversationType: z.enum(['order', 'intake']),
+      conversationId: z.string().trim().min(1).max(64),
+      messageId: z.string().uuid(),
+    }).strict().parse(req.body);
+    const data = await recognizeDesignMessage(body.conversationType, body.conversationId, body.messageId, req.user!);
+    res.json({ code: 200, success: true, data });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ code: 400, success: false, message: '消息识别参数无效' });
+    next(error);
+  }
+});
+
+chatRouter.post('/design-skills/search-images', async (req, res, next) => {
+  try {
+    const body = z.object({
+      conversationType: z.enum(['order', 'intake']),
+      conversationId: z.string().trim().min(1).max(64),
+      formMessageId: z.string().uuid(),
+      query: z.string().trim().max(220).optional(),
+    }).strict().parse(req.body);
+    const data = await searchDesignReferenceImages({ type: body.conversationType, id: body.conversationId, formMessageId: body.formMessageId, query: body.query }, req.user!);
+    res.json({ code: 200, success: true, data });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ code: 400, success: false, message: '图片搜索参数无效' });
+    next(error);
+  }
+});
+
 chatRouter.get('/conversations', async (req, res, next) => {
   try {
     const page = z.object({ limit: z.coerce.number().int().min(1).max(100).default(100), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
@@ -76,7 +122,7 @@ chatRouter.get('/orders/:orderId', async (req, res, next) => {
       orderId: req.params.orderId, orderNo: order.order_no, title: order.title,
       category: order.category, platform: order.platform, budget: Number(order.budget),
       deadline: order.deadline, requirements: order.requirements || '', status: order.status,
-      requiresPsd: Boolean(order.requires_psd), creatorName: order.creator_name,
+      requiresPsd: Boolean(order.requires_psd), creatorId: order.creator_id, creatorName: order.creator_name,
       designerName: order.claimed_by_name || '',
       ...assignment,
     } });
@@ -122,7 +168,10 @@ chatRouter.get('/orders/:orderId/deliverable-images', async (req, res, next) => 
 chatRouter.post('/orders/:orderId/annotations', async (req, res, next) => {
   try {
     const result = await createOrderImageAnnotation(req.params.orderId, req.body, req.user!);
-    if (!result.duplicate) publishChatMessage(result.message, result.recipients);
+    if (!result.duplicate) {
+      publishChatMessage(result.message, result.recipients);
+      if (req.user!.role === 'advertiser') scheduleDesignMessageRecognition('order', req.params.orderId, result.message.id);
+    }
     res.status(result.duplicate ? 200 : 201).json({ code: 200, success: true, data: result.message });
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ code: 400, success: false, message: '批注内容无效，请检查图片与修改说明' });

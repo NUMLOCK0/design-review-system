@@ -6,7 +6,7 @@
 
 ## 1. 基础设施与备份
 
-- 准备 Linux 主机、Node.js 22 LTS、与锁文件兼容的 pnpm（当前开发环境为 11.25.0）、Nginx、有效的 HTTPS 证书、MySQL 8、启用持久化的 Redis，以及私有阿里云 OSS Bucket。Node 和 pnpm 应由系统级安装，让 systemd 运行用户能找到 `node`。
+- 准备 Linux 主机、Node.js 22.13 或更高的 22 LTS 版本（PDF 解析依赖要求）、与锁文件兼容的 pnpm（当前开发环境为 11.25.0）、Nginx、有效的 HTTPS 证书、MySQL 8、启用持久化的 Redis，以及私有阿里云 OSS Bucket。Node 和 pnpm 应由系统级安装，让 systemd 运行用户能找到 `node`。
 - 将域名解析至主机。只向公网开放 80/443；通过防火墙限制 3000、8080、MySQL 和 Redis 的访问。MySQL/Redis 使用独立凭据，Redis 生产环境使用 ACL/TLS、持久化并避免淘汰队列数据。
 - 首次或每次更新数据库结构前做 MySQL 快照；定期备份 MySQL、Redis 和 OSS。确认恢复流程可用。若有仍保存在服务器上的历史本地上传，另行备份 `apps/server/private-uploads` 与 `apps/server/uploads`。
 - 准备源码并由专用用户持有：

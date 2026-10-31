@@ -19,9 +19,10 @@ const cardSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('decision'), proposalMessageId: z.string().uuid(), option: z.enum(['A', 'B']), note: z.string().max(500) }).strict(),
   z.object({ kind: z.literal('requirement_review'), decision: z.enum(['confirmed', 'needs_details']), note: z.string().max(500) }).strict(),
   z.object({ kind: z.literal('work_card'), templateId: z.string().regex(/^[a-z0-9_-]{1,40}$/), title: z.string().trim().min(1).max(100), mobileStyle: z.enum(['comfortable', 'compact', 'large']).optional(), fields: z.array(z.object({ label: z.string().trim().min(1).max(80), value: z.string().trim().min(1).max(800), kind: z.literal('image').optional(), options: z.array(z.string().trim().min(1).max(100)).max(20).optional(), schema: formFieldCardSchema.optional() }).strict()).min(1).max(24), attachments: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().regex(/^\/api\/upload\/previews\/[a-zA-Z0-9_-]+$/) }).strict()).max(8).default([]), revisionOf: z.string().uuid().optional() }).strict(),
-  z.object({ kind: z.literal('form_answers'), formMessageId: z.string().uuid(), answers: z.array(z.object({ fieldIndex: z.number().int().min(0).max(23), value: z.string().max(7800) }).strict()).min(1).max(24) }).strict(),
+  z.object({ kind: z.literal('form_answers'), formMessageId: z.string().uuid(), answers: z.array(z.object({ fieldIndex: z.number().int().min(0).max(23), value: z.string().max(8000) }).strict()).min(1).max(24) }).strict(),
   z.object({ kind: z.literal('snapshot_ack'), snapshotMessageId: z.string().uuid(), decision: z.enum(['confirmed', 'needs_changes']), note: z.string().max(500) }).strict(),
   z.object({ kind: z.literal('choice'), source: z.enum(['combo', 'style']), title: z.string().trim().min(1).max(100), prompt: z.string().trim().min(1).max(500), options: z.array(z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/), label: z.string().trim().min(1).max(100), detail: z.string().max(500) }).strict()).min(2).max(8), attachments: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().regex(/^\/api\/upload\/previews\/[a-zA-Z0-9_-]+$/) }).strict()).max(8).optional() }).strict(),
+  z.object({ kind: z.literal('style_reference_set'), title: z.string().trim().min(1).max(100), query: z.string().trim().max(220), references: z.array(z.object({ id: z.string().trim().min(1).max(180), title: z.string().trim().max(180), thumbnailUrl: z.string().regex(/^https:\/\//i).max(2048), sourceUrl: z.string().regex(/^https:\/\//i).max(2048), creator: z.string().max(100), creatorUrl: z.string().regex(/^https:\/\//i).max(2048).optional(), provider: z.string().max(80), license: z.string().max(40), licenseVersion: z.string().max(24).optional(), licenseUrl: z.string().regex(/^https:\/\//i).max(2048).optional() }).strict()).min(1).max(6) }).strict(),
   z.object({ kind: z.literal('choice_answer'), choiceMessageId: z.string().uuid(), optionId: z.string().regex(/^[a-zA-Z0-9_-]{1,40}$/), optionLabel: z.string().trim().min(1).max(100), note: z.string().max(500) }).strict(),
   z.object({ kind: z.literal('annotation'), annotationId: z.string().uuid(), taskId: z.string().min(1).max(64), taskNo: z.string().max(64), imageId: z.string().min(1).max(64), imageVersion: z.number().int().min(1), revision: z.number().int().min(1), productName: z.string().trim().min(1).max(120), imageIndex: z.number().int().min(1), imageUrl: z.string().regex(/^\/api\/upload\/(?:assets|previews)\/asset_[a-f0-9]{32}$/), annotations: z.array(z.object({ id: z.string().uuid(), type: z.literal('pin'), x: z.number().min(0).max(100), y: z.number().min(0).max(100), color: z.string().regex(/^#[a-fA-F0-9]{6}$/), comment: z.string().trim().min(1).max(200), creatorId: z.string().min(1).max(64), creatorName: z.string().min(1).max(128), createdAt: z.string().datetime() }).strict()).min(1).max(12) }).strict(),
   z.object({ kind: z.literal('recall'), targetMessageId: z.string().uuid() }).strict(),
@@ -222,6 +223,8 @@ export async function storeChatMessage(raw: unknown, user: AuthUserPayload) {
         if (!await hasConversationImageAccess(connection, 'order', input.orderId, user.id, businessImageIds)) failure('业务需求卡图片不在当前会话中或无权使用，请重新选择', 400);
       }
     }
+    if (card?.kind === 'work_card' && card.templateId === 'design_skill_intake' && !['customer_service', 'admin'].includes(user.role)) failure('只有客服可以发送 Skill 需求表单', 403);
+    if (card?.kind === 'style_reference_set' && !['customer_service', 'admin'].includes(user.role)) failure('只有客服可以发送风格参考图', 403);
     if (card?.kind === 'work_card' && card.templateId === 'contract_snapshot' && !['customer_service', 'admin'].includes(user.role)) failure('只有客服可以生成需求快照', 403);
     if (card?.kind === 'proposal' && order.claimed_by_id !== user.id && !['customer_service', 'admin'].includes(user.role)) failure('只有设计师或客服可以发送提案', 403);
     if (card?.kind === 'choice') {
@@ -257,6 +260,39 @@ export async function storeChatMessage(raw: unknown, user: AuthUserPayload) {
       if (!target.options.some(option => option.id === card.optionId && option.label === card.optionLabel)) failure('选项无效', 400);
       const [answers]: any = await connection.query('SELECT body FROM chat_messages WHERE order_id=? AND sender_id=? AND LEFT(body, ?)=?', [input.orderId, user.id, CARD_PREFIX.length, CARD_PREFIX]);
       if (answers.some((row: any) => { const previous = parseCard(String(row.body)); return previous?.kind === 'choice_answer' && previous.choiceMessageId === card.choiceMessageId; })) failure('这道选择题已经回答', 409);
+    }
+    if (card?.kind === 'form_answers') {
+      if (user.role !== 'advertiser' || order.creator_id !== user.id) failure('只有品牌方可以填写 Skill 需求表单', 403);
+      const [forms]: any = await connection.query('SELECT body,sender_id FROM chat_messages WHERE id=? AND order_id=? LIMIT 1', [card.formMessageId, input.orderId]);
+      const target = forms[0] ? parseCard(String(forms[0].body)) : null;
+      if (target?.kind !== 'work_card' || target.templateId !== 'design_skill_intake' || forms[0].sender_id === user.id) failure('Skill 需求表单不存在', 404);
+      const fields = target.fields as Array<{ label: string; options?: string[]; schema?: { kind?: string; required?: boolean; options?: Array<{ value: string }> } }>;
+      if (card.answers.length !== fields.length || new Set(card.answers.map((answer) => answer.fieldIndex)).size !== card.answers.length || card.answers.some((answer) => answer.fieldIndex >= fields.length)) failure('请完整填写 Skill 表单', 400);
+      const uploadedAssetIds: string[] = [];
+      for (const answer of card.answers) {
+        const field = fields[answer.fieldIndex];
+        if (!answer.value.trim() && field.schema?.required) failure(`请填写“${field.label}”`, 400);
+        if (!answer.value.trim()) continue;
+        const kind = field.schema?.kind;
+        if ((kind === 'select' || kind === 'radio') && ![...(field.options || []), ...(field.schema?.options || []).map(option => option.value)].includes(answer.value)) failure(`“${field.label}”请选择有效选项`, 400);
+        if (kind === 'checkbox') {
+          let selected: unknown;
+          try { selected = JSON.parse(answer.value); } catch { selected = null; }
+          const allowed = new Set([...(field.options || []), ...(field.schema?.options || []).map(option => option.value)]);
+          if (!Array.isArray(selected) || selected.some(value => typeof value !== 'string' || !allowed.has(value))) failure(`“${field.label}”包含无效选项`, 400);
+        }
+        if (kind === 'image' || kind === 'file') {
+          let uploaded: unknown;
+          try { uploaded = JSON.parse(answer.value); } catch { uploaded = null; }
+          if (!Array.isArray(uploaded) || uploaded.length > 5 || uploaded.some((url: unknown) => typeof url !== 'string' || !/^\/api\/upload\/(?:assets|previews)\/(asset_[a-f0-9]{32})$/.test(url))) failure(`“${field.label}”附件无效，请重新上传`, 400);
+          uploadedAssetIds.push(...uploaded.map((url: string) => /\/(asset_[a-f0-9]{32})$/.exec(url)![1]));
+        }
+      }
+      if (uploadedAssetIds.length) {
+        const ids = [...new Set(uploadedAssetIds)];
+        const [assets]: any = await connection.query(`SELECT id FROM media_assets WHERE owner_id=? AND id IN (${ids.map(() => '?').join(',')})`, [user.id, ...ids]);
+        if (assets.length !== ids.length) failure('表单附件不存在或不属于当前账号，请重新上传', 400);
+      }
     }
     if (card?.kind === 'recall') {
       const [targets]: any = await connection.query('SELECT body, sender_id, created_at FROM chat_messages WHERE id=? AND order_id=? LIMIT 1', [card.targetMessageId, input.orderId]);

@@ -54,6 +54,22 @@ async function recordAiCall(log: AiCallLog) {
     log.referenceId, log.providerHost, log.status, log.httpStatus, log.durationMs, log.errorCode, log.errorMessage, new Date(log.createdAt)]);
 }
 
+/** Record an application-level AI operation (including failures after a successful provider HTTP response). */
+export async function recordAiInvocation(meta: AiCallMeta, input: {
+  url?: string; status: 'success' | 'error'; durationMs: number; httpStatus?: number | null; errorCode?: string; errorMessage?: unknown;
+}) {
+  const log: AiCallLog = {
+    id: randomUUID(), source: meta.source.slice(0, 48), operation: meta.operation.slice(0, 80),
+    model: String(meta.model || '').slice(0, 128), configId: meta.configId || null, profileId: meta.profileId || null,
+    referenceId: meta.referenceId || null, providerHost: input.url ? safeHost(input.url) : '', status: input.status,
+    httpStatus: input.httpStatus ?? null, durationMs: Math.max(0, Math.floor(input.durationMs)),
+    errorCode: input.errorCode ? sanitizeAiError(input.errorCode, meta.apiKey).slice(0, 80) : null,
+    errorMessage: input.status === 'error' ? sanitizeAiError(input.errorMessage || 'AI 操作失败', meta.apiKey) : null,
+    createdAt: new Date().toISOString(),
+  };
+  await recordAiCall(log).catch((error: any) => console.warn('[ai-call-log] invocation write failed:', error?.code || 'unknown'));
+}
+
 function providerError(data: any): string {
   const value = data?.error?.message ?? data?.message ?? data?.msg ?? data?.error_description;
   return typeof value === 'string' ? value : typeof data?.error === 'string' ? data.error : '';
@@ -108,6 +124,53 @@ export async function fetchAiJson(url: string, init: RequestInit, timeoutMs: num
     await write('error', error?.name === 'TimeoutError' ? 'UPSTREAM_TIMEOUT' : error?.code || 'UPSTREAM_NETWORK_ERROR', error);
     throw error;
   }
+}
+
+/** Fetch adapter for AI SDK providers. It logs a cloned response while preserving the
+ * original response stream for the provider parser. Request bodies and successful
+ * response bodies are never persisted. */
+export function createLoggedAiFetch(meta: AiCallMeta, timeoutMs = 45_000) {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    const started = Date.now();
+    const requestUrl = input instanceof Request ? input.url : String(input);
+    let httpStatus: number | null = null;
+    let recorded = false;
+    const write = async (status: 'success' | 'error', errorCode?: string, errorMessage?: unknown) => {
+      if (recorded) return;
+      recorded = true;
+      const log: AiCallLog = { id: randomUUID(), source: meta.source.slice(0, 48), operation: meta.operation.slice(0, 80),
+        model: String(meta.model || '').slice(0, 128), configId: meta.configId || null, profileId: meta.profileId || null,
+        referenceId: meta.referenceId || null, providerHost: safeHost(requestUrl), status, httpStatus,
+        durationMs: Math.max(0, Date.now() - started), errorCode: errorCode ? sanitizeAiError(errorCode, meta.apiKey).slice(0, 80) : null,
+        errorMessage: status === 'error' ? sanitizeAiError(errorMessage || '上游请求失败', meta.apiKey) : null, createdAt: new Date().toISOString() };
+      await recordAiCall(log).catch((error: any) => console.warn('[ai-call-log] write failed:', error?.code || 'unknown'));
+    };
+
+    try {
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
+      const signal = init?.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
+      const response = await fetch(input, { ...init, signal });
+      httpStatus = response.status;
+      const text = await response.clone().text();
+      const contentType = response.headers.get('content-type') || '';
+      if (response.ok && (contentType.includes('text/event-stream') || text.trimStart().startsWith('data:'))) {
+        await write('success');
+        return response;
+      }
+      let data: any = null;
+      try { data = JSON.parse(text); } catch { /* Provider will report malformed content. */ }
+      const upstreamError = aiResponseError(response.status, data);
+      if (upstreamError) {
+        if (data === null && !response.ok && text.trim()) upstreamError.message = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 2000) || upstreamError.message;
+        await write('error', upstreamError.code, upstreamError.message || text);
+      }
+      else await write('success');
+      return response;
+    } catch (error: any) {
+      await write('error', error?.name === 'TimeoutError' ? 'UPSTREAM_TIMEOUT' : error?.code || 'UPSTREAM_NETWORK_ERROR', error);
+      throw error;
+    }
+  };
 }
 
 export async function listAiCallLogs(input: { page: number; pageSize: number; status?: 'success' | 'error'; source?: string }) {

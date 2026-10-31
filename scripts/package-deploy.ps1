@@ -18,7 +18,7 @@ $stageRoot = Join-Path $tempRoot 'design-review-system'
 
 $excludedDirectories = @(
   '.git', 'node_modules', '.next', '.next-cache-stale', 'dist', 'build', 'out', 'coverage',
-  '.turbo', '.cache', 'temp', 'tmp', 'private-uploads', 'uploads', 'release'
+  '.turbo', '.cache', '.playwright-cli', 'output', 'temp', 'tmp', 'private-uploads', 'uploads', 'release'
 )
 $excludedFiles = @(
   '.env', '.env.local', '.env.development.local', '.env.test.local',

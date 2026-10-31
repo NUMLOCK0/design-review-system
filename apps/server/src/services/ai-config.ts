@@ -2,9 +2,11 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import { dbPool } from '../config/database.js';
 import { JWT_SECRET } from '../middleware/auth.middleware.js';
 
-export type AiConfigInput = { name: string; baseUrl: string; model: string; apiKey?: string };
+export type AiModelSelection = { model: string; capability: 'text' | 'vision' | 'image'; protocol: 'openai-chat' | 'openai-images' | 'native-async' };
+export type AiConfiguredModel = AiModelSelection & { id: string; name: string; enabled: boolean };
+export type AiConfigInput = { name: string; baseUrl: string; model: string; apiKey?: string; models?: AiModelSelection[] };
 type StoredConfig = { id: string; name: string; base_url: string; model: string; api_key_encrypted: string; enabled: boolean; created_at: string; updated_at: string };
-export type AiConfigView = { id: string; name: string; baseUrl: string; model: string; keyConfigured: boolean; enabled: boolean; createdAt: string; updatedAt: string };
+export type AiConfigView = { id: string; name: string; baseUrl: string; model: string; keyConfigured: boolean; enabled: boolean; createdAt: string; updatedAt: string; models: AiConfiguredModel[] };
 
 /** Resolves the OpenAI-compatible chat endpoint from a provider root, /v1 base URL, or explicit endpoint. */
 export function openAiChatCompletionsEndpoint(baseUrl: string) {
@@ -63,7 +65,7 @@ export async function ensureAiConfigSchema() {
 
 function view(row: StoredConfig): AiConfigView {
   return { id: row.id, name: row.name, baseUrl: row.base_url, model: row.model,
-    keyConfigured: canDecrypt(row.api_key_encrypted), enabled: Boolean(row.enabled), createdAt: row.created_at, updatedAt: row.updated_at };
+    keyConfigured: canDecrypt(row.api_key_encrypted), enabled: Boolean(row.enabled), createdAt: row.created_at, updatedAt: row.updated_at, models: [] };
 }
 
 function canDecrypt(value: string) {
@@ -74,30 +76,60 @@ function canDecrypt(value: string) {
 export async function listAiConfigs() {
   if (!dbPool) return [...memoryConfigs.values()].map(view);
   const [rows]: any = await dbPool.query('SELECT id,name,base_url,model,api_key_encrypted,enabled,created_at,updated_at FROM ai_model_configs ORDER BY created_at DESC');
-  return (rows as StoredConfig[]).map(view);
+  if (!rows.length) return [];
+  const [profiles]: any = await dbPool.query(`SELECT id,name,ai_config_id,capability,protocol,model_override,enabled
+    FROM image_studio_model_profiles WHERE ai_config_id IN (${rows.map(() => '?').join(',')}) ORDER BY created_at,id`, rows.map((row: StoredConfig) => row.id));
+  return (rows as StoredConfig[]).map((row) => ({ ...view(row), models: profiles.filter((profile: any) => profile.ai_config_id === row.id).map((profile: any) => ({
+    id: String(profile.id), name: String(profile.name), model: String(profile.model_override || row.model), capability: profile.capability,
+    protocol: profile.protocol, enabled: Boolean(profile.enabled),
+  })) as AiConfiguredModel[] }));
 }
 
-export async function saveAiConfig(input: AiConfigInput, id?: string) {
+export async function saveAiConfig(input: AiConfigInput, id?: string, operatorId?: string) {
   const now = new Date().toISOString();
+  if (dbPool) {
+    const connection = await dbPool.getConnection();
+    const configId = id || randomUUID();
+    try {
+      await connection.beginTransaction();
+      if (id) {
+        const [existing]: any = await connection.query('SELECT id FROM ai_model_configs WHERE id=? FOR UPDATE', [id]);
+        if (!existing.length) { await connection.rollback(); return null; }
+        await connection.query(`UPDATE ai_model_configs SET name=?,base_url=?,model=?,api_key_encrypted=COALESCE(?,api_key_encrypted),updated_at=? WHERE id=?`,
+          [input.name, input.baseUrl, input.model, input.apiKey ? encrypt(input.apiKey) : null, now, id]);
+      } else {
+        await connection.query('INSERT INTO ai_model_configs (id,name,base_url,model,api_key_encrypted,enabled,created_at,updated_at) VALUES (?,?,?,?,?,TRUE,?,?)',
+          [configId, input.name, input.baseUrl, input.model, encrypt(input.apiKey!), now, now]);
+      }
+      for (const selected of input.models || []) {
+        const [existing]: any = await connection.query(`SELECT id FROM image_studio_model_profiles
+          WHERE ai_config_id=? AND COALESCE(NULLIF(model_override,''),?)=? AND capability=? LIMIT 1`,
+          [configId, input.model, selected.model, selected.capability]);
+        if (existing.length) continue;
+        if (!operatorId) throw new Error('添加模型需要管理员身份');
+        const options = selected.capability === 'image'
+          ? { timeoutMs: 600000, pollIntervalMs: 3000, statusPath: '/media/status', sizes: ['1024x1024', 'auto'], qualityLevels: ['auto'], resultHosts: [] } : {};
+        await connection.query(`INSERT INTO image_studio_model_profiles
+          (id,name,capability,ai_config_id,protocol,model_override,options_json,enabled,created_by,created_at,updated_at)
+          VALUES (?,?,?,?,?,?,?,TRUE,?,?,?)`, [randomUUID(), selected.model.slice(0, 120), selected.capability, configId,
+          selected.protocol, selected.model, JSON.stringify(options), operatorId, new Date(now), new Date(now)]);
+      }
+      await connection.commit();
+    } catch (error) { await connection.rollback(); throw error; }
+    finally { connection.release(); }
+    return (await listAiConfigs()).find((item) => item.id === configId) || null;
+  }
+  if (input.models?.length) throw Object.assign(new Error('添加模型需要可用数据库'), { status: 503 });
   if (id) {
-    if (!dbPool) {
-      const existing = memoryConfigs.get(id);
-      if (!existing) return null;
-      memoryConfigs.set(id, { ...existing, name: input.name, base_url: input.baseUrl, model: input.model,
-        api_key_encrypted: input.apiKey ? encrypt(input.apiKey) : existing.api_key_encrypted, updated_at: now });
-    } else {
-      const [result]: any = await dbPool.query(`UPDATE ai_model_configs SET name=?,base_url=?,model=?,
-        api_key_encrypted=COALESCE(?,api_key_encrypted),updated_at=? WHERE id=?`,
-        [input.name, input.baseUrl, input.model, input.apiKey ? encrypt(input.apiKey) : null, now, id]);
-      if (!result.affectedRows) return null;
-    }
+    const existing = memoryConfigs.get(id);
+    if (!existing) return null;
+    memoryConfigs.set(id, { ...existing, name: input.name, base_url: input.baseUrl, model: input.model,
+      api_key_encrypted: input.apiKey ? encrypt(input.apiKey) : existing.api_key_encrypted, updated_at: now });
   } else {
     id = randomUUID();
     const row: StoredConfig = { id, name: input.name, base_url: input.baseUrl, model: input.model,
       api_key_encrypted: encrypt(input.apiKey!), enabled: true, created_at: now, updated_at: now };
-    if (!dbPool) memoryConfigs.set(id, row);
-    else await dbPool.query('INSERT INTO ai_model_configs (id,name,base_url,model,api_key_encrypted,enabled,created_at,updated_at) VALUES (?,?,?,?,?,TRUE,?,?)',
-      [row.id, row.name, row.base_url, row.model, row.api_key_encrypted, now, now]);
+    memoryConfigs.set(id, row);
   }
   return (await listAiConfigs()).find((item) => item.id === id) || null;
 }
@@ -123,19 +155,23 @@ export async function deleteAiConfig(id: string) {
 }
 
 /** Compatibility fallback for legacy AI endpoints that do not yet accept an explicit model selection. */
+export function defaultAiTextModel(config: Pick<AiConfigView, 'model' | 'models'>) {
+  // Preserve an untyped legacy default when an image profile is added to an existing connection.
+  if (!config.models.some((model) => model.model === config.model)) return config.model;
+  const candidates = config.models.filter((model) => model.enabled && model.capability !== 'image' && model.protocol === 'openai-chat');
+  return candidates.find((model) => model.model === config.model)?.model
+    || candidates.find((model) => model.capability === 'text')?.model || candidates[0]?.model || null;
+}
+
 export async function getDefaultEnabledAiConfig() {
-  if (!dbPool) {
-    const configured = [...memoryConfigs.values()];
-    const row = configured.filter((item) => item.enabled).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-    if (row) return { id: row.id, baseUrl: row.base_url, apiKey: decrypt(row.api_key_encrypted), model: row.model };
-    if (configured.length) return null;
-  } else {
-    const [rows]: any = await dbPool.query(`SELECT id,base_url,model,api_key_encrypted FROM ai_model_configs
-      WHERE enabled=TRUE ORDER BY created_at DESC LIMIT 1`);
-    if (rows[0]) return { id: String(rows[0].id), baseUrl: String(rows[0].base_url), apiKey: decrypt(String(rows[0].api_key_encrypted)), model: String(rows[0].model) };
-    const [configured]: any = await dbPool.query('SELECT id FROM ai_model_configs LIMIT 1');
-    if (configured.length) return null;
+  const configured = await listAiConfigs();
+  for (const config of configured.filter((item) => item.enabled).sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    const model = defaultAiTextModel(config);
+    if (!model) continue;
+    const credentials = await getEnabledAiConfigCredentials(config.id);
+    if (credentials) return { id: credentials.id, baseUrl: credentials.baseUrl, apiKey: credentials.apiKey, model };
   }
+  if (configured.length) return null;
   const baseUrl = String(process.env.AI_BASE_URL || '').trim().replace(/\/+$/, '');
   const apiKey = String(process.env.AI_API_KEY || '').trim();
   const model = String(process.env.AI_MODEL || '').trim();
@@ -170,11 +206,11 @@ export async function getEnabledAiConfigCredentials(id: string) {
 /** Resolves an enabled model profile without exposing its underlying API credentials. */
 export async function getEnabledAiModelProfileCredentials(id: string, capabilities: Array<'text' | 'vision' | 'image'>) {
   if (!dbPool || !capabilities.length) return null;
-  const [rows]: any = await dbPool.query(`SELECT p.id,p.name,p.capability,p.model_override,c.base_url,c.model,c.api_key_encrypted
+  const [rows]: any = await dbPool.query(`SELECT p.id,p.name,p.capability,p.ai_config_id,p.model_override,c.base_url,c.model,c.api_key_encrypted
     FROM image_studio_model_profiles p JOIN ai_model_configs c
       ON c.id COLLATE utf8mb4_unicode_ci=p.ai_config_id COLLATE utf8mb4_unicode_ci AND c.enabled=TRUE
     WHERE p.id=? AND p.enabled=TRUE AND p.protocol='openai-chat' AND p.capability IN (${capabilities.map(() => '?').join(',')}) LIMIT 1`, [id, ...capabilities]);
   const row = rows[0];
-  return row ? { id: String(row.id), name: String(row.name), capability: String(row.capability), baseUrl: String(row.base_url),
+  return row ? { id: String(row.id), configId: String(row.ai_config_id), name: String(row.name), capability: String(row.capability), baseUrl: String(row.base_url),
     apiKey: decrypt(String(row.api_key_encrypted)), model: String(row.model_override || row.model) } : null;
 }

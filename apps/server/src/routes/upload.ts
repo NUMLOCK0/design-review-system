@@ -32,9 +32,11 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }
 });
 
-const allowedFolders = new Set(['design-images', 'reference-samples', 'annotations', 'source-files', 'order-materials', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio', 'image-studio']);
-const imageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+const allowedFolders = new Set(['design-images', 'reference-samples', 'annotations', 'source-files', 'order-materials', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio', 'image-studio', 'canvas-workspace']);
+const imageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif']);
+const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif']);
+const videoMimeTypes = new Set(['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v']);
+const videoExtensions = new Set(['.mp4', '.webm', '.mov', '.m4v']);
 const sourceExtensions = new Set(['.zip', '.rar', '.7z', '.psd', '.ai', '.eps', '.c4d', '.blend', '.pdf']);
 const sourceMimeTypes = new Set(['application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed', 'application/octet-stream', 'application/pdf', 'image/vnd.adobe.photoshop']);
 const imageOnlyFolders = new Set(['design-images', 'reference-samples', 'annotations', 'order-reference-images', 'customer-service-qrcodes', 'designer-portfolio', 'image-studio']);
@@ -63,7 +65,11 @@ function shouldWatermark(value: string) {
 
 function isAllowedUpload(folder: string, filename: string, mimetype: string) {
   const extension = path.extname(filename).toLowerCase();
+  if (folder === 'image-studio' && extension === '.pdf' && mimetype === 'application/pdf') return true;
   if (imageOnlyFolders.has(folder)) return imageMimeTypes.has(mimetype) && imageExtensions.has(extension);
+  if (folder === 'canvas-workspace') {
+    return (imageMimeTypes.has(mimetype) && imageExtensions.has(extension)) || (videoMimeTypes.has(mimetype) && videoExtensions.has(extension));
+  }
   if (folder === 'order-materials' && imageMimeTypes.has(mimetype) && imageExtensions.has(extension)) return true;
   return sourceMimeTypes.has(mimetype) && sourceExtensions.has(extension);
 }
@@ -219,7 +225,7 @@ uploadRouter.post('/presign', authenticate, async (req, res, next) => {
     const folder = String(req.body.folder || 'design-images');
     const mimetype = String(req.body.contentType || 'application/octet-stream');
     const size = Number(req.body.size);
-    if (folder === 'image-studio' && req.user?.role !== 'customer_service') {
+    if (['image-studio', 'canvas-workspace'].includes(folder) && req.user?.role !== 'customer_service') {
       return res.status(403).json({ code: 403, success: false, message: '生图工作台素材仅对客服开放' });
     }
     if (!filename || !Number.isFinite(size) || size <= 0 || size > maxUploadSize) {
@@ -257,7 +263,7 @@ uploadRouter.post('/complete', authenticate, async (req, res, next) => {
     if (!pending || pending.ownerId !== req.user!.id) {
       return res.status(400).json({ code: 400, success: false, message: '上传任务不存在或无权确认' });
     }
-    if (pending.objectKey.startsWith('private/image-studio/') && req.user?.role !== 'customer_service') {
+    if ((pending.objectKey.startsWith('private/image-studio/') || pending.objectKey.startsWith('private/canvas-workspace/')) && req.user?.role !== 'customer_service') {
       return res.status(403).json({ code: 403, success: false, message: '生图工作台素材仅对客服开放' });
     }
     if (pending.expiresAt < Date.now()) {
@@ -320,6 +326,9 @@ uploadRouter.get('/previews/:assetId', authenticate, async (req, res, next) => {
     if (!asset || asset.kind !== 'image') {
       return res.status(404).json({ code: 404, success: false, message: '预览不存在或已失效' });
     }
+    if (asset.ossOriginalKey?.startsWith('private/canvas-workspace/') && asset.ownerId !== req.user!.id && req.user!.role !== 'admin') {
+      return res.status(403).json({ code: 403, success: false, message: '无权读取该工作台图片' });
+    }
     protectedAssets.set(asset.id, asset);
     res.setHeader('Cache-Control', 'private, no-store');
     if (asset.ossOriginalKey) {
@@ -349,6 +358,28 @@ uploadRouter.get('/videos/:assetId/playback', authenticate, async (req, res, nex
     if (!shared) return res.status(403).json({ code: 403, success: false, message: '无权播放该视频' });
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ code: 200, success: true, data: { url: asset.ossOriginalKey ? getSignedOssUrl(asset.ossOriginalKey, 300) : null } });
+  } catch (err) { next(err); }
+});
+
+// 工作台使用稳定的视频 URL；每次播放由服务端校验归属后再跳转到短时 OSS 签名地址。
+uploadRouter.get('/videos/:assetId/stream', authenticate, async (req, res, next) => {
+  try {
+    const assetId = String(req.params.assetId);
+    const asset = protectedAssets.get(assetId) || await findMediaAsset(assetId);
+    if (!asset || !asset.mimetype.startsWith('video/')) return res.status(404).json({ code: 404, success: false, message: '视频不存在或已失效' });
+    const isCanvasWorkspaceAsset = asset.ossOriginalKey?.startsWith('private/canvas-workspace/');
+    const hasAccess = isCanvasWorkspaceAsset
+      ? asset.ownerId === req.user!.id || req.user!.role === 'admin'
+      : asset.ownerId === req.user!.id || ['admin', 'customer_service'].includes(req.user!.role)
+        || await isOrderVideoSharedWith(assetId, req.user!) || await isIntakeVideoSharedWith(assetId, req.user!);
+    if (!hasAccess) return res.status(403).json({ code: 403, success: false, message: '无权播放该视频' });
+    if (asset.ossOriginalKey) return res.redirect(302, getSignedOssUrl(asset.ossOriginalKey, 300));
+    if (asset.localOriginalPath) {
+      res.setHeader('Content-Type', asset.mimetype);
+      res.setHeader('Content-Disposition', 'inline');
+      return res.sendFile(asset.localOriginalPath);
+    }
+    return res.status(404).json({ code: 404, success: false, message: '视频存储记录不完整' });
   } catch (err) { next(err); }
 });
 

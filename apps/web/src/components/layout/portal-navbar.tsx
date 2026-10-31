@@ -105,9 +105,12 @@ export function PortalNavbar() {
   const userRole = user?.role || 'designer';
   const isAdmin = userRole === 'admin';
   const isServiceChat = /^\/service\/collaboration\/[^/]+$/.test(pathname);
+  const isCanvasStudio = pathname.startsWith('/service/image-studio/workspace');
   const navItems = PORTAL_NAV_ITEMS[userRole];
   const pageLoginPath = getRoleLoginPathForPath(pathname);
   const loginHref = pathname.startsWith('/login') || pageLoginPath === '/login' ? '/login' : `${pageLoginPath}?redirect=${encodeURIComponent(pathname)}`;
+
+  if (isCanvasStudio) return null;
 
   return (
     <>
@@ -244,6 +247,13 @@ export function PortalNavbar() {
                   </DropdownMenuItem>
                 </>
               )}
+              {userRole === 'customer_service' && <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="cursor-pointer gap-2 text-xs" onClick={() => router.push('/service/skills')}>
+                  <WandSparkles className="h-3.5 w-3.5 text-indigo-500" />
+                  <span>设计需求 Skills</span>
+                </DropdownMenuItem>
+              </>}
               <DropdownMenuItem className="text-xs gap-2 cursor-pointer" onClick={() => router.push(['admin', 'customer_service'].includes(userRole) ? '/service/evaluations' : '/evaluations')}>
                 <CheckSquare className="h-3.5 w-3.5 role-primary-text" />
                 <span>{['admin', 'customer_service'].includes(userRole) ? '评价管理' : '我的评价'}</span>
@@ -276,7 +286,7 @@ export function PortalNavbar() {
         </div>
       </div>
     </header>
-    {navItems.length > 0 && !isServiceChat && <nav aria-label="手机端主导航" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur-md md:hidden" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 8px)' }}>
+    {navItems.length > 0 && !isServiceChat && !isCanvasStudio && <nav aria-label="手机端主导航" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur-md md:hidden" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 8px)' }}>
       <div className="mx-auto grid max-w-xl" style={{ gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))` }}>
         {navItems.map((item) => {
           const Icon = item.icon;

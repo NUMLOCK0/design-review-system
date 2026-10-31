@@ -2,6 +2,74 @@ import type { Pool } from 'mysql2/promise';
 
 export async function ensureImageStudioSchema(pool: Pool) {
   const definitions = [
+    `CREATE TABLE IF NOT EXISTS image_studio_orchestration_runs (
+      id VARCHAR(64) PRIMARY KEY, project_id VARCHAR(64) NOT NULL, owner_id VARCHAR(64) NOT NULL,
+      idempotency_key VARCHAR(128) NOT NULL, request_hash CHAR(64) NOT NULL, status VARCHAR(24) NOT NULL,
+      plan_version INT NOT NULL, plan_snapshot_json JSON NOT NULL, created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
+      UNIQUE KEY uq_isor_owner_key (owner_id,idempotency_key), KEY idx_isor_project (project_id,owner_id,created_at), KEY idx_isor_dispatch (status,updated_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_orchestration_tasks (
+      id VARCHAR(64) PRIMARY KEY, run_id VARCHAR(64) NOT NULL, project_id VARCHAR(64) NOT NULL, owner_id VARCHAR(64) NOT NULL,
+      task_key VARCHAR(64) NOT NULL, kind VARCHAR(32) NOT NULL, status VARCHAR(24) NOT NULL,
+      approval_required BOOLEAN NOT NULL DEFAULT FALSE, approved BOOLEAN NOT NULL DEFAULT FALSE,
+      depends_on_json JSON NOT NULL, input_snapshot_json JSON NOT NULL, job_id VARCHAR(64) NULL,
+      error_code VARCHAR(64) NULL, error_message VARCHAR(768) NULL, created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
+      UNIQUE KEY uq_isot_run_key (run_id,task_key), KEY idx_isot_run_status (run_id,status), KEY idx_isot_job (job_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_orchestration_events (
+      event_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, run_id VARCHAR(64) NOT NULL,
+      project_id VARCHAR(64) NOT NULL, owner_id VARCHAR(64) NOT NULL, task_id VARCHAR(64) NULL,
+      event_type VARCHAR(48) NOT NULL, payload_json JSON NOT NULL, created_at DATETIME(3) NOT NULL,
+      KEY idx_isoe_run_cursor (run_id,event_id), KEY idx_isoe_owner_cursor (owner_id,event_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_agent_sessions (
+      project_id VARCHAR(64) PRIMARY KEY, owner_id VARCHAR(64) NOT NULL,
+      revision INT NOT NULL DEFAULT 0, last_seq BIGINT NOT NULL DEFAULT 0,
+      memory_json JSON NOT NULL, summary_json JSON NOT NULL,
+      active_run_id VARCHAR(64) NULL, lease_expires_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
+      KEY idx_agent_session_owner (owner_id,updated_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_agent_messages (
+      id VARCHAR(64) PRIMARY KEY, project_id VARCHAR(64) NOT NULL, owner_id VARCHAR(64) NOT NULL,
+      seq BIGINT NOT NULL, role VARCHAR(16) NOT NULL, content MEDIUMTEXT NOT NULL,
+      client_message_id VARCHAR(64) NULL, run_id VARCHAR(64) NULL, metadata_json JSON NOT NULL,
+      created_at DATETIME(3) NOT NULL,
+      UNIQUE KEY uq_agent_message_seq (project_id,seq),
+      UNIQUE KEY uq_agent_message_client (project_id,client_message_id),
+      KEY idx_agent_message_history (project_id,created_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_agent_runs (
+      id VARCHAR(64) PRIMARY KEY, project_id VARCHAR(64) NOT NULL, owner_id VARCHAR(64) NOT NULL,
+      user_message_id VARCHAR(64) NOT NULL, status VARCHAR(16) NOT NULL,
+      input_json JSON NOT NULL, output_json JSON NULL, error_message VARCHAR(768) NULL,
+      created_at DATETIME(3) NOT NULL, completed_at DATETIME(3) NULL,
+      KEY idx_agent_run_project (project_id,created_at), KEY idx_agent_run_message (user_message_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_agent_plan_revisions (
+      id VARCHAR(64) PRIMARY KEY, project_id VARCHAR(64) NOT NULL, owner_id VARCHAR(64) NOT NULL,
+      plan_version INT NOT NULL, plan_json JSON NOT NULL, changes_json JSON NOT NULL,
+      source_message_id VARCHAR(64) NULL, created_at DATETIME(3) NOT NULL,
+      UNIQUE KEY uq_agent_plan_version (project_id,plan_version)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_agent_memory_events (
+      id VARCHAR(64) PRIMARY KEY, project_id VARCHAR(64) NOT NULL, field_key VARCHAR(96) NOT NULL,
+      before_json JSON NULL, after_json JSON NOT NULL, source_message_id VARCHAR(64) NOT NULL,
+      revision INT NOT NULL, created_at DATETIME(3) NOT NULL,
+      KEY idx_agent_memory_field (project_id,field_key,revision)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_canvas_projects (
+      id VARCHAR(64) PRIMARY KEY, owner_id VARCHAR(64) NOT NULL, title VARCHAR(160) NOT NULL,
+      project_json JSON NOT NULL, version INT NOT NULL DEFAULT 1,
+      created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL, deleted_at DATETIME(3) NULL,
+      KEY idx_iscp_owner_updated (owner_id, deleted_at, updated_at)
+    )`,
+    `CREATE TABLE IF NOT EXISTS image_studio_canvas_assets (
+      id VARCHAR(64) PRIMARY KEY, owner_id VARCHAR(64) NOT NULL, media_asset_id VARCHAR(64) NULL,
+      kind VARCHAR(16) NOT NULL, asset_json JSON NOT NULL, version INT NOT NULL DEFAULT 1,
+      created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL, deleted_at DATETIME(3) NULL,
+      KEY idx_isca_owner_updated (owner_id, deleted_at, updated_at), KEY idx_isca_media_asset (media_asset_id)
+    )`,
     `CREATE TABLE IF NOT EXISTS image_studio_projects (
       id VARCHAR(64) PRIMARY KEY, owner_id VARCHAR(64) NOT NULL, organization_id VARCHAR(64),
       name VARCHAR(160) NOT NULL, platform VARCHAR(48) NULL, status VARCHAR(24) NOT NULL DEFAULT 'active',
@@ -151,6 +219,8 @@ export async function ensureImageStudioSchema(pool: Pool) {
     const [lockRows]: any = await connection.query('SELECT GET_LOCK(?, 30) AS acquired', [migrationLock]);
     hasMigrationLock = Number(lockRows[0]?.acquired) === 1;
     if (!hasMigrationLock) throw new Error('Could not acquire Image Studio schema migration lock');
+    const [orchestrationIndexes]: any = await connection.query('SHOW INDEX FROM image_studio_orchestration_runs');
+    if (!orchestrationIndexes.some((row: any) => row.Key_name === 'idx_isor_dispatch')) await connection.query('ALTER TABLE image_studio_orchestration_runs ADD KEY idx_isor_dispatch (status,updated_at)');
 
     const [intakeColumns]: any = await connection.query("SHOW COLUMNS FROM image_studio_chat_intakes LIKE 'source_type'");
     if (!intakeColumns.length) await connection.query(`ALTER TABLE image_studio_chat_intakes

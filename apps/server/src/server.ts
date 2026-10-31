@@ -42,6 +42,9 @@ import { ensureAiCallLogSchema } from './services/ai-call-log.js';
 import { imageStudioRouter } from './routes/image-studio.js';
 import { ensureImageStudioSchema } from './config/image-studio-schema.js';
 import { startImageStudioRealtimeBridge } from './services/image-studio-realtime.js';
+import { designSkillsRouter } from './routes/design-skills.js';
+import { ensureDesignSkillSchema } from './config/design-skill-schema.js';
+import { ensureDefaultDesignSkills } from './services/design-skills.js';
 
 dotenv.config();
 
@@ -117,7 +120,7 @@ app.use('/api/payments', rateLimit(60_000, 30));
 // 生产环境以 MySQL 为准，避免 PM2 进程继续使用启动时的旧内存快照。
 app.use('/api', async (_req, _res, next) => {
   // 登录、验证码和健康检查不依赖业务内存快照，跳过全量 MySQL 刷新，避免登录被数据库抖动阻断。
-  if (_req.path === '/health' || _req.path.startsWith('/auth') || _req.path.startsWith('/chat') || _req.path.startsWith('/collaboration') || _req.path.startsWith('/intake-sessions') || _req.path.startsWith('/order-drafts') || _req.path.startsWith('/image-studio')) return next();
+  if (_req.path === '/health' || _req.path.startsWith('/auth') || _req.path.startsWith('/chat') || _req.path.startsWith('/collaboration') || _req.path.startsWith('/intake-sessions') || _req.path.startsWith('/design-skills') || _req.path.startsWith('/order-drafts') || _req.path.startsWith('/image-studio')) return next();
   // 多个页面请求同时进入时共用一次刷新，避免并发查询耗尽连接并触发 ECONNRESET。
   if (Date.now() - lastRefreshAt < 1000) return next();
   try {
@@ -154,6 +157,7 @@ app.use('/api/design-orders', designOrdersRouter);
 app.use('/api/system-config', systemConfigRouter);
 app.use('/api/admin/ai-configs', aiConfigRouter);
 app.use('/api/admin/ai-call-logs', aiCallLogsRouter);
+app.use('/api/design-skills', designSkillsRouter);
 app.use('/api/image-studio', imageStudioRouter);
 app.use('/api/form-templates', formTemplatesRouter);
 app.use('/api/users', usersRouter);
@@ -190,6 +194,7 @@ async function startServer() {
   await initializeFormTemplates();
   if (dbPool) {
     await ensureImageStudioSchema(dbPool);
+    await ensureDesignSkillSchema(dbPool);
     await ensureChatSchema(dbPool);
     await ensureIntakeSchema(dbPool);
     await ensureOrderDraftSchema(dbPool);
@@ -198,6 +203,7 @@ async function startServer() {
     if (process.env.DB_SCHEMA_PREPARED !== '1') await ensureOrderEvaluationSchema(dbPool);
     startOrderEvaluationWorker();
   }
+  await ensureDefaultDesignSkills();
   await ensureOssCors();
   const httpServer = createServer(app);
   attachChatSocket(httpServer, isAllowedOrigin);

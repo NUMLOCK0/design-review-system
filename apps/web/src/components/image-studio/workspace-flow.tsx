@@ -9,6 +9,7 @@ import { fetchWithAuth } from '@/lib/auth';
 import { Select as UiSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { confidenceLabels, createPlatformSpecs, imageStudioCategories, imageStudioPlatforms, type ImageStudioCategory, type ImageStudioPlatform, type PlatformOutputSpec, type RuleConfidence } from '@/lib/image-studio-platform-specs';
 import { ImageStudioTaskLogWindow, taskJobTitle, taskPhaseLabel, type TaskLogEntry, type TrackedTask } from '@/components/image-studio/task-log-window';
+import { DesignPlanAgent } from '@/components/image-studio/design-plan-agent';
 
 type Stage = 'materials' | 'product' | 'directions' | 'style' | 'specs' | 'variants' | 'storyboard' | 'prompts' | 'batch' | 'results';
 type Project = { id: string; name: string; platform: string | null; workflow: Record<string, any>; version: number };
@@ -92,6 +93,7 @@ export function ImageStudioWorkflow({ projectId }: { projectId: string }) {
   const [planDrafts, setPlanDrafts] = useState<Record<string, any>>({});
   const [collaborationConversations, setCollaborationConversations] = useState<CollaborationConversation[]>([]);
   const [selectedCollaborationId, setSelectedCollaborationId] = useState('');
+  const [designAgentConversationId, setDesignAgentConversationId] = useState('');
   const [chatSourceMode, setChatSourceMode] = useState<'screenshots' | 'collaboration'>('screenshots');
   const [collaborationLoading, setCollaborationLoading] = useState(false);
   const [selectedChatAssetIds, setSelectedChatAssetIds] = useState<string[]>([]);
@@ -140,6 +142,9 @@ export function ImageStudioWorkflow({ projectId }: { projectId: string }) {
     try { window.localStorage.setItem(activityStorageKey, JSON.stringify(activityLogs.slice(0, 80))); }
     catch { /* task logging remains available for this page session */ }
   }, [activityStorageKey, activityLogs]);
+  useEffect(() => {
+    if (selectedCollaborationId) setDesignAgentConversationId(selectedCollaborationId);
+  }, [selectedCollaborationId]);
 
   const refreshAssets = useCallback(async () => {
     const value = await api<Asset[]>('/image-studio/projects/' + projectId + '/assets');
@@ -178,7 +183,7 @@ export function ImageStudioWorkflow({ projectId }: { projectId: string }) {
     try {
       const value = await api<CollaborationConversation[]>('/image-studio/projects/' + projectId + '/collaboration-conversations');
       setCollaborationConversations(value);
-      setSelectedCollaborationId((current) => current && value.some((item) => `${item.conversationType}:${item.id}` === current) ? current : value[0] ? `${value[0].conversationType}:${value[0].id}` : '');
+      setSelectedCollaborationId((current) => current && value.some((item) => `${item.conversationType}:${item.id}` === current) ? current : '');
       return value;
     } finally { setCollaborationLoading(false); }
   }, [projectId]);
@@ -545,8 +550,8 @@ export function ImageStudioWorkflow({ projectId }: { projectId: string }) {
     finally { setBusy(false); }
   };
 
-  const generateImagePlan = async () => {
-    const [conversationType, conversationId] = selectedCollaborationId.split(':', 2);
+  const generateImagePlan = async (conversationSourceId = selectedCollaborationId) => {
+    const [conversationType, conversationId] = conversationSourceId.split(':', 2);
     if (!conversationId || !['order', 'invite'].includes(conversationType)) { toast.error('请先选择一段订单或邀请会话'); return; }
     if (!profiles.some((profile) => profile.id === visionProfileId && profile.capability === 'vision') || !profiles.some((profile) => profile.capability === 'text')) {
       toast.error('图片方案需要启用图生文和文生文模型，请联系管理员检查模型配置'); return;
@@ -845,6 +850,90 @@ export function ImageStudioWorkflow({ projectId }: { projectId: string }) {
     if (nextShots.length === shots.length) return;
     patchWorkflow({ storyboard: { ...workflow.storyboard, shots: nextShots } });
   };
+  const imagePlanOutputKey = (image: any) => {
+    const description = `${image?.type || ''} ${image?.title || ''} ${image?.output || ''}`.toLocaleLowerCase();
+    const explicit = outputSpecs.find((output) => description.includes(output.key.toLocaleLowerCase()) || description.includes(output.label.toLocaleLowerCase()));
+    if (explicit) return explicit.key;
+    const inferredKey = /白底|纯白背景|white[\s_-]*background/i.test(description) ? 'white_background'
+      : /sku|规格图|款式图|颜色图|型号图/i.test(description) ? 'sku'
+        : /长主图|长图|3\s*[:：/]\s*4|竖版主图/i.test(description) ? 'long_main'
+          : /主图|轮播|商品封面|首图/i.test(description) ? 'main'
+            : /详情|场景|卖点|细节|材质|尺寸|功能/i.test(description) ? 'detail' : preferredOutputKey;
+    return outputSpecs.some((output) => output.key === inferredKey) ? inferredKey : preferredOutputKey;
+  };
+  const importImagePlanToBatch = async (run: PlanRun, plan: any) => {
+    const version = run.currentVersion?.version;
+    const planImages = Array.isArray(plan?.images) ? plan.images : [];
+    if (!version || run.currentVersion?.status !== 'approved') { toast.error('请先审核并确认图片方案'); return; }
+    if (!planImages.length) { toast.error('当前方案没有可导入的图片项'); return; }
+    const shotsFromThisPlan = shots.filter((shot) => shot.sourceImagePlanRunId === run.id);
+    if (shotsFromThisPlan.some((shot) => Number(shot.sourceImagePlanVersion) === version)) {
+      try { const updated = await saveWorkflow(workflow, 'storyboard'); if (updated) setStage('storyboard'); }
+      catch { /* saveWorkflow presents the server error */ }
+      toast.info('这版方案已导入套图规划，已切换到逐张核对');
+      return;
+    }
+    if (shotsFromThisPlan.length && !window.confirm('重新导入将替换这份方案之前生成的套图页面，并丢弃这些页面上的手工修改。是否继续？')) return;
+    const preservedShots = shots.filter((shot) => shot.sourceImagePlanRunId !== run.id);
+    if (planImages.length > 20 || preservedShots.length + planImages.length > 20) {
+      toast.error('当前工作流最多支持 20 张套图，请先精简图片方案或移除其他页面');
+      return;
+    }
+    const imageItems = planImages.map((image: any, index: number) => {
+      const outputSpecKey = imagePlanOutputKey(image);
+      const variant = variants.find((item) => String(item.name || '').trim().toLocaleLowerCase() === String(image.sku || '').trim().toLocaleLowerCase());
+      const planReferences = Array.isArray(image.referenceImages) ? image.referenceImages.map((reference: any) => String(reference.assetId || '')) : [];
+      const referenceAssetIds = [...new Set(planReferences.filter((id: string) => assets.some((asset) => asset.id === id && asset.role === 'product')))];
+      const variantAssetIds = asList(variant?.assetIds).filter((id) => assets.some((asset) => asset.id === id && asset.role === 'product'));
+      const styleGuide = workflow.styleGuide || {};
+      const selectedDirection = workflow.designAgent?.plan?.directions?.find((item: any) => item.id === workflow.designAgent?.plan?.selectedDirectionId);
+      const directionNotes = [
+        styleGuide.visualStyle,
+        styleGuide.palette,
+        styleGuide.typography,
+        styleGuide.mood,
+        selectedDirection?.concept,
+        selectedDirection?.imagery,
+      ].filter((value) => typeof value === 'string' && value.trim());
+      const prompt = [String(image.prompt || '').trim(), directionNotes.length ? `整套统一视觉方向：${directionNotes.join('；')}` : '']
+        .filter(Boolean).join('\n\n');
+      const type = String(image.type || '商品图');
+      const title = String(image.title || `${type} ${index + 1}`);
+      return {
+        id: uid(), order: preservedShots.length + index + 1, title,
+        purpose: String(image.output || image.type || title), kind: type, outputSpecKey,
+        copy: '', visualDescription: prompt, productVariant: String(image.sku || variant?.name || ''),
+        variantId: variant?.id || '',
+        referenceAssetIds: (referenceAssetIds.length ? referenceAssetIds : variantAssetIds).slice(0, 12),
+        approved: false, prompt, negativePrompt: String(image.negativePrompt || ''),
+        sourceImagePlanRunId: run.id, sourceImagePlanVersion: version,
+        sourceRequirementIds: asList(image.requirementIds),
+      };
+    });
+    const usedOutputKeys = new Set(imageItems.map((shot: any) => shot.outputSpecKey));
+    const nextSpecs = { ...workflow.specs, outputs: outputSpecs.map((output) => usedOutputKeys.has(output.key) ? { ...output, enabled: true } : output) };
+    const nextShots = [...preservedShots, ...imageItems];
+    const nextWorkflow = {
+      ...workflow,
+      specs: nextSpecs,
+      storyboard: { ...(workflow.storyboard || {}), shots: nextShots, importedImagePlan: { runId: run.id, version, importedAt: new Date().toISOString() } },
+    };
+    setWorkflow(nextWorkflow);
+    dataRef.current = { ...dataRef.current, workflow: nextWorkflow };
+    try {
+      const updated = await saveWorkflow(nextWorkflow, 'storyboard');
+      if (updated) {
+        setStage('storyboard');
+        dataRef.current = { ...dataRef.current, project: updated, workflow: nextWorkflow, stage: 'storyboard' };
+        appendActivityLog('导入电商套图方案', `已导入 ${imageItems.length} 张图片，等待逐张核对`, 'success');
+        toast.success(`已导入 ${imageItems.length} 张电商套图，请逐张确认后再进入批量生图`);
+        if (plan.openQuestions?.length) toast.warning(`方案仍有 ${plan.openQuestions.length} 项待确认信息，请检查后再生成`);
+      }
+    } catch {
+      setWorkflow(workflow);
+      dataRef.current = { ...dataRef.current, workflow };
+    }
+  };
 
   return <main className="min-h-screen bg-[#f6f7fb] pb-28 text-slate-900 sm:pb-8"><div className="mx-auto max-w-7xl px-3 py-4 sm:px-6 sm:py-7 lg:px-8">
     <header className="flex items-center justify-between gap-3 border-b border-slate-200 pb-4"><div className="flex min-w-0 items-center gap-3"><Link href="/service/image-studio" aria-label="返回项目列表" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border bg-white text-slate-600"><ArrowLeft className="h-4 w-4" /></Link><div className="min-w-0"><p className="text-xs text-slate-500">{currentStep.phase} · 第 {currentIndex + 1} 步</p><h1 className="truncate text-xl font-bold">{project.name}</h1></div></div><div className="flex items-center gap-2"><span className={'hidden rounded-full px-2.5 py-1 text-[11px] sm:inline-flex ' + (connected ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700')}>{connected ? '实时连接' : '正在连接'}</span><span className="hidden text-xs text-slate-500 sm:block">{completedCount}/10 步</span></div></header>
@@ -854,6 +943,19 @@ export function ImageStudioWorkflow({ projectId }: { projectId: string }) {
         <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-[11px] font-semibold text-indigo-600">{currentStep.phase}</p><h2 className="mt-1 text-lg font-bold">{currentStep.title}</h2><p className="mt-1 text-xs text-slate-500">{currentStep.note}</p></div><div className="flex flex-wrap items-center gap-2"><label className="flex items-center gap-1.5 text-[10px] text-slate-500">文案与策划<UiSelect value={textProfileId || undefined} onValueChange={setTextProfileId}><SelectTrigger aria-label="文案与策划" className="h-9 min-h-9 w-36 rounded-xl px-2 text-xs sm:w-40"><SelectValue placeholder="选择服务" /></SelectTrigger><SelectContent>{profiles.filter((item) => item.capability === 'text' || item.capability === 'vision').map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></UiSelect></label><label className="flex items-center gap-1.5 text-[10px] text-slate-500">图片识别<UiSelect value={visionProfileId || undefined} onValueChange={setVisionProfileId}><SelectTrigger aria-label="图片识别" className="h-9 min-h-9 w-36 rounded-xl px-2 text-xs sm:w-40"><SelectValue placeholder="选择服务" /></SelectTrigger><SelectContent>{(profiles.some((item) => item.capability === 'vision') ? profiles.filter((item) => item.capability === 'vision') : profiles.filter((item) => item.capability === 'text')).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></UiSelect></label><button type="button" disabled={saving} onClick={() => void saveWorkflow()} className="h-9 rounded-xl border px-3 text-xs">{saving ? '保存中…' : '保存进度'}</button></div></div>
 
         {stage === 'materials' && <div className="space-y-5 pt-4">
+          {project && <DesignPlanAgent key={project.id} project={project} savedPlan={workflow.designAgent || null}
+            conversations={collaborationConversations} sourceConversationId={designAgentConversationId} onSourceConversationChange={(id) => { setDesignAgentConversationId(id); setSelectedCollaborationId(id); }} onPlanApproved={generateImagePlan} onProjectSaved={(updatedProject) => {
+            const nextWorkflow: Record<string, any> = { ...dataRef.current.workflow, designAgent: updatedProject.workflow.designAgent };
+            if (updatedProject.workflow.designAgent?.status === 'approved') {
+              nextWorkflow.styleGuide = updatedProject.workflow.styleGuide;
+              nextWorkflow.brandPositioning = updatedProject.workflow.brandPositioning;
+              nextWorkflow.targetAudience = updatedProject.workflow.targetAudience;
+            }
+            const nextProject = { ...updatedProject, workflow: nextWorkflow };
+            setProject(nextProject);
+            setWorkflow(nextWorkflow);
+            dataRef.current = { ...dataRef.current, project: nextProject, workflow: nextWorkflow };
+          }} />}
           <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-4 sm:p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div><h3 className="text-sm font-bold text-slate-900">从沟通记录整理需求</h3><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">上传微信聊天截图，或选择订单沟通记录、邀请会话。整理结果会汇总客户要求、已确认事项和待补充信息，供后续商品分析与页面策划使用。</p></div>
@@ -867,7 +969,39 @@ export function ImageStudioWorkflow({ projectId }: { projectId: string }) {
             </> : <p className="mt-4 rounded-xl border border-dashed border-violet-200 bg-white/70 p-4 text-center text-xs text-slate-500">还没有聊天截图。可以先上传对话截图，也可以先添加商品图片和参考图。</p>)}
             {chatSourceMode === 'collaboration' && <div className="mt-4 rounded-xl border border-violet-100 bg-white p-3 sm:p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><label className="min-w-0 flex-1 text-xs font-semibold text-slate-700">订单或邀请会话<UiSelect value={selectedCollaborationId || undefined} onValueChange={setSelectedCollaborationId}><SelectTrigger className="mt-1.5 h-11 min-h-11 w-full"><SelectValue placeholder={collaborationLoading ? '正在加载订单…' : '选择要整理的会话'} /></SelectTrigger><SelectContent>{collaborationConversations.map((item) => <SelectItem key={`${item.conversationType}:${item.id}`} value={`${item.conversationType}:${item.id}`}>{item.conversationType === 'invite' ? '邀请会话 · ' : item.orderNo ? `${item.orderNo} · ` : ''}{item.title} · {item.counterpartName || (item.conversationType === 'invite' ? '客户会话' : '订单协作')}</SelectItem>)}</SelectContent></UiSelect></label><div className="flex gap-2"><button type="button" disabled={isBusy || collaborationLoading || !selectedCollaborationId || !profiles.some((profile) => profile.id === visionProfileId && profile.capability === 'vision')} onClick={() => void recognizeCollaborationConversation()} className="h-11 shrink-0 rounded-xl border border-violet-200 bg-white px-3 text-xs font-semibold text-violet-800 disabled:opacity-50"><WandSparkles className="mr-1.5 inline h-4 w-4" />整理需求</button><button type="button" disabled={isBusy || collaborationLoading || !selectedCollaborationId || !profiles.some((profile) => profile.capability === 'text') || !profiles.some((profile) => profile.id === visionProfileId && profile.capability === 'vision')} onClick={() => void generateImagePlan()} className="h-11 shrink-0 rounded-xl bg-violet-700 px-3 text-xs font-semibold text-white disabled:opacity-50"><WandSparkles className="mr-1.5 inline h-4 w-4" />生成图片方案</button></div></div>{collaborationLoading ? <p className="mt-3 text-xs text-slate-500">正在查找订单与邀请会话…</p> : !collaborationConversations.length ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">还没有可选择的订单或邀请会话。请先在客服协作消息中接待客户，或上传聊天截图。</p> : <p className="mt-3 text-[11px] leading-5 text-slate-500">方案任务会依次识别会话图片、整理需求、生成逐图提示词并检查引用；完成后可在本页审核并导出。</p>}</div>}
             {chatIntakes.length > 0 && <div className="mt-4 space-y-3">{chatIntakes.map((intake) => <ChatIntakeCard key={intake.id} intake={intake} draft={chatBriefDrafts[intake.id] || intake.brief} assets={assets} busy={isBusy} onChange={(brief) => setChatBriefDrafts((current) => ({ ...current, [intake.id]: brief }))} onApprove={() => void approveChatIntake(intake)} onRetry={() => intake.sourceType !== 'screenshots' ? void retryChatIntake(intake.id) : (setSelectedChatAssetIds(intake.sourceAssetIds), void recognizeChatScreenshots(intake.sourceAssetIds))} />)}</div>}
-            {planRuns.length > 0 && <div className="mt-5 space-y-3">{planRuns.map((run) => { const plan = planDrafts[run.id] || run.currentVersion?.plan; return <article key={run.id} className="rounded-2xl border border-indigo-100 bg-white p-4 sm:p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold">图片方案 · {run.sourceType === 'screenshots' ? '聊天截图' : run.sourceType === 'invite' ? '邀请会话' : '订单会话'}</h3><p className="mt-1 text-xs text-slate-500">{run.currentVersion ? `版本 ${run.currentVersion.version} · ${run.currentVersion.status === 'approved' ? '已确认' : '待审核'}` : run.runStatus === 'failed' ? run.error?.message || '任务失败' : '正在分析图片与整理需求'} · {new Date(run.createdAt).toLocaleString()}</p></div><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] text-indigo-700">{run.runStatus === 'processing' || run.runStatus === 'queued' ? '后台处理中' : run.runStatus === 'failed' ? '处理失败' : run.runStatus === 'approved' ? '已确认' : '待审核'}</span></div>{plan && <><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-700">{plan.summary || '需求摘要待补充'}{plan.product ? ` · 商品：${plan.product}` : ''}</p><div className="mt-3"><h4 className="text-xs font-semibold">需求依据</h4><div className="mt-2 flex flex-wrap gap-1.5">{(plan.requirements || []).map((item: any) => <span key={item.id} className={'rounded-lg px-2 py-1 text-[10px] ' + (item.status === 'confirmed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800')}>{item.status === 'confirmed' ? '已确认' : item.status === 'to_confirm' ? '待确认' : item.status === 'suggestion' ? '建议' : '提及'} · {item.text}</span>)}</div></div><div className="mt-4 space-y-3">{(plan.images || []).map((image: any, index: number) => <div key={image.id || index} className="rounded-xl border border-slate-200 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-xs font-semibold">{index + 1}. {image.title || '图片项'} <span className="font-normal text-slate-500">{image.type ? `· ${image.type}` : ''}</span></h4>{image.referenceImages?.length > 0 && <span className="text-[10px] text-indigo-700">引用 {image.referenceImages.length} 张聊天图片</span>}</div><textarea aria-label={`${image.title || '图片项'}提示词`} value={image.prompt || ''} disabled={run.currentVersion?.status === 'approved'} onChange={(event) => setPlanDrafts((current) => { const next = structuredClone(current[run.id] || run.currentVersion!.plan); next.images[index].prompt = event.target.value; return { ...current, [run.id]: next }; })} rows={4} className="mt-2 w-full rounded-lg border border-slate-200 p-2.5 text-xs leading-5 outline-none focus:border-indigo-400 disabled:bg-slate-50" placeholder="逐图生成提示词" />{image.referenceImages?.length > 0 && <div className="mt-2 flex gap-2 overflow-x-auto">{image.referenceImages.map((ref: any) => <img key={ref.assetId} src={`/api/image-studio/assets/${ref.assetId}/preview`} alt="参考图片" className="h-14 w-14 rounded-lg border object-cover" />)}</div>}</div>)}</div>{plan.openQuestions?.length > 0 && <div className="mt-3 rounded-xl bg-amber-50 p-3 text-xs text-amber-900"><strong>待向客户确认：</strong> {plan.openQuestions.join('；')}</div>}<div className="mt-4 flex flex-wrap gap-2">{run.currentVersion?.status !== 'approved' ? <><button type="button" disabled={isBusy} onClick={() => void saveImagePlan(run, false)} className="h-10 rounded-xl border px-3 text-xs font-semibold">保存修改</button><button type="button" disabled={isBusy} onClick={() => void saveImagePlan(run, true)} className="h-10 rounded-xl bg-indigo-700 px-3 text-xs font-semibold text-white">审核并确认</button></> : <><button type="button" onClick={() => void exportImagePlan(run, 'json')} className="h-10 rounded-xl border px-3 text-xs">导出 JSON</button><button type="button" onClick={() => void exportImagePlan(run, 'md')} className="h-10 rounded-xl border px-3 text-xs">导出 Markdown</button></>}</div></>}</article>; })}</div>}
+            {planRuns.length > 0 && <div className="mt-5 space-y-3">
+              {planRuns.map((run) => {
+                const plan = planDrafts[run.id] || run.currentVersion?.plan;
+                const importedCount = run.currentVersion?.status === 'approved'
+                  ? shots.filter((shot) => shot.sourceImagePlanRunId === run.id && Number(shot.sourceImagePlanVersion) === run.currentVersion?.version).length
+                  : 0;
+                return <article key={run.id} className="rounded-2xl border border-indigo-100 bg-white p-4 sm:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">图片方案 · {run.sourceType === 'screenshots' ? '聊天截图' : run.sourceType === 'invite' ? '邀请会话' : '订单会话'}</h3>
+                      <p className="mt-1 text-xs text-slate-500">{run.currentVersion ? `版本 ${run.currentVersion.version} · ${run.currentVersion.status === 'approved' ? '已确认' : '待审核'}` : run.runStatus === 'failed' ? run.error?.message || '任务失败' : '正在分析图片与整理需求'} · {new Date(run.createdAt).toLocaleString()}</p>
+                    </div>
+                    <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] text-indigo-700">{run.runStatus === 'processing' || run.runStatus === 'queued' ? '后台处理中' : run.runStatus === 'failed' ? '处理失败' : run.runStatus === 'approved' ? '已确认' : '待审核'}</span>
+                  </div>
+                  {plan && <>
+                    <p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-700">{plan.summary || '需求摘要待补充'}{plan.product ? ` · 商品：${plan.product}` : ''}</p>
+                    <div className="mt-3"><h4 className="text-xs font-semibold">需求依据</h4><div className="mt-2 flex flex-wrap gap-1.5">{(plan.requirements || []).map((item: any) => <span key={item.id} className={'rounded-lg px-2 py-1 text-[10px] ' + (item.status === 'confirmed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800')}>{item.status === 'confirmed' ? '已确认' : item.status === 'to_confirm' ? '待确认' : item.status === 'suggestion' ? '建议' : '提及'} · {item.text}</span>)}</div></div>
+                    <div className="mt-4 space-y-3">{(plan.images || []).map((image: any, index: number) => <div key={image.id || index} className="rounded-xl border border-slate-200 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-xs font-semibold">{index + 1}. {image.title || '图片项'} <span className="font-normal text-slate-500">{image.type ? `· ${image.type}` : ''}</span></h4>{image.referenceImages?.length > 0 && <span className="text-[10px] text-indigo-700">引用 {image.referenceImages.length} 张聊天图片</span>}</div>
+                      <textarea aria-label={`${image.title || '图片项'}提示词`} value={image.prompt || ''} disabled={run.currentVersion?.status === 'approved'} onChange={(event) => setPlanDrafts((current) => { const next = structuredClone(current[run.id] || run.currentVersion!.plan); next.images[index].prompt = event.target.value; return { ...current, [run.id]: next }; })} rows={4} className="mt-2 w-full rounded-lg border border-slate-200 p-2.5 text-xs leading-5 outline-none focus:border-indigo-400 disabled:bg-slate-50" placeholder="逐图生成提示词" />
+                      {image.referenceImages?.length > 0 && <div className="mt-2 flex gap-2 overflow-x-auto">{image.referenceImages.map((ref: any) => <img key={ref.assetId} src={`/api/image-studio/assets/${ref.assetId}/preview`} alt="参考图片" className="h-14 w-14 rounded-lg border object-cover" />)}</div>}
+                    </div>)}</div>
+                    {plan.openQuestions?.length > 0 && <div className="mt-3 rounded-xl bg-amber-50 p-3 text-xs text-amber-900"><strong>待向客户确认：</strong> {plan.openQuestions.join('；')}</div>}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {run.currentVersion?.status !== 'approved' ? <><button type="button" disabled={isBusy} onClick={() => void saveImagePlan(run, false)} className="h-10 rounded-xl border px-3 text-xs font-semibold">保存修改</button><button type="button" disabled={isBusy} onClick={() => void saveImagePlan(run, true)} className="h-10 rounded-xl bg-indigo-700 px-3 text-xs font-semibold text-white">审核并确认</button></> : <>
+                        {importedCount > 0 ? <button type="button" onClick={() => { void saveWorkflow(workflow, 'storyboard').then((updated) => { if (updated) setStage('storyboard'); }).catch(() => undefined); }} className="h-10 rounded-xl bg-emerald-600 px-3 text-xs font-semibold text-white">已导入 {importedCount} 张 · 查看套图</button> : <button type="button" disabled={isBusy} onClick={() => void importImagePlanToBatch(run, run.currentVersion!.plan)} className="h-10 rounded-xl bg-violet-700 px-3 text-xs font-semibold text-white"><WandSparkles className="mr-1.5 inline h-4 w-4" />导入批量生图</button>}
+                        <button type="button" onClick={() => void exportImagePlan(run, 'json')} className="h-10 rounded-xl border px-3 text-xs">导出 JSON</button><button type="button" onClick={() => void exportImagePlan(run, 'md')} className="h-10 rounded-xl border px-3 text-xs">导出 Markdown</button>
+                      </>}
+                    </div>
+                  </>}
+                </article>;
+              })}
+            </div>}
           </section>
           <section><p className="rounded-xl bg-indigo-50 p-3 text-xs leading-5 text-indigo-900">商品实拍和款式图用于核对商品信息；竞品图只参考排版，不会用来生成商品外观。上传后请选择图片用途，避免把参考图当成商品图。</p><div className="mt-4 flex flex-col gap-2 sm:flex-row"><UiSelect value={uploadRole} onValueChange={setUploadRole}><SelectTrigger aria-label="素材用途" className="h-11 min-h-11 w-full rounded-xl sm:w-52"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="product">商品素材</SelectItem><SelectItem value="competitor">竞品版式参考</SelectItem><SelectItem value="packaging">包装与配件</SelectItem><SelectItem value="other">其他参考</SelectItem></SelectContent></UiSelect><label className="flex h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-indigo-300 bg-indigo-50/60 px-3 text-sm font-medium text-indigo-700"><UploadCloud className="h-4 w-4" />{uploading ? '上传中…' : '选择商品或参考图片'}<input hidden multiple type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={uploading} onChange={(event) => { void uploadFiles(event.target.files); event.currentTarget.value = ''; }} /></label><button type="button" disabled={isBusy || !visionProfileId || !visualAssets.length} onClick={() => void runTask('asset_annotate', { instruction: '逐张识别商品素材内容、商品型号、颜色和用途，不猜测无法确认的事实。忽略非商品图。' }, visualAssets.slice(0, 12).map((asset) => asset.id))} className="h-11 rounded-xl border px-4 text-xs"><WandSparkles className="mr-1 inline h-4 w-4" />整理商品图片</button></div><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">{visualAssets.map((asset) => <figure key={asset.id} className="overflow-hidden rounded-xl border"><div className="aspect-square bg-slate-100"><img src={asset.previewUrl} alt={asset.filename} className="h-full w-full object-cover" /></div><figcaption className="p-2"><p className="truncate text-xs font-semibold">{asset.filename}</p><AssetRoleSelect asset={asset} onChange={(role) => void changeAssetRole(asset.id, role)} /><details className="mt-2"><summary className="cursor-pointer text-[11px] text-indigo-700">识别信息</summary><p className="mt-1 text-[10px] text-slate-500">{asset.catalog?.effective?.what || '待识别'} · {asset.catalog?.effective?.color || ''} · {asset.catalog?.effective?.spec || ''}</p></details></figcaption></figure>)}</div>{!productAssets.length && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs text-amber-800"><ImagePlus className="mr-1 inline h-4 w-4" />请至少上传一张商品图片，并将用途选为“商品素材”。</p>}</section>
         </div>}

@@ -1,0 +1,2 @@
+export const VECTORIZE_MAX_EDGE = 512;
+export const VECTORIZE_MAX_SVG_BYTES = 1024 * 1024;
